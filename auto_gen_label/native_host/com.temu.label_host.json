@@ -1,0 +1,9 @@
+{
+  "name": "com.temu.label_host",
+  "description": "Temu Auto Label Native Host",
+  "path": "PLACEHOLDER_EXE_PATH",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://PLACEHOLDER_EXTENSION_ID/"
+  ]
+}

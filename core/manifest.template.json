@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "AgentSeller for Temu",
+  "version": "1.0.0",
+  "description": "Temu 商家中心自动化（多 feature 插件）",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5GWRs9dvggQAWIUieST3g2+OVxxht+f0DfL0nlwjfoQd1F2WA8P7sNNGlggD/7IqjHxK+GP9ZJ+kaS92rWfSH9PXr2J/eJeAV91b8NHzQlXIFoikBxXxYWRVw+UUNmiSVbt9X6As4KhWoJICr5aEHQbR5yCIhsPSb9uqUGsyfHW4ifXIgmzBUpgouU7SSCDI0sgtMn4PuTiO66ZeOmsLTagOcFyeNzTAvos8XkLmPmhsxho06tQsSxG/Yi8DwO8xNdCPGIhs+p8/6jNek2jPFElAcwbsA6kNWNfo9L1VI1zIdPJ9EAKhMug7l+XWM/w5HQe0rZeAdCt88/JF4xvKZwIDAQAB",
+  "permissions": "__PERMISSIONS__",
+  "host_permissions": "__HOST_PERMISSIONS__",
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": "__HOST_PERMISSIONS__",
+      "js": "__CONTENT_SCRIPTS__",
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AgentSeller for Temu",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

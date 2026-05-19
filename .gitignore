@@ -1,0 +1,23 @@
+# 构建产物
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# 日志（运行时生成的忽略；samples/ 里的历史样本作为调试参考保留）
+*.log
+!**/samples/*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 密钥（chrome extension key 的 RSA 私钥；公钥已通过 manifest.template.json 的 "key" 字段公开）
+build/.keys/
