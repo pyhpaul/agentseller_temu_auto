@@ -587,8 +587,15 @@
       const item = findFormItemByLabel(field.label, sectionRoot);
       const input = item?.querySelector('input.rocket-input, input[class*="rocket-input"], textarea.rocket-input, textarea[class*="rocket-input"]');
       if (!input) { console.warn('[TAL][rule] text input 未找到:', field.label); return; }
-      if (input.value?.trim()) { console.log('[TAL][rule] 已有值，跳过:', field.label); }
-      else { input.focus(); U.setInputValue(input, value); }
+      if (field.mode === 'ensure') {
+        input.focus();
+        U.setInputValue(input, String(value));
+      } else if (input.value?.trim()) {
+        console.log('[TAL][rule] 已有值，跳过:', field.label);
+      } else {
+        input.focus();
+        U.setInputValue(input, value);
+      }
     } else {
       const item = findFormItemByLabel(field.label, sectionRoot);
       const container = item?.querySelector('.rocket-select');
@@ -606,36 +613,159 @@
       { label: '警示类型', mode: 'ensure', value: '无需警示' },
     ] },
     { type: 'single', title: '欧盟负责人', fields: [
-      { label: '欧盟负责人', mode: 'ifEmpty', value: 0 },
+      { label: '欧盟负责人', mode: 'ensure', value: 0 },
     ] },
     { type: 'single', title: '制造商信息', fields: [
-      { label: '制造商信息', mode: 'ifEmpty', value: 0 },
+      { label: '制造商信息', mode: 'ensure', value: 0 },
     ] },
     { type: 'single', title: '土耳其负责人', fields: [
-      { label: '土耳其负责人', mode: 'ifEmpty', value: 0 },
+      { label: '土耳其负责人', mode: 'ensure', value: 0 },
     ] },
-    { type: 'single', title: '包装材料信息收集', fields: [
-      { label: '商品规格', mode: 'ifEmpty', value: 0 },
-      { label: '材质分类', mode: 'ifEmpty', value: '塑料', waitAfter: 800 },
-      { label: '材料名称', mode: 'ifEmpty', value: '可生物降解的 PLA/PHA/PHB' },
-      { label: '一次性塑料', mode: 'ifEmpty', value: '否' },
-      { label: '包装类型', mode: 'ifEmpty', value: '软包装' },
-      { label: '包装材料重量', mode: 'ifEmpty', value: '10', kind: 'text' },
+    // 该 section 不是 label-based form-item，而是嵌套 table：
+    //   外层列「商品规格」(multiple-select) 选完后才会解锁内层 5 列
+    //   内层列：材质分类 / 材料名称 / 它是否含有一次性塑料 / 包装类型 / 包装材料重量
+    // 走专用 handler 'packagingTable'，按列头文本匹配列索引取 td 内控件
+    { type: 'single', title: '包装材料信息收集', handler: 'packagingTable', fields: [
+      // 商品规格是 multiple-select，handler 内特殊处理为 ifEmpty（不破坏商家可能已选的多个规格）
+      { label: '商品规格', mode: 'ifEmpty', value: 0, kind: 'select', scope: 'outer' },
+      // 内层字段：handler 内多轮扫描 + 强制 clear+重选；mode 仅用作语义标识
+      { label: '材质分类', mode: 'ensure', value: '塑料', kind: 'select', scope: 'inner', waitAfter: 800 },
+      { label: '材料名称', mode: 'ensure', value: '可生物降解的 PLA/PHA/PHB', kind: 'select', scope: 'inner' },
+      { label: '一次性塑料', mode: 'ensure', value: '否', kind: 'select', scope: 'inner' },
+      { label: '包装类型', mode: 'ensure', value: '软包装', kind: 'select', scope: 'inner' },
+      { label: '包装材料重量', mode: 'ensure', value: '10', kind: 'text', scope: 'inner' },
     ] },
-    // 分组：自动给所有 single-select 填 NA
+    // 单 section 但内部所有 select 都填 NA（border-left header 在数字 id section 内部）
+    { type: 'single', title: '制造商属性', autoFillNA: true },
+    // 分组 header（border-left header 在数字 id section 外，统领其后多个数字 id section）
     { type: 'group', title: '韩国公示信息', autoFillNA: true },
     { type: 'group', title: '其他合规信息', autoFillNA: true, exceptions: [
-      { label: '商品识别码', mode: 'ifEmpty', value: '__SKC_SKU__', kind: 'text' },
+      { label: '商品识别码', mode: 'ensure', value: '__SKC_SKU__', kind: 'text' },
     ] },
   ];
 
-  // 应用整套 Phase 2 规则
+  // 单次尝试填一个内层字段（select 或 text）：
+  //   - 当前 disabled → return false（等下一轮）
+  //   - 可填 → 强制覆盖（select 已有值先 clear 再重选，确保 change 触发下游解锁；text 直接 setInputValue）→ return true
+  async function tryFillPackagingInnerField(field, td) {
+    if (field.kind === 'text') {
+      const input = td.querySelector('input.rocket-input, input[class*="rocket-input"], textarea.rocket-input, textarea[class*="rocket-input"]');
+      if (!input) { console.warn('[TAL][rule] text input 未找到:', field.label); return false; }
+      if (input.disabled) return false;
+      input.focus();
+      U.setInputValue(input, String(field.value));
+      return true;
+    }
+    const ctn = td.querySelector('.rocket-select');
+    if (!ctn) { console.warn('[TAL][rule] select 未找到:', field.label); return false; }
+    if (ctn.classList.contains('rocket-select-disabled')) return false;
+    if (rocketSelectHasValue(ctn)) {
+      const clearBtn = ctn.querySelector('.rocket-select-clear');
+      if (clearBtn) {
+        clearBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        clearBtn.click();
+        await U.sleep(400);
+      }
+    }
+    await safeSelect(ctn, field.value, field.label);
+    await U.sleep(300);
+    return true;
+  }
+
+  // 「包装材料信息收集」专用 handler：嵌套 table 结构，按列头定位列索引取 td 内控件
+  // 内层 5 字段级联依赖（实际顺序未知，可能 text→select 反向），用多轮扫描兜底：
+  // 每轮跳过 disabled 字段，能填的就填，下一轮再扫描已解锁字段，直到全部完成或多轮无进展
+  async function applyPackagingMaterialSection(section, ctx, fields) {
+    const outerField = fields.find(f => f.scope === 'outer');
+    const innerFields = fields.filter(f => f.scope === 'inner');
+
+    if (outerField) {
+      const outerSelect = section.querySelector('.rocket-select');
+      if (!outerSelect) { console.warn('[TAL][rule] 商品规格 select 未找到'); return; }
+      // 商品规格是 multiple-select，业务上不强制覆盖（保留商家可能已选的多个规格）
+      await selectIfEmpty(outerSelect, outerField.value, outerField.label);
+    }
+
+    const trs = Array.from(section.querySelectorAll('tr'));
+    const headerTr = trs.find(tr => tr.querySelector('th') && tr.textContent.includes('材质分类'));
+    if (!headerTr) { console.warn('[TAL][rule] 内层表头未找到（材质分类列缺失）'); return; }
+    const headerTexts = Array.from(headerTr.querySelectorAll('th')).map(th => U.normText(th.textContent));
+
+    const headerIdx = trs.indexOf(headerTr);
+    let dataTr = null;
+    for (let i = headerIdx + 1; i < trs.length; i++) {
+      const tr = trs[i];
+      if (tr.getAttribute('aria-hidden') === 'true') continue;
+      if (tr.querySelector('td')) { dataTr = tr; break; }
+    }
+    if (!dataTr) { console.warn('[TAL][rule] 内层数据行未找到'); return; }
+    const dataTds = Array.from(dataTr.querySelectorAll(':scope > td'));
+
+    const tasks = innerFields.map(f => {
+      const colIdx = headerTexts.findIndex(t => t.includes(f.label));
+      return { f, colIdx, td: colIdx >= 0 ? dataTds[colIdx] : null, done: false };
+    });
+    for (const t of tasks) {
+      if (t.colIdx < 0) { console.warn(`[TAL][rule] 内层列未找到: ${t.f.label}`); t.done = true; }
+      else if (!t.td) { console.warn(`[TAL][rule] 内层数据 td 不存在: ${t.f.label}`); t.done = true; }
+    }
+
+    const MAX_ROUNDS = 6;
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      let progress = false;
+      for (const t of tasks) {
+        if (t.done) continue;
+        if (t.f.waitBefore && round === 1) await U.sleep(t.f.waitBefore);
+        const ok = await tryFillPackagingInnerField(t.f, t.td);
+        if (ok) {
+          t.done = true;
+          progress = true;
+          console.log(`[TAL][rule] inner 完成 [round ${round}]: ${t.f.label}`);
+          if (t.f.waitAfter) await U.sleep(t.f.waitAfter);
+        }
+      }
+      if (tasks.every(t => t.done)) break;
+      if (!progress) {
+        const remaining = tasks.filter(t => !t.done).map(t => t.f.label);
+        console.warn(`[TAL][rule] round ${round} 无进展，等 800ms 后重试，剩余:`, remaining);
+        await U.sleep(800);
+      }
+    }
+    const pending = tasks.filter(t => !t.done).map(t => t.f.label);
+    if (pending.length) console.warn('[TAL][rule] 包装材料 inner 字段最终未完成:', pending);
+  }
+
+  // 对 section 内所有 select 字段填 NA（用于 autoFillNA 类规则 + 兜底）
+  async function autoFillSectionNA(sec, ctx, exceptions) {
+    for (const item of getFormItemsWithLabel(sec)) {
+      const ex = exceptions?.find(e => e.label === item.label);
+      if (ex) {
+        await applyFieldRule(ex, sec, ctx);
+      } else if (item.isSelect) {
+        await applyFieldRule({ label: item.label, mode: 'ensure', value: ctx.NA }, sec, ctx);
+      }
+    }
+  }
+
+  // 应用整套 Phase 2 规则 + 兜底
+  // 白名单跑完后扫描 drawer 内未被任何 rule 命中的数字 id section，统一按 autoFillNA 处理
   async function applyPhase2Rules(drawer, ctx) {
+    const handledSecIds = new Set();
+
     for (const rule of SECTION_RULES_PHASE2) {
       if (rule.type === 'single') {
         const sec = findSectionByOwnTitle(drawer, rule.title);
         if (!sec) { console.warn(`[TAL][step3] section "${rule.title}" 未找到，跳过`); continue; }
         console.log(`[TAL][step3] section "${rule.title}" (id=${sec.id})`);
+        handledSecIds.add(sec.id);
+        if (rule.handler === 'packagingTable') {
+          await applyPackagingMaterialSection(sec, ctx, rule.fields);
+          continue;
+        }
+        if (rule.autoFillNA) {
+          await autoFillSectionNA(sec, ctx, rule.exceptions);
+          continue;
+        }
         for (const field of rule.fields) {
           await applyFieldRule(field, sec, ctx);
         }
@@ -643,16 +773,20 @@
         const sections = getSectionsInGroup(drawer, rule.title);
         console.log(`[TAL][step3] group "${rule.title}" 含 ${sections.length} section: [${sections.map(s => s.id).join(',')}]`);
         for (const sec of sections) {
-          for (const item of getFormItemsWithLabel(sec)) {
-            const ex = rule.exceptions?.find(e => e.label === item.label);
-            if (ex) {
-              await applyFieldRule(ex, sec, ctx);
-            } else if (rule.autoFillNA && item.isSelect) {
-              await applyFieldRule({ label: item.label, mode: 'ifEmpty', value: ctx.NA }, sec, ctx);
-            }
-          }
+          handledSecIds.add(sec.id);
+          await autoFillSectionNA(sec, ctx, rule.exceptions);
         }
       }
+    }
+
+    // 兜底：drawer 内所有未被白名单命中的数字 id section 统一 autoFillNA
+    const allSections = Array.from(drawer.querySelectorAll('div[id]')).filter(s => /^\d+$/.test(s.id));
+    const unhandled = allSections.filter(s => !handledSecIds.has(s.id));
+    for (const sec of unhandled) {
+      const titleEl = sec.querySelector(':scope > div[style*="border-left"]');
+      const title = titleEl ? U.normText(titleEl.textContent).slice(0, 40) : `id=${sec.id}`;
+      console.log(`[TAL][step3] 兜底 autoFillNA: "${title}" (id=${sec.id})`);
+      await autoFillSectionNA(sec, ctx);
     }
   }
 
@@ -763,14 +897,36 @@
     return false;
   }
 
-  // 强制将下拉值改为目标文本（含匹配）；当前已是目标则跳过；多选会先清空再选
+  // 强制将下拉值改为目标值（字符串文本或数字下标）；当前已是目标则跳过；多选会先清空再选
+  // 数字下标无法预先确定目标文本（要打开 dropdown 才能看 options），所以始终先清空再按下标选
   async function ensureSelected(container, option, fieldName) {
     if (!container) { console.warn('[TAL] 未找到字段:', fieldName); return; }
-    if (typeof option !== 'string') {
-      console.warn('[TAL] ensureSelected 仅支持字符串目标:', fieldName);
+    const isMultiple = container.classList.contains('rocket-select-multiple');
+
+    if (typeof option === 'number') {
+      if (isMultiple) {
+        if (getMultiSelectTags(container).length > 0) {
+          const cleared = await removeAllSelectedTags(container);
+          if (!cleared) console.warn(`[TAL] ${fieldName} 旧值未完全清空，继续尝试`);
+        }
+      } else if (rocketSelectHasValue(container)) {
+        const clearBtn = container.querySelector('.rocket-select-clear');
+        if (clearBtn) {
+          clearBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          clearBtn.click();
+          await U.sleep(400);
+        }
+      }
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        await safeSelect(container, option, fieldName);
+        await U.sleep(300);
+        if (rocketSelectHasValue(container)) return;
+        console.warn(`[TAL] ${fieldName} 按下标 ${option} 第 ${attempt} 次未生效，重试`);
+      }
+      console.warn(`[TAL] ${fieldName} 按下标 ${option} 重试后仍未选上`);
       return;
     }
-    const isMultiple = container.classList.contains('rocket-select-multiple');
+
     const targetNorm = U.normText(option);
 
     if (isMultiple) {
@@ -1247,7 +1403,15 @@
     }
 
     const FAIL_STATES = ['待上传', '上传失败', '上传中', '审核中', '审核失败', '未提交', '草稿', '待审核'];
+    // 这两行的合规状态不参与判断（按业务要求允许其保持非"上传成功"也可进 Phase 3）
+    const SKIP_NAMES = ['韩国公示信息', '其他合规信息'];
+    let checked = 0, skipped = 0;
     for (const { txt } of dataRows) {
+      if (SKIP_NAMES.some(name => txt.includes(name))) {
+        console.log(`[TAL][校验] 跳过校验行: ${txt}`);
+        skipped++;
+        continue;
+      }
       const hit = FAIL_STATES.find(s => txt.includes(s));
       if (hit) {
         console.warn(`[TAL][校验] 行状态命中失败态「${hit}」:`, txt);
@@ -1257,8 +1421,9 @@
         console.warn('[TAL][校验] 行状态非"上传成功":', txt);
         return false;
       }
+      checked++;
     }
-    console.log(`[TAL][校验] ✓ 所有行 "上传成功"（${dataRows.length} 条）`);
+    console.log(`[TAL][校验] ✓ 所有受检行 "上传成功"（${checked} 条受检 / ${skipped} 条跳过 / 共 ${dataRows.length}）`);
     return true;
   }
 
