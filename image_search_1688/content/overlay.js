@@ -39,7 +39,8 @@
     root = selectionEl = toolbarEl = null;
     start = rect = null;
     if (toastTimer) clearTimeout(toastTimer);
-    window.__img_search_overlay_loaded__ = false;
+    // 不重置 guard：保留已注册的 onMessage 监听器，第二次截图时靠它调用 ensureRoot()。
+    // 若重置，re-inject 会产生第二个闭包 + 第二个监听器，两者 root 变量互相独立导致 null 报错。
   }
 
   function onMouseDown(e) {

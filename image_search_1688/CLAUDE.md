@@ -52,5 +52,5 @@ image_search_1688/
 
 - `chrome.storage.session` 需在 SW 的 `onInstalled`/`onStartup` 调用 `setAccessLevel` 开放给 content script（已在 service-worker.js 中设置）
 - 1688 风控页（路径含 `/punish` 或参数含 `x5secdata`）会走剪贴板兜底路径
-- `overlay.js` 的 guard 变量是 `window.__img_search_overlay_loaded__`，可安全多次注入
+- `overlay.js` 的 guard 变量 `window.__img_search_overlay_loaded__` **不在 tearDown 中重置**：第二次截图靠已存在的 `onMessage` 监听器调用 `ensureRoot()`（此时闭包内 `root===null`，可重建）；若重置会产生第二个闭包和监听器，两者 root 变量独立，导致 null 报错
 - `js` 路径在 `feature.json` 中始终使用 `/` 分隔符（即使在 Windows 上）
