@@ -11,7 +11,7 @@
   },
   "content_scripts": [
     {
-      "matches": "__HOST_PERMISSIONS__",
+      "matches": "__CONTENT_MATCHES__",
       "js": "__CONTENT_SCRIPTS__",
       "run_at": "document_idle"
     }
