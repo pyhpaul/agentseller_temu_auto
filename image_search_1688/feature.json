@@ -1,0 +1,19 @@
+{
+  "id": "image_search_1688",
+  "icon": "🔍",
+  "label": "1688搜图",
+  "locked": false,
+  "order": 2,
+  "content_script": "content/index.js",
+  "content_matches": [],
+  "host_permissions": ["https://*.1688.com/*"],
+  "permissions": ["activeTab", "scripting", "storage", "notifications", "clipboardWrite"],
+  "extra_content_scripts": [
+    {
+      "matches": ["https://s.1688.com/*", "https://*.1688.com/imgsearch/*"],
+      "js": ["content/injector.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "extra_assets": ["content/overlay.css", "content/overlay.js"]
+}
