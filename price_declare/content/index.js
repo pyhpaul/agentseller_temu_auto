@@ -1194,6 +1194,123 @@
   const TARGET_RE = /\/main\/adjust-price-manage\/order-price/
 
   let bootstrapped = false
+  let tpdViewEl = null  // 当前 Hub feature view 的容器引用
+
+  // 只更新 DOM 里的动态字段，不重建结构
+  function updateHubView(state) {
+    const el = tpdViewEl
+    if (!el || !el.isConnected || !state) return
+
+    const dot = el.querySelector('.tpd-dot')
+    const modeText = el.querySelector('.tpd-mode-text')
+    if (dot) {
+      dot.style.background = { RUNNING: '#27ae60', PAUSED: '#f39c12', STEPPING: '#2980b9', STOPPING: '#c0392b', ERROR: '#c0392b' }[state.mode] || '#999'
+      dot.style.animation = state.mode === 'RUNNING' ? 'tpd-pulse 1.2s infinite' : 'none'
+    }
+    if (modeText) modeText.textContent = state.mode
+
+    const s = state.stats
+    const successEl = el.querySelector('.tpd-success')
+    const failedEl  = el.querySelector('.tpd-failed')
+    const totalEl   = el.querySelector('.tpd-total')
+    if (successEl) successEl.textContent = `✓ ${s.success}`
+    if (failedEl)  failedEl.textContent  = `✗ ${s.failed}`
+    if (totalEl)   totalEl.textContent   = `共 ${s.totalProcessed}`
+
+    const m = state.mode
+    const btnStart = el.querySelector('.tpd-btn-start')
+    const btnPause = el.querySelector('.tpd-btn-pause')
+    const btnStep  = el.querySelector('.tpd-btn-step')
+    const btnStop  = el.querySelector('.tpd-btn-stop')
+    if (btnStart) btnStart.disabled = m === 'RUNNING' || m === 'STOPPING'
+    if (btnPause) btnPause.disabled = m !== 'RUNNING' && m !== 'STEPPING'
+    if (btnStep)  btnStep.disabled  = m === 'RUNNING' || m === 'STOPPING'
+    if (btnStop)  btnStop.disabled  = m === 'IDLE'
+
+    // 设置字段只在非焦点时同步，避免打断用户输入
+    const reasonInput = el.querySelector('.tpd-reason')
+    if (reasonInput && document.activeElement !== reasonInput) reasonInput.value = state.settings.reason
+    const refreshEvery = el.querySelector('.tpd-refresh-every')
+    if (refreshEvery) refreshEvery.value = String(state.settings.refreshEvery)
+    const stopOnError = el.querySelector('.tpd-stop-on-error')
+    if (stopOnError) stopOnError.checked = !!state.settings.stopOnError
+    const delayMul = el.querySelector('.tpd-delay-mul')
+    if (delayMul) delayMul.value = String(state.settings.delayMultiplier)
+
+    const logEl = el.querySelector('.tpd-log')
+    if (logEl) {
+      logEl.innerHTML = (state.log || []).slice(0, 12).map(it => {
+        const color = { ok: '#27ae60', warn: '#d68910', error: '#c0392b' }[it.level] || '#666'
+        return `<div style="color:${color}">${it.t}${it.hjd ? ' [' + it.hjd + ']' : ''} ${it.msg}</div>`
+      }).join('')
+    }
+  }
+
+  function buildHubView(viewEl) {
+    const TPD = window.TPD
+    viewEl.innerHTML = `
+      <style>
+        @keyframes tpd-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .tpd-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; margin-bottom:8px }
+        .tpd-grid button { padding:6px 0; font-size:12px }
+        .tpd-settings label { display:flex; justify-content:space-between; align-items:center; font-size:12px; margin:3px 0; gap:8px }
+        .tpd-settings input[type=text], .tpd-settings select { flex:1; padding:2px 5px; border:1px solid #ddd; border-radius:4px; font-size:12px }
+      </style>
+      <div style="font-size:13px;color:#333;padding-bottom:2px">
+        <div style="display:flex;align-items:center;gap:7px;padding:6px 0 8px;border-bottom:1px solid #f0f0f0;margin-bottom:8px">
+          <span class="tpd-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#999;flex-shrink:0"></span>
+          <span class="tpd-mode-text" style="font-weight:600;flex:1">IDLE</span>
+          <span class="tpd-success" style="color:#27ae60;font-size:12px">✓ 0</span>
+          <span class="tpd-failed"  style="color:#c0392b;font-size:12px;margin:0 4px">✗ 0</span>
+          <span class="tpd-total"   style="color:#999;font-size:12px">共 0</span>
+        </div>
+        <div class="tpd-grid">
+          <button class="tal-action-btn tpd-btn-start" style="margin:0;background:#1677ff;color:#fff">▶ 开始</button>
+          <button class="tal-action-btn tpd-btn-pause" style="margin:0;background:#fa8c16;color:#fff">⏸ 暂停</button>
+          <button class="tal-action-btn tpd-btn-step"  style="margin:0;background:#1677ff;color:#fff">→ 单步</button>
+          <button class="tal-action-btn tpd-btn-stop"  style="margin:0;background:#ff4d4f;color:#fff">■ 停止</button>
+          <button class="tal-action-btn tpd-btn-reset" style="margin:0;background:#888;color:#fff;grid-column:span 2">↻ 重置统计</button>
+        </div>
+        <div class="tpd-settings" style="border-top:1px solid #f0f0f0;padding-top:7px;margin-bottom:7px">
+          <label><span style="color:#888">不调整原因</span><input class="tpd-reason" type="text"></label>
+          <label><span style="color:#888">每N条刷新</span>
+            <select class="tpd-refresh-every">
+              <option value="page">整页</option>
+              <option value="1">1</option><option value="3">3</option><option value="5">5</option>
+            </select>
+          </label>
+          <label><span style="color:#888">失败时暂停</span><input class="tpd-stop-on-error" type="checkbox"></label>
+          <label><span style="color:#888">延时倍速</span>
+            <select class="tpd-delay-mul">
+              <option value="0.5">0.5x</option><option value="1">1x</option>
+              <option value="1.5">1.5x</option><option value="2">2x</option><option value="3">3x</option>
+            </select>
+          </label>
+        </div>
+        <div style="border-top:1px solid #f0f0f0;padding-top:6px">
+          <div style="font-size:11px;color:#bbb;margin-bottom:3px">日志（最近 12 条）</div>
+          <div class="tpd-log" style="font-family:monospace;font-size:11px;line-height:1.5;max-height:110px;overflow-y:auto;background:#fafafa;border-radius:4px;padding:4px 6px"></div>
+        </div>
+      </div>
+    `
+
+    viewEl.querySelector('.tpd-btn-start').addEventListener('click', () => TPD.engine.start())
+    viewEl.querySelector('.tpd-btn-pause').addEventListener('click', () => TPD.engine.pause())
+    viewEl.querySelector('.tpd-btn-step').addEventListener('click',  () => TPD.engine.step())
+    viewEl.querySelector('.tpd-btn-stop').addEventListener('click',  () => TPD.engine.stop())
+    viewEl.querySelector('.tpd-btn-reset').addEventListener('click', () => TPD.engine.resetStats())
+
+    viewEl.querySelector('.tpd-reason').addEventListener('change', e =>
+      TPD.engine.updateSettings({ reason: e.target.value }))
+    viewEl.querySelector('.tpd-refresh-every').addEventListener('change', e => {
+      const v = e.target.value
+      TPD.engine.updateSettings({ refreshEvery: v === 'page' ? 'page' : Number(v) })
+    })
+    viewEl.querySelector('.tpd-stop-on-error').addEventListener('change', e =>
+      TPD.engine.updateSettings({ stopOnError: e.target.checked }))
+    viewEl.querySelector('.tpd-delay-mul').addEventListener('change', e =>
+      TPD.engine.updateSettings({ delayMultiplier: Number(e.target.value) }))
+  }
 
   async function bootstrap() {
     if (bootstrapped) return
@@ -1201,13 +1318,22 @@
     bootstrapped = true
 
     const TPD = window.TPD
-    if (!TPD || !TPD.engine || !TPD.panel) {
+    if (!TPD || !TPD.engine) {
       console.warn('[price_declare] TPD modules missing; bootstrap aborted')
       return
     }
 
     await TPD.engine.init()
-    TPD.panel.mount()
+
+    // 订阅 engine 状态变化 → 实时刷新 Hub feature view
+    TPD.engine.subscribe(updateHubView)
+
+    // 如果用户此时已打开了 price_declare 的 feature view，立即刷新
+    const uiState = window.__AgentSellerUI?.getState?.()
+    if (uiState?.view === 'feature' && uiState?.feature === 'price_declare') {
+      window.__AgentSellerRegistry.renderFeature('price_declare')
+    }
+
     try {
       await TPD.actions.ensureTargetTab('待卖家确认')
     } catch (e) {
@@ -1227,14 +1353,11 @@
     label: '价格不调整',
     order: 2,
     init() {
-      // 页面就绪后激活（若当前已在目标 URL 则直接启动）
       if (document.readyState === 'complete') {
         setTimeout(bootstrap, 800)
       } else {
         window.addEventListener('load', () => setTimeout(bootstrap, 800), { once: true })
       }
-
-      // SPA 导航后重新检查 URL
       window.AgentSeller.onPageChange(() => {
         if (TARGET_RE.test(location.href) && !bootstrapped) {
           setTimeout(bootstrap, 300)
@@ -1242,26 +1365,24 @@
       })
     },
     render(viewEl) {
-      // price_declare 有自己的 Shadow DOM 面板，Hub view 仅提供状态摘要和跳转链接
+      tpdViewEl = viewEl
       const TPD = window.TPD
       const state = TPD?.engine?.getState?.()
-      const mode = state?.mode ?? '未激活'
-      const stats = state?.stats
-      viewEl.innerHTML = `
-        <div style="padding:14px;font-size:13px;color:#444;line-height:1.7">
-          <div style="margin-bottom:8px">
-            <strong>价格不调整自动化</strong>
-            <span style="margin-left:8px;color:${mode === 'RUNNING' ? '#27ae60' : '#999'}">${mode}</span>
-          </div>
-          ${stats ? `<div>✓ 成功 ${stats.success} &nbsp; ✗ 失败 ${stats.failed} &nbsp; 共处理 ${stats.totalProcessed}</div>` : ''}
-          <div style="margin-top:10px">
+
+      if (!state) {
+        // engine 未初始化（还不在目标页面）
+        viewEl.innerHTML = `
+          <div style="padding:14px;font-size:13px;color:#888;line-height:1.8">
+            功能尚未激活，请先访问<br>
             <a href="https://agentseller.temu.com/main/adjust-price-manage/order-price"
-               style="color:#fb7701;text-decoration:none">
-              → 前往调价确认页面
-            </a>
+               style="color:#fb7701;text-decoration:none;font-size:12px">调价确认页面</a>
           </div>
-        </div>
-      `
+        `
+        return
+      }
+
+      buildHubView(viewEl)
+      updateHubView(state)
     }
   })
 })()
