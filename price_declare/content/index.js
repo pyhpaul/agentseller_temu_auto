@@ -654,7 +654,9 @@
     const before = S.readPendingTabCount()
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // 反复切 tab 触发服务器重新请求，直到 count 减少；最多切 5 次后放弃
+    const MAX_TAB_ATTEMPTS = 5
+    for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
         await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
       } catch (err) {
@@ -668,27 +670,17 @@
         return
       }
 
-      // 切回来后立即读当前 count：已变小说明服务器已更新，直接继续
       const cur = S.readPendingTabCount()
       if (cur != null && cur < before) {
-        log('info', `server list 已同步 (${before} → ${cur})${attempt > 1 ? ' [2/2]' : ''}`)
+        log('info', `server list 已同步 (${before} → ${cur}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
         await persist({ lastAction: 'refresh_ok' })
         return
       }
 
-      // 数值未变，立即再切一次 tab
-      if (attempt < 2) {
-        log('warn', `count 未变 (${cur ?? 'null'})，立即再切 tab`)
-      }
+      log('warn', `count 未变 (${cur ?? 'null'}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
     }
 
-    // 两次切 tab 后仍未同步，等服务器更新（最多 5s），避免重复处理已确认的行
-    log('warn', 'server list 两次切 tab 未同步，等待服务器更新（最多 5s）…')
-    await waitFor(
-      () => { const cur = S.readPendingTabCount(); return cur != null && cur < before },
-      { timeout: 5000 }
-    ).then(() => log('info', `server list 最终同步 (→ ${S.readPendingTabCount()})`))
-     .catch(() => log('warn', '5s 仍未同步，继续执行'))
+    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次仍未同步，继续执行`)
     await persist({ lastAction: 'refresh_ok' })
   }
 
