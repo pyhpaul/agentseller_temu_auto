@@ -126,6 +126,16 @@
     return null
   }
 
+  function findCancelButton(modal) {
+    if (!modal) return null
+    const btns = modal.querySelectorAll('button')
+    for (const b of btns) {
+      const sp = b.querySelector('span')
+      if (sp && sp.textContent.trim() === '取消') return b
+    }
+    return null
+  }
+
   function findRadioGroups(modal) {
     if (!modal) return []
     return [...modal.querySelectorAll(RADIO_GROUP_SEL)]
@@ -197,6 +207,7 @@
     detectModalType,
     findReasonTextarea,
     findConfirmButton,
+    findCancelButton,
     findRadioGroups,
     findNoAdjustRadio,
     readPaginationState,
@@ -772,16 +783,23 @@
           state.stats.failed += 1
           log('error', `✗ ${kind}: ${err.message || err}`)
           await persist({ lastAction: 'row_failed' })
+          // 无论是否暂停，先关闭可能还开着的弹窗（取消按钮 > Escape）
+          try {
+            const modal = S.findActiveModal()
+            if (modal) {
+              const cancelBtn = S.findCancelButton(modal)
+              if (cancelBtn) { cancelBtn.click(); log('info', '已点击取消关闭弹窗') }
+              else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+              await sleep(randomDelay(300, 500, state.settings.delayMultiplier))
+            }
+          } catch (e) {
+            log('warn', `关闭弹窗失败：${e.message || e}`)
+          }
           if (FATAL_ERRORS.has(kind) || state.settings.stopOnError) {
             setMode(MODES.PAUSED)
             await persist({})
             log('warn', '已暂停，等待人工')
             return
-          }
-          try {
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-          } catch (e) {
-            log('warn', `Esc 派发失败：${e.message || e}`)
           }
           await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
         }
