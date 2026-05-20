@@ -6,7 +6,7 @@
   "order": 2,
   "content_script": "content/index.js",
   "content_matches": [],
-  "host_permissions": ["https://*.1688.com/*"],
+  "host_permissions": ["<all_urls>"],
   "permissions": ["activeTab", "scripting", "storage", "notifications", "clipboardWrite"],
   "extra_content_scripts": [
     {

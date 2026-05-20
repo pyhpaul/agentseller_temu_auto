@@ -143,13 +143,7 @@
       dpr: window.devicePixelRatio || 1,
     };
     tearDown();
-    chrome.runtime.sendMessage(payload, (resp) => {
-      if (chrome.runtime.lastError) {
-        console.error('[img-search/overlay] sendMessage failed:', chrome.runtime.lastError.message);
-      } else {
-        console.log('[img-search/overlay] CAPTURE_REGION resp:', resp);
-      }
-    });
+    chrome.runtime.sendMessage(payload);
   }
 
   function onKeyDown(e) {

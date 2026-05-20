@@ -206,15 +206,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'IMG_SEARCH_CAPTURE_REGION') {
     const tab = sender.tab;
     if (!tab) { sendResponse({ ok: false, error: 'no-tab' }); return; }
-    console.log('[img-search] CAPTURE_REGION received, tabId:', tab.id, 'windowId:', tab.windowId);
     (async () => {
       try {
         const { rect, dpr } = msg;
-        console.log('[img-search] calling captureVisibleTab...');
         const fullDataUrl = await chrome.tabs.captureVisibleTab(
           tab.windowId, { format: 'png' }
         );
-        console.log('[img-search] captureVisibleTab ok, cropping...');
         const cropped = await imgCropImage(fullDataUrl, rect, dpr);
         if (imgEstimateBytes(cropped) > IMG_MAX_BYTES) {
           await chrome.tabs.sendMessage(tab.id, { type: 'IMG_SEARCH_TOO_LARGE' }).catch(() => {});
@@ -222,10 +219,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: 'too_large' });
           return;
         }
-        console.log('[img-search] payload saved, opening 1688 tab...');
         await imgSetPayload(cropped);
         await chrome.tabs.create({ url: IMG_SEARCH_URL, openerTabId: tab.id });
-        console.log('[img-search] 1688 tab created');
         sendResponse({ ok: true });
       } catch (e) {
         console.error('[img-search] CAPTURE_REGION error:', e);
