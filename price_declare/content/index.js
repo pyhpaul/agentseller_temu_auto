@@ -663,8 +663,8 @@
     const before = S.readPendingTabCount()
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    // 反复切 tab 触发服务器重新请求，直到 count 减少；最多切 5 次后放弃
-    const MAX_TAB_ATTEMPTS = 5
+    // 反复切 tab 触发服务器重新请求，直到 count 减少；最多切 10 次后放弃
+    const MAX_TAB_ATTEMPTS = 10
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
         await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
@@ -679,6 +679,8 @@
         return
       }
 
+      // 等 1s 给 badge 时间更新，再读 count
+      await _rawSleep(1000)
       const cur = S.readPendingTabCount()
       if (cur != null && cur < before) {
         log('info', `server list 已同步 (${before} → ${cur}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
