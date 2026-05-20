@@ -670,11 +670,17 @@
   }
 
   async function triggerRefresh(reason) {
+    // 记录本轮处理了几次操作，用于计算期望的 count 目标值
+    const processedCount = state.stats.processedSinceRefresh
     state.stats.processedSinceRefresh = 0
     const before = S.readPendingTabCount()
+    // 期望刷新后 count 应降至 before - processedCount（或更低）
+    const expectedAfter = (before != null && processedCount > 0) ? before - processedCount : null
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    // 反复切 tab 触发服务器重新请求，直到 count 减少；最多切 10 次后放弃
+    log('info', `触发刷新：处理了 ${processedCount} 次，before=${before}，期望 count ≤ ${expectedAfter ?? '?'}`)
+
+    // 反复切 tab 触发服务器重新请求，直到 count 达到期望值；最多切 10 次后 fallback reload
     const MAX_TAB_ATTEMPTS = 10
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
@@ -690,19 +696,25 @@
         return
       }
 
-      // 等 1s 给 badge 时间更新，再读 count
-      await _rawSleep(1000)
+      // 等 2s 给 badge 时间更新，再读 count
+      await _rawSleep(2000)
       const cur = S.readPendingTabCount()
-      if (cur != null && cur < before) {
-        log('info', `server list 已同步 (${before} → ${cur}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
+
+      // 有期望值时等 count ≤ expectedAfter；无期望值时只要 count 减少即可
+      const synced = expectedAfter != null
+        ? (cur != null && cur <= expectedAfter)
+        : (cur != null && cur < before)
+
+      if (synced) {
+        log('info', `server list 已同步 (${before} → ${cur}，期望 ≤${expectedAfter ?? before - 1}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
         await persist({ lastAction: 'refresh_ok' })
         return
       }
 
-      log('warn', `count 未变 (${cur ?? 'null'}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
+      log('warn', `count 未达预期 (cur=${cur ?? 'null'}，期望 ≤${expectedAfter ?? before - 1}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
     }
 
-    // 5 次切 tab 都未触发数据更新，切 tab 机制已失效，用 reload 兜底
+    // 10 次切 tab 都未触发数据更新，切 tab 机制已失效，用 reload 兜底
     log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次仍未同步，fallback reload`)
     await fallbackReload(reason + '_sync_fail')
   }
