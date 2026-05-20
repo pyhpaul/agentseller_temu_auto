@@ -548,6 +548,8 @@
   }
 
   function log(level, msg, hjd = null) {
+    const prefix = hjd ? `[TPD][${hjd}]` : '[TPD]';
+    (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(`${prefix} ${msg}`)
     if (!state.log) state.log = []
     state.log.unshift({ t: new Date().toLocaleTimeString('en-GB'), level, msg, hjd })
     state.log = state.log.slice(0, 50)
@@ -1248,13 +1250,6 @@
     const delayMul = el.querySelector('.tpd-delay-mul')
     if (delayMul) delayMul.value = String(state.settings.delayMultiplier)
 
-    const logEl = el.querySelector('.tpd-log')
-    if (logEl) {
-      logEl.innerHTML = (state.log || []).slice(0, 12).map(it => {
-        const color = { ok: '#27ae60', warn: '#d68910', error: '#c0392b' }[it.level] || '#666'
-        return `<div style="color:${color}">${it.t}${it.hjd ? ' [' + it.hjd + ']' : ''} ${it.msg}</div>`
-      }).join('')
-    }
   }
 
   function buildHubView(viewEl) {
@@ -1298,9 +1293,8 @@
             </select>
           </label>
         </div>
-        <div style="border-top:1px solid #f0f0f0;padding-top:6px">
-          <div style="font-size:11px;color:#bbb;margin-bottom:3px">日志（最近 12 条）</div>
-          <div class="tpd-log" style="font-family:monospace;font-size:11px;line-height:1.5;max-height:110px;overflow-y:auto;background:#fafafa;border-radius:4px;padding:4px 6px"></div>
+        <div style="border-top:1px solid #f0f0f0;padding-top:6px;font-size:11px;color:#bbb">
+          日志见 DevTools Console（过滤 [TPD]）
         </div>
       </div>
     `
