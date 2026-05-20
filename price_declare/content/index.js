@@ -708,6 +708,7 @@
   async function mainLoop() {
     try {
       await A.waitListReady().catch(() => {})
+      let emptyPageStreak = 0  // 连续翻到空页的次数，防止无限翻页
       while (true) {
         await checkpoint()
         try {
@@ -741,6 +742,14 @@
           }
           const pg = S.readPaginationState()
           if (pg.hasNext) {
+            emptyPageStreak++
+            if (emptyPageStreak >= 3) {
+              log('warn', '连续 3 次翻页均无待处理行，认为全部完成')
+              setMode(MODES.IDLE)
+              state.stats.processedSinceRefresh = 0
+              await persist({ lastAction: 'done' })
+              return
+            }
             await persist({ lastAction: 'next_page' })
             await A.clickNextPage()
             await sleep(randomDelay(600, 1100, state.settings.delayMultiplier))
@@ -753,6 +762,7 @@
           await persist({ lastAction: 'done' })
           return
         }
+        emptyPageStreak = 0  // 有行时重置
 
         const targetHJD = S.readHJD(rows[0])
         try {
