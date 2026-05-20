@@ -576,6 +576,15 @@
   async function init() {
     state = await ST.loadState()
     if (!state.log) state.log = []
+    // 非续跑场景（刷新插件/页面新加载）重置统计和 mode，不保留上次数据
+    const isResuming = state.mode === 'RUNNING'
+      && state.lastAction === 'reload'
+      && state.lastTouchedAt
+      && Date.now() - state.lastTouchedAt < 60_000
+    if (!isResuming) {
+      state.stats = ST.defaults().stats
+      state.mode = 'IDLE'
+    }
     emit()
   }
 
