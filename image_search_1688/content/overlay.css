@@ -1,0 +1,45 @@
+#__1688_overlay_root__ {
+  position: fixed; inset: 0;
+  z-index: 2147483647;
+  cursor: crosshair;
+  user-select: none;
+}
+#__1688_overlay_root__ .mask {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+#__1688_overlay_root__ .selection {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #ff6a00;
+  background: transparent;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.4);
+}
+#__1688_overlay_root__ .toolbar {
+  position: absolute;
+  display: flex; gap: 4px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  font: 12px -apple-system, sans-serif;
+}
+#__1688_overlay_root__ .toolbar button {
+  cursor: pointer;
+  padding: 4px 10px;
+  border: 1px solid #ddd;
+  background: #fafafa;
+  border-radius: 3px;
+  font: inherit;
+}
+#__1688_overlay_root__ .toolbar button.primary {
+  background: #ff6a00; color: #fff; border-color: #ff6a00;
+}
+#__1688_overlay_root__ .toast {
+  position: absolute; top: 16px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.75); color: #fff;
+  padding: 6px 12px; border-radius: 4px;
+  font: 12px -apple-system, sans-serif;
+}
