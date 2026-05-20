@@ -660,25 +660,22 @@
         return
       }
 
-      // 每次切 tab 后等最多 3s 确认服务器已更新
-      const synced = await waitFor(
-        () => { const cur = S.readPendingTabCount(); return cur != null && cur < before },
-        { timeout: 3000 }
-      ).then(() => true).catch(() => false)
-
-      if (synced) {
-        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})${attempt > 1 ? ' [2/2]' : ''}`)
+      // 切回来后立即读当前 count：已变小说明服务器已更新，直接继续
+      const cur = S.readPendingTabCount()
+      if (cur != null && cur < before) {
+        log('info', `server list 已同步 (${before} → ${cur})${attempt > 1 ? ' [2/2]' : ''}`)
         await persist({ lastAction: 'refresh_ok' })
         return
       }
 
+      // 数值未变，不等待，立即再切一次 tab
       if (attempt < 2) {
-        log('warn', `server list 未更新，再切一次 tab`)
+        log('warn', `count 未变 (${cur ?? 'null'})，立即再切 tab`)
       }
     }
 
-    // 两次切 tab 仍未同步，继续执行（不 fallback reload，下一条 RowVanished 自然跳过）
-    log('warn', 'server list 两次未同步，继续执行')
+    // 两次切 tab 后 count 仍未减少，继续执行（RowVanished 会自然跳过重复行）
+    log('warn', 'server list 两次切 tab 未同步，继续执行')
     await persist({ lastAction: 'refresh_ok' })
   }
 
