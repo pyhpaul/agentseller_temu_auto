@@ -74,8 +74,14 @@ def collect_extra_content_scripts(features):
     result = []
     for f in features:
         for ecs in f.get('extra_content_scripts', []):
+            js_list = ecs.get('js', [])
+            if not js_list:
+                print(f'[warn] feature {f["id"]}: extra_content_scripts entry has no js files')
+                ecs_copy = dict(ecs)
+                result.append(ecs_copy)
+                continue
             ecs_copy = dict(ecs)
-            ecs_copy['js'] = [f'features/{f["id"]}/{js}' for js in ecs_copy.get('js', [])]
+            ecs_copy['js'] = [f'features/{f["id"]}/{js}' for js in js_list]
             result.append(ecs_copy)
     return result
 
@@ -100,6 +106,8 @@ def copy_extra_cs_assets(features):
         for ecs in f.get('extra_content_scripts', []):
             for js_path in ecs.get('js', []):
                 src = src_dir / js_path
+                if not src.exists():
+                    raise FileNotFoundError(f'[build] extra_content_script not found: {src}')
                 dst = DIST / 'features' / f['id'] / js_path
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
