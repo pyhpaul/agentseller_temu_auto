@@ -48,12 +48,16 @@ function imgEstimateBytes(dataUrl) {
 }
 
 async function imgNotify(message) {
-  await chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon48.png',
-    title: '1688 以图搜图',
-    message,
-  });
+  try {
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '1688 以图搜图',
+      message,
+    });
+  } catch (e) {
+    console.warn('[imgNotify]', e);
+  }
 }
 
 chrome.tabs.onRemoved.addListener(() => { isImgSearchCapturing = false; });
@@ -196,21 +200,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'IMG_SEARCH_CAPTURE_REGION') {
+    const tab = sender.tab;
+    if (!tab) { sendResponse({ ok: false, error: 'no-tab' }); return; }
     (async () => {
       try {
         const { rect, dpr } = msg;
         const fullDataUrl = await chrome.tabs.captureVisibleTab(
-          sender.tab.windowId, { format: 'png' }
+          tab.windowId, { format: 'png' }
         );
         const cropped = await imgCropImage(fullDataUrl, rect, dpr);
         if (imgEstimateBytes(cropped) > IMG_MAX_BYTES) {
-          await chrome.tabs.sendMessage(sender.tab.id, { type: 'IMG_SEARCH_TOO_LARGE' }).catch(() => {});
+          await chrome.tabs.sendMessage(tab.id, { type: 'IMG_SEARCH_TOO_LARGE' }).catch(() => {});
           await imgNotify('图片过大，请缩小选区后重试。');
           sendResponse({ ok: false, error: 'too_large' });
           return;
         }
         await imgSetPayload(cropped);
-        await chrome.tabs.create({ url: IMG_SEARCH_URL, openerTabId: sender.tab.id });
+        await chrome.tabs.create({ url: IMG_SEARCH_URL, openerTabId: tab.id });
         sendResponse({ ok: true });
       } catch (e) {
         await imgNotify('截图失败：' + (e?.message ?? '未知错误'));
