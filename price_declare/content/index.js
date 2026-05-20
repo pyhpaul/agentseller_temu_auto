@@ -1309,7 +1309,7 @@
 
     const guardTargetPage = (fn) => () => {
       if (!TARGET_RE.test(location.href)) {
-        window.AgentSeller.showToast('请先访问调价确认页面', 'err')
+        window.AgentSeller.showToast('请先访问商品价格申报', 'err')
         return
       }
       fn()
@@ -1395,7 +1395,7 @@
           <div style="padding:14px;font-size:13px;color:#888;line-height:1.8">
             功能尚未激活，请先访问<br>
             <a href="https://agentseller.temu.com/main/adjust-price-manage/order-price"
-               style="color:#fb7701;text-decoration:none;font-size:12px">调价确认页面</a>
+               style="color:#fb7701;text-decoration:none;font-size:12px">商品价格申报</a>
           </div>
         `
         return
