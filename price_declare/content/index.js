@@ -732,14 +732,13 @@
           await persist({ lastAction: 'max_reached' })
           return
         }
-        const rows = S.findPendingRows()
+        let rows = S.findPendingRows()
         if (rows.length === 0) {
-          // tab badge 仍显示有商品时，DOM 可能还在渲染，等稳定后重试
-          const tabCount = S.readPendingTabCount()
-          if (tabCount !== null && tabCount > 0) {
-            log('info', `DOM 列表为空但 tab 显示 ${tabCount} 条，等待渲染…`)
-            await A.waitListReady({ timeout: 8000 }).catch(() => {})
-            continue
+          // DOM 可能还在渲染，等一次（最多 3s），看是否有行出现
+          const appeared = await A.waitListReady({ timeout: 3000 }).then(() => true).catch(() => false)
+          if (appeared) {
+            rows = S.findPendingRows()
+            if (rows.length > 0) continue  // 有行了，重新进入循环处理
           }
           const pg = S.readPaginationState()
           if (pg.hasNext) {
