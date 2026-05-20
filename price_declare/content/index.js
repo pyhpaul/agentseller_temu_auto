@@ -682,6 +682,7 @@
 
     // 反复切 tab 触发服务器重新请求，直到 count 达到期望值；最多切 10 次后 fallback reload
     const MAX_TAB_ATTEMPTS = 10
+    let prevCur = null
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
         await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
@@ -700,18 +701,23 @@
       await _rawSleep(2000)
       const cur = S.readPendingTabCount()
 
-      // 有期望值时等 count ≤ expectedAfter；无期望值时只要 count 减少即可
-      const synced = expectedAfter != null
-        ? (cur != null && cur <= expectedAfter)
-        : (cur != null && cur < before)
+      if (cur != null) {
+        // 条件 1：达到期望值（处理的数量都已同步）
+        const reachedExpected = expectedAfter != null ? cur <= expectedAfter : cur < before
+        // 条件 2：count 已稳定（连续两次相同且比 before 少）
+        //   — 可能是后台新增了数据导致无法达到期望值，此时也应继续，由 mainLoop 处理新行
+        const stable = prevCur != null && cur === prevCur && cur < before
 
-      if (synced) {
-        log('info', `server list 已同步 (${before} → ${cur}，期望 ≤${expectedAfter ?? before - 1}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
-        await persist({ lastAction: 'refresh_ok' })
-        return
+        if (reachedExpected || stable) {
+          const tag = reachedExpected ? '达到期望' : '已稳定（可能有新增数据）'
+          log('info', `server list 同步完成 (${before} → ${cur}，${tag}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
+          await persist({ lastAction: 'refresh_ok' })
+          return
+        }
       }
 
       log('warn', `count 未达预期 (cur=${cur ?? 'null'}，期望 ≤${expectedAfter ?? before - 1}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
+      prevCur = cur
     }
 
     // 10 次切 tab 都未触发数据更新，切 tab 机制已失效，用 reload 兜底
