@@ -1,0 +1,10 @@
+{
+  "id": "price_declare",
+  "icon": "💰",
+  "label": "价格不调整",
+  "locked": false,
+  "order": 2,
+  "content_script": "content/index.js",
+  "host_permissions": ["https://agentseller.temu.com/*"],
+  "permissions": ["storage"]
+}

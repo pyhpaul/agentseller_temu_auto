@@ -1,0 +1,1267 @@
+// price_declare feature — 合并自 dom-utils / selectors / storage / actions / engine / panel / content
+// 内部使用 window.TPD 命名空间，外部通过 window.AgentSeller.registerFeature 注册到 Hub
+
+// ─── dom-utils.js ───────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms))
+  }
+
+  function randomDelay(min, max, multiplier = 1) {
+    const lo = Math.min(min, max)
+    const hi = Math.max(min, max)
+    const base = lo + Math.random() * (hi - lo)
+    return Math.round(base * multiplier)
+  }
+
+  function nativeSetValue(el, text) {
+    const proto =
+      el.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
+    setter.call(el, text)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  function waitFor(predicate, { timeout = 5000, root = null } = {}) {
+    return new Promise((resolve, reject) => {
+      if (predicate()) return resolve(true)
+      const target = root || document.body
+      let done = false
+      const finish = (fn, arg) => {
+        if (done) return
+        done = true
+        observer.disconnect()
+        clearTimeout(timer)
+        fn(arg)
+      }
+      const observer = new MutationObserver(() => {
+        try {
+          if (predicate()) finish(resolve, true)
+        } catch (e) {
+          finish(reject, e)
+        }
+      })
+      observer.observe(target, { childList: true, subtree: true, attributes: true })
+      const timer = setTimeout(() => finish(reject, new Error('waitFor timeout')), timeout)
+    })
+  }
+
+  function nowTs() {
+    return Date.now()
+  }
+
+  TPD.sleep = sleep
+  TPD.randomDelay = randomDelay
+  TPD.nativeSetValue = nativeSetValue
+  TPD.waitFor = waitFor
+  TPD.nowTs = nowTs
+})()
+
+// ─── selectors.js ────────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+
+  const ROW_SEL = 'tr[data-testid="beast-core-table-body-tr"]'
+  const ROW_LINK_SEL = 'a[data-testid="beast-core-button-link"]'
+  const MODAL_SEL = '[data-testid="beast-core-modal-innerWrapper"]'
+  const PAGINATION_SEL = '[data-testid="beast-core-pagination"]'
+  const REASON_TEXTAREA_SEL = 'textarea[placeholder="请输入不调整原因"]'
+  const RADIO_GROUP_SEL = '[data-testid="beast-core-radioGroup"]'
+  const NEXT_PAGE_SEL = '[data-testid="beast-core-pagination-next"]'
+
+  function findNoAdjustLink(row) {
+    const links = row.querySelectorAll(ROW_LINK_SEL)
+    for (const a of links) {
+      const span = a.querySelector('span')
+      if (span && span.textContent.trim() === '不调整') return a
+    }
+    return null
+  }
+
+  function findPendingRows() {
+    const rows = document.querySelectorAll(ROW_SEL)
+    return [...rows].filter((r) => !!findNoAdjustLink(r))
+  }
+
+  function readHJD(row) {
+    const tds = row.querySelectorAll('td')
+    if (tds.length < 2) return null
+    const div = tds[1].querySelector('div')
+    return div ? div.textContent.trim().split(/\s+/)[0] : null
+  }
+
+  function findActiveModal() {
+    const modals = document.querySelectorAll(MODAL_SEL)
+    const list = [...modals]
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]
+      if (m.offsetParent !== null || m.getClientRects().length > 0) return m
+    }
+    return list[list.length - 1] || null
+  }
+
+  function detectModalType(modal) {
+    if (!modal) return 'unknown'
+    if (modal.querySelector(REASON_TEXTAREA_SEL)) return 'single'
+    if (modal.textContent.includes('多个待确认调价单')) return 'multi'
+    return 'unknown'
+  }
+
+  function findReasonTextarea(modal) {
+    return modal ? modal.querySelector(REASON_TEXTAREA_SEL) : null
+  }
+
+  function findConfirmButton(modal) {
+    if (!modal) return null
+    const btns = modal.querySelectorAll('button')
+    for (const b of btns) {
+      const sp = b.querySelector('span')
+      if (sp && sp.textContent.trim() === '确认') return b
+    }
+    return null
+  }
+
+  function findRadioGroups(modal) {
+    if (!modal) return []
+    return [...modal.querySelectorAll(RADIO_GROUP_SEL)]
+  }
+
+  function findNoAdjustRadio(group) {
+    const labels = group.querySelectorAll('label')
+    for (const lb of labels) {
+      const txt = lb.querySelector('[class*="RD_textWrapper"]')
+      const useTxt = (txt ? txt.textContent : lb.textContent).trim()
+      if (useTxt === '不调整') return lb
+    }
+    return null
+  }
+
+  function readPaginationState() {
+    const root = document.querySelector(PAGINATION_SEL)
+    if (!root) return { current: 1, hasNext: false, totalText: '' }
+    const active = root.querySelector('[class*="PGT_pagerItemActive"]')
+    const current = active ? Number(active.textContent.trim()) || 1 : 1
+    const nextLi = root.querySelector(NEXT_PAGE_SEL)
+    const nextDisabled = nextLi && [...nextLi.classList].some((c) => /disabled/i.test(c))
+    const hasNext = !!nextLi && !nextDisabled
+    const totalEl = root.querySelector('[class*="PGT_totalText"]')
+    return {
+      current,
+      hasNext,
+      totalText: totalEl ? totalEl.textContent.trim() : ''
+    }
+  }
+
+  function findNextPageButton() {
+    const root = document.querySelector(PAGINATION_SEL)
+    return root ? root.querySelector(NEXT_PAGE_SEL) : null
+  }
+
+  function findTabByLabel(label) {
+    const items = document.querySelectorAll('[data-testid="beast-core-tab-itemLabel"]')
+    for (const el of items) {
+      const text = el.textContent.trim()
+      const stripped = text.replace(/\(\d+\)\s*$/, '').trim()
+      if (stripped === label) {
+        return el.closest('[data-testid="beast-core-tab-itemLabel-wrapper"]') || el.parentElement
+      }
+    }
+    return null
+  }
+
+  function isTabActive(tabWrapper) {
+    if (!tabWrapper) return false
+    return [...tabWrapper.classList].some((c) => /TAB_active/.test(c))
+  }
+
+  function readPendingTabCount() {
+    const items = document.querySelectorAll('[data-testid="beast-core-tab-itemLabel"]')
+    for (const el of items) {
+      const text = el.textContent.trim()
+      const m = text.match(/^待卖家确认\((\d+)\)\s*$/)
+      if (m) return Number(m[1])
+    }
+    return null
+  }
+
+  TPD.selectors = {
+    findPendingRows,
+    findNoAdjustLink,
+    readHJD,
+    findActiveModal,
+    detectModalType,
+    findReasonTextarea,
+    findConfirmButton,
+    findRadioGroups,
+    findNoAdjustRadio,
+    readPaginationState,
+    findNextPageButton,
+    findTabByLabel,
+    isTabActive,
+    readPendingTabCount
+  }
+})()
+
+// ─── storage.js ──────────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+  const KEY = 'tpd_state'
+
+  const DEFAULT_SETTINGS = {
+    reason: '已提交活动，没有利润',
+    refreshEvery: 1,
+    stopOnError: true,
+    delayMultiplier: 1.0,
+    maxPerSession: 300,
+    panelCollapsed: false
+  }
+
+  let contextDeadWarned = false
+
+  function isContextValid() {
+    try {
+      return typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id
+    } catch (e) {
+      return false
+    }
+  }
+
+  function warnContextDead() {
+    if (contextDeadWarned) return
+    contextDeadWarned = true
+    console.warn('[TPD] 扩展上下文已失效（扩展被重新加载过）。请 F5 刷新当前页面。')
+  }
+
+  function isContextInvalidatedError(err) {
+    return /context invalidated/i.test(String(err && err.message || err))
+  }
+
+  function defaults() {
+    return {
+      mode: 'IDLE',
+      stats: {
+        success: 0,
+        failed: 0,
+        processedSinceRefresh: 0,
+        totalProcessed: 0,
+        sessionStart: 0
+      },
+      settings: { ...DEFAULT_SETTINGS },
+      snapshot: {
+        beforeReloadCount: null,
+        reloadRetries: 0
+      },
+      lastTouchedAt: 0,
+      lastAction: null,
+      reloadReason: null
+    }
+  }
+
+  function deepMerge(target, patch) {
+    if (!patch || typeof patch !== 'object') return target
+    const out = { ...target }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && typeof target[k] === 'object' && target[k] !== null) {
+        out[k] = deepMerge(target[k], v)
+      } else {
+        out[k] = v
+      }
+    }
+    return out
+  }
+
+  async function loadState() {
+    if (!isContextValid()) {
+      warnContextDead()
+      return defaults()
+    }
+    try {
+      const raw = await chrome.storage.local.get([KEY])
+      const persisted = raw[KEY]
+      if (!persisted) return defaults()
+      return deepMerge(defaults(), persisted)
+    } catch (err) {
+      if (isContextInvalidatedError(err)) {
+        warnContextDead()
+        return defaults()
+      }
+      throw err
+    }
+  }
+
+  async function saveState(patch) {
+    if (!isContextValid()) {
+      warnContextDead()
+      return defaults()
+    }
+    try {
+      const cur = await loadState()
+      const next = deepMerge(cur, patch || {})
+      if (!patch || patch.lastTouchedAt === undefined) {
+        next.lastTouchedAt = Date.now()
+      }
+      await chrome.storage.local.set({ [KEY]: next })
+      return next
+    } catch (err) {
+      if (isContextInvalidatedError(err)) {
+        warnContextDead()
+        return defaults()
+      }
+      throw err
+    }
+  }
+
+  async function reset() {
+    if (!isContextValid()) {
+      warnContextDead()
+      return
+    }
+    try {
+      await chrome.storage.local.remove(KEY)
+    } catch (err) {
+      if (isContextInvalidatedError(err)) {
+        warnContextDead()
+        return
+      }
+      throw err
+    }
+  }
+
+  async function shouldAutoResume() {
+    const st = await loadState()
+    if (st.mode !== 'RUNNING') return false
+    if (st.lastAction !== 'reload') return false
+    if (!st.lastTouchedAt) return false
+    if (Date.now() - st.lastTouchedAt > 60_000) return false
+    return true
+  }
+
+  TPD.storage = {
+    KEY,
+    DEFAULT_SETTINGS,
+    defaults,
+    loadState,
+    saveState,
+    reset,
+    shouldAutoResume
+  }
+})()
+
+// ─── actions.js ──────────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+  const { waitFor, nativeSetValue, randomDelay, sleep } = TPD
+  const S = TPD.selectors
+
+  async function clickNoAdjust(row) {
+    const a = S.findNoAdjustLink(row)
+    if (!a) throw new Error('RowVanished: 不调整 link not found')
+    a.click()
+  }
+
+  async function waitModalAppear({ timeout = 6000 } = {}) {
+    await waitFor(
+      () => {
+        const m = S.findActiveModal()
+        return !!m && S.detectModalType(m) !== 'unknown'
+      },
+      { timeout }
+    )
+    return S.findActiveModal()
+  }
+
+  async function waitModalClose(modal, { timeout = 6000 } = {}) {
+    await waitFor(
+      () => {
+        if (!modal.isConnected) return true
+        if (modal.offsetParent === null && modal.getClientRects().length === 0) return true
+        return false
+      },
+      { timeout }
+    )
+  }
+
+  async function fillReason(modal, text, { multiplier = 1 } = {}) {
+    const ta = S.findReasonTextarea(modal)
+    if (!ta) throw new Error('TextareaMissing')
+    nativeSetValue(ta, text)
+    await sleep(randomDelay(120, 250, multiplier))
+    if (ta.value !== text) nativeSetValue(ta, text)
+  }
+
+  async function selectAllNoAdjust(modal, { multiplier = 1 } = {}) {
+    const groups = S.findRadioGroups(modal)
+    if (groups.length === 0) throw new Error('NoRadioGroups')
+    for (const g of groups) {
+      const label = S.findNoAdjustRadio(g)
+      if (!label) throw new Error('NoAdjustRadioMissing')
+      const input = label.querySelector('input[type="radio"]')
+      if (input) input.click()
+      else label.click()
+      await sleep(randomDelay(120, 280, multiplier))
+    }
+  }
+
+  async function clickConfirm(modal) {
+    const btn = S.findConfirmButton(modal)
+    if (!btn) throw new Error('ConfirmButtonMissing')
+    if (btn.disabled) throw new Error('ButtonDisabled')
+    btn.click()
+  }
+
+  async function reloadPage() {
+    location.reload()
+  }
+
+  async function clickNextPage() {
+    const li = S.findNextPageButton()
+    if (!li) throw new Error('NextPageMissing')
+    li.click()
+  }
+
+  function robustClick(el) {
+    if (!el) return
+    try {
+      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+    } catch (e) {
+      try { el.click() } catch (_) { /* swallow — caller will detect via isTabActive */ }
+    }
+  }
+
+  async function ensureTargetTab(label, { multiplier = 1, timeout = 15000 } = {}) {
+    let tab = S.findTabByLabel(label)
+    if (!tab) {
+      try {
+        await waitFor(() => !!S.findTabByLabel(label), { timeout })
+      } catch (e) {
+        throw new Error('TabNotFound: ' + label)
+      }
+      tab = S.findTabByLabel(label)
+    }
+    if (S.isTabActive(tab)) return
+    robustClick(tab)
+    await sleep(randomDelay(300, 600, multiplier))
+    if (S.isTabActive(tab)) {
+      await waitListReady({ timeout: 10000 })
+      return
+    }
+    const inner = tab.querySelector('[data-testid="beast-core-tab-itemLabel"]')
+    if (inner) {
+      robustClick(inner)
+      await sleep(randomDelay(300, 600, multiplier))
+    }
+    if (!S.isTabActive(tab)) {
+      throw new Error('TabClickIneffective: ' + label)
+    }
+    await waitListReady({ timeout: 10000 })
+  }
+
+  async function waitListReady({ timeout = 15000 } = {}) {
+    await waitFor(
+      () => {
+        const rows = S.findPendingRows()
+        const pg = document.querySelector('[data-testid="beast-core-pagination"]')
+        if (rows.length > 0) return true
+        if (pg && /共有\s*0\s*条/.test(pg.textContent)) return true
+        return false
+      },
+      { timeout }
+    )
+  }
+
+  async function refreshListByTabSwitch({ multiplier = 1 } = {}) {
+    const detourLabels = ['价格申报中', '成功', '失败']
+    let detourTab = null
+    for (const label of detourLabels) {
+      const t = S.findTabByLabel(label)
+      if (t && !S.isTabActive(t)) { detourTab = t; break }
+    }
+    if (!detourTab) throw new Error('NoDetourTab')
+    robustClick(detourTab)
+    await sleep(randomDelay(500, 900, multiplier))
+    await ensureTargetTab('待卖家确认', { multiplier })
+  }
+
+  TPD.actions = {
+    clickNoAdjust,
+    waitModalAppear,
+    waitModalClose,
+    fillReason,
+    selectAllNoAdjust,
+    clickConfirm,
+    reloadPage,
+    clickNextPage,
+    ensureTargetTab,
+    waitListReady,
+    refreshListByTabSwitch
+  }
+})()
+
+// ─── engine.js ───────────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+  const { sleep, randomDelay, nowTs, waitFor } = TPD
+  const S = TPD.selectors
+  const A = TPD.actions
+  const ST = TPD.storage
+
+  const MODES = {
+    IDLE: 'IDLE',
+    RUNNING: 'RUNNING',
+    PAUSED: 'PAUSED',
+    STEPPING: 'STEPPING',
+    STOPPING: 'STOPPING',
+    ERROR: 'ERROR'
+  }
+
+  const FATAL_ERRORS = new Set(['UnknownModalType', 'CaptchaOrLogout'])
+
+  let state = null
+  let listeners = new Set()
+  let runningPromise = null
+
+  function emit() {
+    for (const l of listeners) {
+      try { l(state) } catch (e) { console.warn('TPD listener error', e) }
+    }
+  }
+
+  function subscribe(fn) {
+    listeners.add(fn)
+    return () => listeners.delete(fn)
+  }
+
+  function log(level, msg, hjd = null) {
+    if (!state.log) state.log = []
+    state.log.unshift({ t: new Date().toLocaleTimeString('en-GB'), level, msg, hjd })
+    state.log = state.log.slice(0, 50)
+    emit()
+  }
+
+  async function persist(patch = {}) {
+    state = await ST.saveState({
+      ...patch,
+      mode: state.mode,
+      stats: state.stats,
+      settings: state.settings,
+      snapshot: state.snapshot
+    })
+    emit()
+  }
+
+  async function init() {
+    state = await ST.loadState()
+    if (!state.log) state.log = []
+    emit()
+  }
+
+  function setMode(m) {
+    state.mode = m
+    emit()
+  }
+
+  async function checkpoint() {
+    while (state.mode === MODES.PAUSED) {
+      await sleep(150)
+    }
+    if (state.mode === MODES.STOPPING) {
+      const err = new Error('Stopped')
+      err.code = 'Stopped'
+      throw err
+    }
+  }
+
+  function classifyError(err) {
+    const m = String(err && err.message || err)
+    if (err && err.code && FATAL_ERRORS.has(err.code)) return err.code
+    if (/^RowVanished/.test(m)) return 'RowVanished'
+    if (/^(TextareaMissing|NoRadioGroups|NoAdjustRadioMissing|ConfirmButtonMissing|NextPageMissing)/.test(m)) return 'StructureMissing'
+    if (/^ButtonDisabled/.test(m)) return 'ButtonDisabled'
+    if (/timeout/i.test(m)) return 'TimeoutError'
+    if (/captcha|login|登录|验证/i.test(m)) return 'CaptchaOrLogout'
+    return 'Unknown'
+  }
+
+  function detectRiskSignals() {
+    if (/login|signin|account\/login/i.test(location.pathname)) return 'CaptchaOrLogout'
+    const body = document.body ? document.body.textContent : ''
+    if (/请重新登录|账户已退出|验证码/.test(body)) return 'CaptchaOrLogout'
+    return null
+  }
+
+  async function processOneRow(row) {
+    const hjd = S.readHJD(row) || '(no-hjd)'
+    log('info', '开始处理', hjd)
+    await A.clickNoAdjust(row)
+    await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
+    const modal = await A.waitModalAppear()
+    await checkpoint()
+    const type = S.detectModalType(modal)
+    if (type === 'single') {
+      await A.fillReason(modal, state.settings.reason, { multiplier: state.settings.delayMultiplier })
+      await sleep(randomDelay(200, 500, state.settings.delayMultiplier))
+      await A.clickConfirm(modal)
+      log('info', '单SKU 已确认', hjd)
+    } else if (type === 'multi') {
+      await A.selectAllNoAdjust(modal, { multiplier: state.settings.delayMultiplier })
+      await sleep(randomDelay(200, 500, state.settings.delayMultiplier))
+      await A.clickConfirm(modal)
+      log('info', '多SKU 已确认', hjd)
+    } else {
+      const e = new Error('UnknownModalType')
+      e.code = 'UnknownModalType'
+      throw e
+    }
+    await A.waitModalClose(modal)
+    state.stats.success += 1
+    state.stats.processedSinceRefresh += 1
+    state.stats.totalProcessed += 1
+    log('ok', '✓ 完成', hjd)
+  }
+
+  async function fallbackReload(reason) {
+    state.snapshot.reloadRetries = 0
+    await persist({ lastAction: 'reload', reloadReason: reason })
+    await A.reloadPage()
+  }
+
+  async function triggerRefresh(reason) {
+    state.stats.processedSinceRefresh = 0
+    const before = S.readPendingTabCount()
+    state.snapshot.beforeReloadCount = before
+    state.snapshot.reloadRetries = 0
+    await persist({ lastAction: 'refresh', reloadReason: reason })
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
+      } catch (err) {
+        log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
+        await fallbackReload(reason + '_tab_fail')
+        return
+      }
+
+      if (before == null) {
+        state.snapshot.beforeReloadCount = null
+        await persist({ lastAction: 'refresh_ok' })
+        return
+      }
+
+      const synced = await waitFor(
+        () => {
+          const cur = S.readPendingTabCount()
+          return cur != null && cur < before
+        },
+        { timeout: 5000 }
+      ).then(() => true).catch(() => false)
+
+      if (synced) {
+        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})${attempt > 1 ? ` [${attempt}/3]` : ''}`)
+        state.snapshot.beforeReloadCount = null
+        state.snapshot.reloadRetries = 0
+        await persist({ lastAction: 'refresh_ok' })
+        return
+      }
+
+      if (attempt < 3) {
+        log('warn', `server list stale (count=${S.readPendingTabCount()})，再切 tab ${attempt}/2`)
+        state.snapshot.reloadRetries = attempt
+        await persist({ lastAction: 'refresh_retry' })
+      }
+    }
+
+    log('warn', '切 tab 重试用完，fallback reload 兜底')
+    await fallbackReload(reason + '_after_retries')
+  }
+
+  async function periodicRefreshIfNeeded() {
+    const policy = state.settings.refreshEvery
+    if (policy === 'page') {
+      if (S.findPendingRows().length === 0) {
+        await triggerRefresh('page_done')
+      }
+    } else if (typeof policy === 'number' && policy > 0) {
+      if (state.stats.processedSinceRefresh >= policy) {
+        await triggerRefresh('periodic')
+      }
+    }
+  }
+
+  async function mainLoop() {
+    try {
+      await A.waitListReady().catch(() => {})
+      while (true) {
+        await checkpoint()
+        try {
+          await A.ensureTargetTab('待卖家确认', { multiplier: state.settings.delayMultiplier })
+        } catch (err) {
+          log('error', `切换 tab 失败：${err.message || err}`)
+          setMode(MODES.PAUSED)
+          await persist({ lastAction: 'tab_fail' })
+          return
+        }
+        const risk = detectRiskSignals()
+        if (risk) {
+          log('error', `风控信号：${risk}，停止`)
+          setMode(MODES.ERROR)
+          await persist({ lastAction: 'risk_stop' })
+          return
+        }
+        if (state.stats.totalProcessed >= state.settings.maxPerSession) {
+          log('warn', `已达单会话上限 ${state.settings.maxPerSession}`)
+          setMode(MODES.IDLE)
+          await persist({ lastAction: 'max_reached' })
+          return
+        }
+        const rows = S.findPendingRows()
+        if (rows.length === 0) {
+          const pg = S.readPaginationState()
+          if (pg.hasNext) {
+            await persist({ lastAction: 'next_page' })
+            await A.clickNextPage()
+            await sleep(randomDelay(600, 1100, state.settings.delayMultiplier))
+            await A.waitListReady().catch(() => {})
+            continue
+          }
+          log('ok', `全部完成 (success=${state.stats.success}, failed=${state.stats.failed})`)
+          setMode(MODES.IDLE)
+          state.stats.processedSinceRefresh = 0
+          await persist({ lastAction: 'done' })
+          return
+        }
+
+        try {
+          await processOneRow(rows[0])
+          await persist({ lastAction: 'row_done' })
+        } catch (err) {
+          const kind = classifyError(err)
+          if (kind === 'RowVanished') {
+            log('info', '行已消失，跳过')
+            await persist({ lastAction: 'row_vanished' })
+            continue
+          }
+          state.stats.failed += 1
+          log('error', `✗ ${kind}: ${err.message || err}`)
+          await persist({ lastAction: 'row_failed' })
+          if (FATAL_ERRORS.has(kind) || state.settings.stopOnError) {
+            setMode(MODES.PAUSED)
+            await persist({})
+            log('warn', '已暂停，等待人工')
+            return
+          }
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+          } catch (e) {
+            log('warn', `Esc 派发失败：${e.message || e}`)
+          }
+          await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
+        }
+
+        await checkpoint()
+        await periodicRefreshIfNeeded()
+
+        if (state.mode === MODES.STEPPING) {
+          setMode(MODES.PAUSED)
+          log('info', '单步完成，已暂停')
+          await persist({ lastAction: 'step_done' })
+          return
+        }
+
+        await sleep(randomDelay(400, 900, state.settings.delayMultiplier))
+      }
+    } catch (err) {
+      if (err && err.code === 'Stopped') {
+        log('info', '用户停止')
+        setMode(MODES.IDLE)
+        state.stats.processedSinceRefresh = 0
+        await persist({ lastAction: 'stopped' })
+        return
+      }
+      log('error', `未捕获异常：${err.message || err}`)
+      setMode(MODES.ERROR)
+      await persist({ lastAction: 'crash' })
+    }
+  }
+
+  async function start() {
+    if (runningPromise) return
+    const pendingCount = S.readPendingTabCount()
+    if (pendingCount === 0) {
+      log('ok', '✓ 当前无待处理商品，无需开始')
+      return
+    }
+    if (state.mode === MODES.IDLE) {
+      state.stats = ST.defaults().stats
+      state.stats.sessionStart = nowTs()
+    }
+    setMode(MODES.RUNNING)
+    await persist({ lastAction: 'start' })
+    runningPromise = mainLoop().finally(() => { runningPromise = null })
+  }
+
+  function pause() {
+    if (state.mode === MODES.RUNNING || state.mode === MODES.STEPPING) {
+      setMode(MODES.PAUSED)
+    }
+  }
+
+  async function step() {
+    if (state.mode === MODES.RUNNING) return
+    setMode(MODES.STEPPING)
+    await persist({ lastAction: 'step' })
+    if (!runningPromise) {
+      runningPromise = mainLoop().finally(() => { runningPromise = null })
+    }
+  }
+
+  async function stop() {
+    if (runningPromise) {
+      setMode(MODES.STOPPING)
+    } else {
+      setMode(MODES.IDLE)
+      state.stats.processedSinceRefresh = 0
+      await persist({ lastAction: 'stopped' })
+    }
+  }
+
+  async function resetStats() {
+    state.stats = ST.defaults().stats
+    state.log = []
+    await persist({ lastAction: 'reset_stats' })
+  }
+
+  async function updateSettings(patch) {
+    state.settings = { ...state.settings, ...patch }
+    await persist({ lastAction: 'settings' })
+  }
+
+  async function autoResumeIfNeeded() {
+    if (await ST.shouldAutoResume()) {
+      log('info', '刷新后自动续跑')
+      try {
+        await A.ensureTargetTab('待卖家确认', { multiplier: state.settings.delayMultiplier })
+      } catch (e) {
+        log('warn', `续跑时切 tab 失败：${e.message || e}（mainLoop 会重试）`)
+      }
+      await A.waitListReady().catch(() => {})
+
+      const before = state.snapshot && state.snapshot.beforeReloadCount
+      if (before != null) {
+        const ok = await waitFor(
+          () => {
+            const cur = S.readPendingTabCount()
+            return cur != null && cur < before
+          },
+          { timeout: 5000 }
+        ).then(() => true).catch(() => false)
+
+        if (!ok) {
+          const retries = (state.snapshot.reloadRetries || 0) + 1
+          const curCount = S.readPendingTabCount()
+          if (retries <= 2) {
+            log('warn', `server list 未刷新 (count=${curCount} 应 < ${before})，重试 reload ${retries}/2`)
+            state.snapshot.reloadRetries = retries
+            await persist({ lastAction: 'reload', reloadReason: 'stale_count' })
+            await A.reloadPage()
+            return
+          }
+          log('error', `server list 持续 stale (${retries} 次 reload 仍 count=${curCount})，暂停等人工`)
+          setMode(MODES.PAUSED)
+          state.snapshot.beforeReloadCount = null
+          state.snapshot.reloadRetries = 0
+          await persist({ lastAction: 'stale_giveup' })
+          return
+        }
+
+        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})`)
+        state.snapshot.beforeReloadCount = null
+        state.snapshot.reloadRetries = 0
+      }
+
+      await persist({ lastAction: 'resumed' })
+      await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
+      if (!runningPromise) {
+        runningPromise = mainLoop().finally(() => { runningPromise = null })
+      }
+    } else if (state.mode === MODES.RUNNING) {
+      setMode(MODES.IDLE)
+      await persist({ lastAction: 'stale_clear' })
+    }
+  }
+
+  TPD.engine = {
+    MODES,
+    init,
+    subscribe,
+    getState: () => state,
+    start,
+    pause,
+    step,
+    stop,
+    resetStats,
+    updateSettings,
+    autoResumeIfNeeded
+  }
+})()
+
+// ─── panel.js ────────────────────────────────────────────────────────────────
+;(function () {
+  const TPD = (window.TPD = window.TPD || {})
+
+  const PANEL_CSS_TEXT = `:host {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 340px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 2147483600;
+  font-size: 12px;
+  color: #222;
+  user-select: none;
+}
+.wrap.collapsed {
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 20px;
+  cursor: pointer;
+}
+.wrap.collapsed .body, .wrap.collapsed .head .title, .wrap.collapsed .head .btns { display: none; }
+.wrap.collapsed::before {
+  content: "T";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-weight: 700;
+  color: #fb7701;
+}
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  cursor: move;
+}
+.head .title { font-weight: 600; color: #333; }
+.head .btns button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 4px;
+  color: #666;
+}
+.section { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+.section:last-child { border-bottom: none; }
+.stat-row { display: flex; justify-content: space-between; line-height: 1.6; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.IDLE { background: #999; }
+.dot.RUNNING { background: #27ae60; animation: pulse 1.2s infinite; }
+.dot.PAUSED { background: #f39c12; }
+.dot.STEPPING { background: #2980b9; }
+.dot.STOPPING { background: #c0392b; }
+.dot.ERROR { background: #c0392b; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }
+.controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.controls button {
+  padding: 6px 8px;
+  border: 1px solid #d9d9d9;
+  background: #fafafa;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.controls button:disabled { color: #bbb; cursor: not-allowed; }
+.controls button.primary { background: #fb7701; color: #fff; border-color: #fb7701; }
+.controls button.primary:disabled { background: #ffd9b5; border-color: #ffd9b5; color: #fff; }
+.settings label { display: flex; justify-content: space-between; align-items: center; margin: 4px 0; gap: 8px; }
+.settings input[type="text"], .settings select { flex: 1; padding: 3px 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+.log {
+  max-height: 160px;
+  overflow-y: auto;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.log .item.ok { color: #27ae60; }
+.log .item.warn { color: #d68910; }
+.log .item.error { color: #c0392b; }
+.log .item.info { color: #555; }
+`
+
+  let host, root, refs = {}
+
+  function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') node.className = v
+      else if (k === 'on') for (const [e, h] of Object.entries(v)) node.addEventListener(e, h)
+      else if (k === 'html') node.innerHTML = v
+      else node.setAttribute(k, v)
+    }
+    for (const c of children.flat()) {
+      if (c == null) continue
+      node.append(c.nodeType ? c : document.createTextNode(c))
+    }
+    return node
+  }
+
+  function renderPanel(state) {
+    if (!refs.wrap) return
+    if (!state || !state.settings || !state.stats) return
+    const collapsed = state.settings.panelCollapsed
+    refs.wrap.classList.toggle('collapsed', collapsed)
+    refs.modeDot.className = `dot ${state.mode}`
+    refs.modeText.textContent = state.mode
+    const pg = TPD.selectors.readPaginationState()
+    refs.pageInfo.textContent = `当前页 ${pg.current}${pg.totalText ? ' | ' + pg.totalText : ''}`
+    refs.batch.textContent = `本次已处理: ${state.stats.totalProcessed}`
+    refs.success.textContent = `✓ 成功 ${state.stats.success}`
+    refs.failed.textContent = `✗ 失败 ${state.stats.failed}`
+
+    const m = state.mode
+    refs.btnStart.disabled = m === 'RUNNING' || m === 'STOPPING'
+    refs.btnPause.disabled = m !== 'RUNNING' && m !== 'STEPPING'
+    refs.btnStep.disabled  = m === 'RUNNING' || m === 'STOPPING'
+    refs.btnStop.disabled  = m === 'IDLE'
+
+    refs.reason.value = state.settings.reason
+    refs.refreshEvery.value = String(state.settings.refreshEvery)
+    refs.stopOnError.checked = !!state.settings.stopOnError
+    refs.delayMul.value = String(state.settings.delayMultiplier)
+
+    refs.log.innerHTML = ''
+    for (const it of (state.log || [])) {
+      const line = el('div', { class: `item ${it.level}` },
+        `${it.t} ${it.hjd ? '[' + it.hjd + '] ' : ''}${it.msg}`
+      )
+      refs.log.append(line)
+    }
+  }
+
+  function buildDom() {
+    host = document.createElement('div')
+    host.id = 'tpd-panel-host'
+    document.documentElement.append(host)
+    root = host.attachShadow({ mode: 'open' })
+
+    const style = document.createElement('style')
+    style.textContent = PANEL_CSS_TEXT
+    root.append(style)
+
+    const head = el('div', { class: 'head' },
+      el('span', { class: 'title' }, '⚙ Temu 不调整自动化'),
+      el('span', { class: 'btns' },
+        el('button', { on: { click: toggleCollapse } }, '─')
+      )
+    )
+
+    const status = el('div', { class: 'section' },
+      el('div', { class: 'stat-row' },
+        el('span', {}, el('span', { class: 'dot IDLE' }), el('span', { class: 'mode-text' }, 'IDLE')),
+        el('span', { class: 'page-info' }, '当前页 -')
+      ),
+      el('div', { class: 'stat-row' },
+        el('span', { class: 'batch' }, '本次已处理: 0'),
+        el('span', { class: 'success' }, '✓ 0'),
+        el('span', { class: 'failed' }, '✗ 0')
+      )
+    )
+    refs.modeDot = status.querySelector('.dot')
+    refs.modeText = status.querySelector('.mode-text')
+    refs.pageInfo = status.querySelector('.page-info')
+    refs.batch = status.querySelector('.batch')
+    refs.success = status.querySelector('.success')
+    refs.failed = status.querySelector('.failed')
+
+    const controls = el('div', { class: 'section controls' },
+      refs.btnStart = el('button', { class: 'primary', on: { click: () => TPD.engine.start() } }, '▶ 开始'),
+      refs.btnPause = el('button', { on: { click: () => TPD.engine.pause() } }, '⏸ 暂停'),
+      refs.btnStep  = el('button', { on: { click: () => TPD.engine.step() } }, '→ 单步'),
+      refs.btnStop  = el('button', { on: { click: () => TPD.engine.stop() } }, '■ 停止'),
+      el('button', { on: { click: () => TPD.engine.resetStats() } }, '↻ 重置'),
+      el('button', { on: { click: toggleCollapse } }, '折叠')
+    )
+
+    refs.reason = el('input', { type: 'text', value: '' })
+    refs.refreshEvery = (() => {
+      const s = el('select', {})
+      for (const v of ['page', '1', '3', '5']) {
+        s.append(el('option', { value: v }, v === 'page' ? '整页' : v))
+      }
+      return s
+    })()
+    refs.stopOnError = el('input', { type: 'checkbox' })
+    refs.delayMul = (() => {
+      const s = el('select', {})
+      for (const v of ['0.5', '1', '1.5', '2', '3']) s.append(el('option', { value: v }, `${v}x`))
+      return s
+    })()
+
+    const settings = el('div', { class: 'section settings' },
+      el('label', {}, '不调整原因', refs.reason),
+      el('label', {}, '每 N 条刷新', refs.refreshEvery),
+      el('label', {}, '失败时暂停', refs.stopOnError),
+      el('label', {}, '延时倍速', refs.delayMul)
+    )
+
+    refs.reason.addEventListener('change', () => TPD.engine.updateSettings({ reason: refs.reason.value }))
+    refs.refreshEvery.addEventListener('change', () => {
+      const v = refs.refreshEvery.value
+      TPD.engine.updateSettings({ refreshEvery: v === 'page' ? 'page' : Number(v) })
+    })
+    refs.stopOnError.addEventListener('change', () => TPD.engine.updateSettings({ stopOnError: refs.stopOnError.checked }))
+    refs.delayMul.addEventListener('change', () => TPD.engine.updateSettings({ delayMultiplier: Number(refs.delayMul.value) }))
+
+    refs.log = el('div', { class: 'log' })
+    const logSection = el('div', { class: 'section' },
+      el('div', {}, '日志（最新 50 条）'),
+      refs.log
+    )
+
+    refs.wrap = el('div', { class: 'wrap' }, head, status, controls, settings, logSection)
+    refs.wrap.addEventListener('click', () => {
+      if (refs.wrap.classList.contains('collapsed')) toggleCollapse()
+    })
+    root.append(refs.wrap)
+
+    makeDraggable(head, refs.wrap)
+  }
+
+  function toggleCollapse() {
+    const cur = TPD.engine.getState().settings.panelCollapsed
+    TPD.engine.updateSettings({ panelCollapsed: !cur })
+  }
+
+  function makeDraggable(handle, target) {
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.closest && e.target.closest('button, a, input, select, textarea')) return
+      dragging = true
+      sx = e.clientX; sy = e.clientY
+      const r = target.getBoundingClientRect()
+      ox = r.left; oy = r.top
+      e.preventDefault()
+    })
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return
+      const nx = ox + (e.clientX - sx)
+      const ny = oy + (e.clientY - sy)
+      target.style.left = `${nx}px`
+      target.style.top = `${ny}px`
+      target.style.right = 'auto'
+      target.style.bottom = 'auto'
+    })
+    document.addEventListener('mouseup', () => { dragging = false })
+  }
+
+  function mount() {
+    if (host) return
+    if (!TPD.engine) {
+      console.warn('[TPD] engine not loaded; panel.mount aborted')
+      return
+    }
+    buildDom()
+    TPD.engine.subscribe(renderPanel)
+    renderPanel(TPD.engine.getState())
+  }
+
+  TPD.panel = { mount }
+})()
+
+// ─── AgentSeller 注册入口 ────────────────────────────────────────────────────
+;(function () {
+  const TARGET_RE = /\/main\/adjust-price-manage\/order-price/
+
+  let bootstrapped = false
+
+  async function bootstrap() {
+    if (bootstrapped) return
+    if (!TARGET_RE.test(location.href)) return
+    bootstrapped = true
+
+    const TPD = window.TPD
+    if (!TPD || !TPD.engine || !TPD.panel) {
+      console.warn('[price_declare] TPD modules missing; bootstrap aborted')
+      return
+    }
+
+    await TPD.engine.init()
+    TPD.panel.mount()
+    try {
+      await TPD.actions.ensureTargetTab('待卖家确认')
+    } catch (e) {
+      console.warn('[price_declare] ensureTargetTab failed at bootstrap:', e.message || e)
+    }
+    try {
+      await TPD.actions.waitListReady({ timeout: 15000 })
+    } catch (e) {
+      // 列表未就绪时不阻塞
+    }
+    await TPD.engine.autoResumeIfNeeded()
+  }
+
+  window.AgentSeller.registerFeature({
+    id: 'price_declare',
+    icon: '💰',
+    label: '价格不调整',
+    order: 2,
+    init() {
+      // 页面就绪后激活（若当前已在目标 URL 则直接启动）
+      if (document.readyState === 'complete') {
+        setTimeout(bootstrap, 800)
+      } else {
+        window.addEventListener('load', () => setTimeout(bootstrap, 800), { once: true })
+      }
+
+      // SPA 导航后重新检查 URL
+      window.AgentSeller.onPageChange(() => {
+        if (TARGET_RE.test(location.href) && !bootstrapped) {
+          setTimeout(bootstrap, 300)
+        }
+      })
+    },
+    render(viewEl) {
+      // price_declare 有自己的 Shadow DOM 面板，Hub view 仅提供状态摘要和跳转链接
+      const TPD = window.TPD
+      const state = TPD?.engine?.getState?.()
+      const mode = state?.mode ?? '未激活'
+      const stats = state?.stats
+      viewEl.innerHTML = `
+        <div style="padding:14px;font-size:13px;color:#444;line-height:1.7">
+          <div style="margin-bottom:8px">
+            <strong>价格不调整自动化</strong>
+            <span style="margin-left:8px;color:${mode === 'RUNNING' ? '#27ae60' : '#999'}">${mode}</span>
+          </div>
+          ${stats ? `<div>✓ 成功 ${stats.success} &nbsp; ✗ 失败 ${stats.failed} &nbsp; 共处理 ${stats.totalProcessed}</div>` : ''}
+          <div style="margin-top:10px">
+            <a href="https://agentseller.temu.com/main/adjust-price-manage/order-price"
+               style="color:#fb7701;text-decoration:none">
+              → 前往调价确认页面
+            </a>
+          </div>
+        </div>
+      `
+    }
+  })
+})()
