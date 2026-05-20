@@ -158,11 +158,37 @@ python build/package_all.py                    # 含 extension + EXE + install.b
 
 **反模式**：跳过第 2-3 步，在 feature 分支内同时改 core 和 feature 代码。会让 core 改动被夹带在 feature PR 里，其他 worktree 拿不到 core 升级。
 
-## Worktree 物理注意点
+## 多 Agent 并发开发硬约束
 
-1. **每个 worktree 各自的 dist/**：`dist/` 是 gitignored，物理隔离。Chrome 一次只能加载一个 `dist/extension/`，谁要调试就让 chrome 指向谁的 worktree。
-2. **Native host 注册表是全局的**：Windows 注册表 `HKCU\Software\Google\Chrome\NativeMessagingHosts\<host_name>` 只能指向一个 EXE。多 worktree 同时调试 native_host 需协调（跑各自的 `dev_install.bat` 切换）。这是 Chrome Native Messaging 的限制，与架构无关。
-3. **多个 `dev.py` 同时运行无冲突**：watchdog 不占端口。
+当**第二个及以后**的 agent 在本项目开发时，**必须**先建 worktree，禁止共用同一工作目录。否则一个 agent 的中间状态（如未完成的 `feature.json`）会破坏其他 agent 的 build。
+
+### 启动新 agent 之前的强制步骤
+
+```bash
+git fetch origin --prune
+git switch main && git pull --ff-only origin main
+git worktree add ../wt-<feature_or_task_name> -b feature/<branch_name>
+# 在 ../wt-<feature_or_task_name>/ 内启动新 agent
+```
+
+### 物理隔离边界
+
+| 项 | 隔离状态 | 说明 |
+|----|---------|------|
+| 源码 / feature 目录 | ✓ worktree 各自一份 | feature.json / content/*.js 互不可见 |
+| `dist/extension/` 输出 | ✓ 各自构建互不覆盖 | `dist/` 是 gitignored |
+| `build_extension.py` 扫描范围 | ✓ 只扫本 worktree 的 `*/feature.json` | 失败也不连累其他 worktree |
+| 多个 `dev.py` 并行 | ✓ 无冲突 | watchdog 不占端口 |
+| Chrome Extension 加载点 | ✗ 全局唯一 | 一次只能加载一个 worktree 的 dist，调试时轮流 |
+| Windows Native Host 注册表 | ✗ 全局唯一 | `HKCU\Software\Google\Chrome\NativeMessagingHosts\<host_name>` 只能指向一个 EXE，多 worktree 同时调试 native_host 需轮流跑各自的 `dev_install.bat` |
+
+### 未完成 feature 的提交约束（避免连累他人 build）
+
+- `feature.json` 一旦出现在某目录下，`build_extension.py` 就当生效 feature 处理
+- **声明的 `content_script` 文件未建好之前，禁止提前在工作目录创建 `feature.json`**
+- 否则任何人（含其他 worktree 的 agent）跑全量 build 都会 hard fail
+- 而 `build_extension.py` 每次 build 先 `clean_dist` 清空整个 `dist/`，**失败的 build 会留下空 dist 目录**（连本 worktree 上次成功的产物也没了）
+- 安全做法：feature 业务代码完整可跑后，才把 `feature.json` 一并落地
 
 ## Native Messaging Protocol
 
