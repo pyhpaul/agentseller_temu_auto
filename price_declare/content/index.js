@@ -644,50 +644,30 @@
   async function triggerRefresh(reason) {
     state.stats.processedSinceRefresh = 0
     const before = S.readPendingTabCount()
-    state.snapshot.beforeReloadCount = before
-    state.snapshot.reloadRetries = 0
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
-      } catch (err) {
-        log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
-        await fallbackReload(reason + '_tab_fail')
-        return
-      }
+    try {
+      await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
+    } catch (err) {
+      log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
+      await fallbackReload(reason + '_tab_fail')
+      return
+    }
 
-      if (before == null) {
-        state.snapshot.beforeReloadCount = null
-        await persist({ lastAction: 'refresh_ok' })
-        return
-      }
-
+    // 切 tab 后给服务器最多 2s 推送更新；超时直接继续，不重试不 reload
+    if (before != null) {
       const synced = await waitFor(
-        () => {
-          const cur = S.readPendingTabCount()
-          return cur != null && cur < before
-        },
-        { timeout: 5000 }
+        () => { const cur = S.readPendingTabCount(); return cur != null && cur < before },
+        { timeout: 2000 }
       ).then(() => true).catch(() => false)
-
       if (synced) {
-        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})${attempt > 1 ? ` [${attempt}/3]` : ''}`)
-        state.snapshot.beforeReloadCount = null
-        state.snapshot.reloadRetries = 0
-        await persist({ lastAction: 'refresh_ok' })
-        return
-      }
-
-      if (attempt < 3) {
-        log('warn', `server list stale (count=${S.readPendingTabCount()})，再切 tab ${attempt}/2`)
-        state.snapshot.reloadRetries = attempt
-        await persist({ lastAction: 'refresh_retry' })
+        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})`)
+      } else {
+        log('info', `server list 暂未更新，继续执行`)
       }
     }
 
-    log('warn', '切 tab 重试用完，fallback reload 兜底')
-    await fallbackReload(reason + '_after_retries')
+    await persist({ lastAction: 'refresh_ok' })
   }
 
   async function periodicRefreshIfNeeded() {
@@ -731,6 +711,13 @@
         }
         const rows = S.findPendingRows()
         if (rows.length === 0) {
+          // tab badge 仍显示有商品时，DOM 可能还在渲染，等稳定后重试
+          const tabCount = S.readPendingTabCount()
+          if (tabCount !== null && tabCount > 0) {
+            log('info', `DOM 列表为空但 tab 显示 ${tabCount} 条，等待渲染…`)
+            await A.waitListReady({ timeout: 8000 }).catch(() => {})
+            continue
+          }
           const pg = S.readPaginationState()
           if (pg.hasNext) {
             await persist({ lastAction: 'next_page' })
