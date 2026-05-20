@@ -60,6 +60,26 @@ def scan_features():
     return features
 
 
+def collect_content_matches(features):
+    """聚合各 feature 的 content_matches（缺省回退到 host_permissions），结果排序去重。"""
+    return sorted({
+        m
+        for f in features
+        for m in f.get('content_matches', f.get('host_permissions', []))
+    })
+
+
+def collect_extra_content_scripts(features):
+    """收集所有 feature 的 extra_content_scripts，将 js 路径补全为 features/<id>/<path>。"""
+    result = []
+    for f in features:
+        for ecs in f.get('extra_content_scripts', []):
+            ecs_copy = dict(ecs)
+            ecs_copy['js'] = [f'features/{f["id"]}/{js}' for js in ecs_copy.get('js', [])]
+            result.append(ecs_copy)
+    return result
+
+
 def copy_feature_assets(features):
     """拷贝每个 feature 的 content_script 到 dist/extension/features/<id>/"""
     for f in features:
@@ -73,6 +93,21 @@ def copy_feature_assets(features):
         print(f'[build] {rel} → dist/extension/features/{f["id"]}/{f["content_script"]}')
 
 
+def copy_extra_cs_assets(features):
+    """拷贝 extra_content_scripts 引用的 js 文件到 dist/extension/features/<id>/。"""
+    for f in features:
+        src_dir = f['_dir']
+        for ecs in f.get('extra_content_scripts', []):
+            for js_path in ecs.get('js', []):
+                src = src_dir / js_path
+                dst = DIST / 'features' / f['id'] / js_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                rel = src.relative_to(ROOT)
+                _inject_source_url(dst, str(rel))
+                print(f'[build] extra cs: {rel} → dist/extension/features/{f["id"]}/{js_path}')
+
+
 def render_manifest(features=None):
     """读模板 → 替换占位符 → 写 dist/extension/manifest.json。
     v1 features=None，仅写 core 的 content_scripts 占位（空数组）。
@@ -82,6 +117,8 @@ def render_manifest(features=None):
 
     permissions = sorted({'nativeMessaging', *(p for f in features for p in f.get('permissions', []))})
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
+    content_script_matches = collect_content_matches(features)
+    extra_cs = collect_extra_content_scripts(features)
     content_scripts_js = (
         ['content/utils.js', 'content/ui.js', 'content/registry.js', 'content/core.js']
         + [f'features/{f["id"]}/{f["content_script"]}' for f in sorted(features, key=lambda x: x.get('order', 999))]
@@ -89,8 +126,10 @@ def render_manifest(features=None):
 
     template['permissions'] = permissions
     template['host_permissions'] = host_permissions
-    template['content_scripts'][0]['matches'] = host_permissions
+    template['content_scripts'][0]['matches'] = content_script_matches
     template['content_scripts'][0]['js'] = content_scripts_js
+    for ecs in extra_cs:
+        template['content_scripts'].append(ecs)
 
     (DIST / 'manifest.json').write_text(json.dumps(template, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'[build] manifest.json generated  ({len(features)} features, {len(content_scripts_js)} content scripts)')
@@ -101,6 +140,7 @@ def build_all():
     copy_core_assets()
     features = scan_features()
     copy_feature_assets(features)
+    copy_extra_cs_assets(features)
     render_manifest(features=features)
     print(f'[build] done → {DIST}')
 
