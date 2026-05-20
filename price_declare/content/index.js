@@ -225,7 +225,6 @@
 
   const DEFAULT_SETTINGS = {
     reason: '已提交活动，没有利润',
-    refreshEvery: 'page',
     stopOnError: true,
     delayMultiplier: 1.0,
     maxPerSession: 300,
@@ -669,20 +668,14 @@
     await A.reloadPage()
   }
 
-  async function triggerRefresh(reason) {
-    // 记录本轮处理了几次操作，用于计算期望的 count 目标值
-    const processedCount = state.stats.processedSinceRefresh
+  // targetHJD: 刚处理完的行的 HJD，切 tab 后等该行从列表消失才继续
+  async function triggerRefresh(reason, targetHJD) {
     state.stats.processedSinceRefresh = 0
-    const before = S.readPendingTabCount()
-    // 期望刷新后 count 应降至 before - processedCount（或更低）
-    const expectedAfter = (before != null && processedCount > 0) ? before - processedCount : null
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    log('info', `触发刷新：处理了 ${processedCount} 次，before=${before}，期望 count ≤ ${expectedAfter ?? '?'}`)
+    log('info', `触发刷新，等待行 ${targetHJD ?? '?'} 消失`)
 
-    // 反复切 tab 触发服务器重新请求，直到 count 达到期望值；最多切 10 次后 fallback reload
-    const MAX_TAB_ATTEMPTS = 10
-    let prevCur = null
+    const MAX_TAB_ATTEMPTS = 5
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
         await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
@@ -692,50 +685,24 @@
         return
       }
 
-      if (before == null) {
+      await _rawSleep(2000)
+
+      // 目标行已消失 → 服务器确认更新，可以继续
+      const stillPresent = targetHJD
+        ? S.findPendingRows().some(r => S.readHJD(r) === targetHJD)
+        : false
+      if (!stillPresent) {
+        log('info', `行 ${targetHJD ?? '?'} 已消失，同步完成 [${attempt}/${MAX_TAB_ATTEMPTS}]`)
         await persist({ lastAction: 'refresh_ok' })
         return
       }
 
-      // 等 2s 给 badge 时间更新，再读 count
-      await _rawSleep(2000)
-      const cur = S.readPendingTabCount()
-
-      if (cur != null) {
-        // 条件 1：达到期望值（处理的数量都已同步）
-        const reachedExpected = expectedAfter != null ? cur <= expectedAfter : cur < before
-        // 条件 2：count 已稳定（连续两次相同且比 before 少）
-        //   — 可能是后台新增了数据导致无法达到期望值，此时也应继续，由 mainLoop 处理新行
-        const stable = prevCur != null && cur === prevCur && cur < before
-
-        if (reachedExpected || stable) {
-          const tag = reachedExpected ? '达到期望' : '已稳定（可能有新增数据）'
-          log('info', `server list 同步完成 (${before} → ${cur}，${tag}) [${attempt}/${MAX_TAB_ATTEMPTS}]`)
-          await persist({ lastAction: 'refresh_ok' })
-          return
-        }
-      }
-
-      log('warn', `count 未达预期 (cur=${cur ?? 'null'}，期望 ≤${expectedAfter ?? before - 1}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
-      prevCur = cur
+      log('warn', `行 ${targetHJD ?? '?'} 仍在列表 [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
     }
 
-    // 10 次切 tab 都未触发数据更新，切 tab 机制已失效，用 reload 兜底
-    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次仍未同步，fallback reload`)
+    // 5 次切 tab 后行仍未消失，切 tab 机制失效，用 reload 兜底
+    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次行仍未消失，fallback reload`)
     await fallbackReload(reason + '_sync_fail')
-  }
-
-  async function periodicRefreshIfNeeded() {
-    const policy = state.settings.refreshEvery
-    if (policy === 'page') {
-      if (S.findPendingRows().length === 0) {
-        await triggerRefresh('page_done')
-      }
-    } else if (typeof policy === 'number' && policy > 0) {
-      if (state.stats.processedSinceRefresh >= policy) {
-        await triggerRefresh('periodic')
-      }
-    }
   }
 
   async function mainLoop() {
@@ -787,6 +754,7 @@
           return
         }
 
+        const targetHJD = S.readHJD(rows[0])
         try {
           await processOneRow(rows[0])
           await persist({ lastAction: 'row_done' })
@@ -823,7 +791,7 @@
         }
 
         await checkpoint()
-        await periodicRefreshIfNeeded()
+        await triggerRefresh('per_row', targetHJD)
 
         if (state.mode === MODES.STEPPING) {
           setMode(MODES.PAUSED)
@@ -1292,8 +1260,6 @@
     // 设置字段只在非焦点时同步，避免打断用户输入
     const reasonInput = el.querySelector('.tpd-reason')
     if (reasonInput && document.activeElement !== reasonInput) reasonInput.value = state.settings.reason
-    const refreshEvery = el.querySelector('.tpd-refresh-every')
-    if (refreshEvery) refreshEvery.value = String(state.settings.refreshEvery)
     const stopOnError = el.querySelector('.tpd-stop-on-error')
     if (stopOnError) stopOnError.checked = !!state.settings.stopOnError
     const delayMul = el.querySelector('.tpd-delay-mul')
@@ -1328,12 +1294,6 @@
         </div>
         <div class="tpd-settings" style="border-top:1px solid #f0f0f0;padding-top:7px;margin-bottom:7px">
           <label><span style="color:#888">不调整原因</span><input class="tpd-reason" type="text"></label>
-          <label><span style="color:#888">每N条刷新</span>
-            <select class="tpd-refresh-every">
-              <option value="page">整页</option>
-              <option value="1">1</option><option value="3">3</option><option value="5">5</option>
-            </select>
-          </label>
           <label><span style="color:#888">失败时暂停</span><input class="tpd-stop-on-error" type="checkbox"></label>
           <label><span style="color:#888">延时倍速</span>
             <select class="tpd-delay-mul">
@@ -1363,10 +1323,6 @@
 
     viewEl.querySelector('.tpd-reason').addEventListener('change', e =>
       TPD.engine.updateSettings({ reason: e.target.value }))
-    viewEl.querySelector('.tpd-refresh-every').addEventListener('change', e => {
-      const v = e.target.value
-      TPD.engine.updateSettings({ refreshEvery: v === 'page' ? 'page' : Number(v) })
-    })
     viewEl.querySelector('.tpd-stop-on-error').addEventListener('change', e =>
       TPD.engine.updateSettings({ stopOnError: e.target.checked }))
     viewEl.querySelector('.tpd-delay-mul').addEventListener('change', e =>
