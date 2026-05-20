@@ -4,6 +4,7 @@ const IMG_PAYLOAD_KEY        = 'imagePayload';
 const IMG_MAX_BYTES          = 4 * 1024 * 1024;
 
 let   isImgSearchCapturing   = false;
+let   imgSearchSourceTabId   = null;
 
 function enableSessionStorageAccess() {
   chrome.storage.session.setAccessLevel({
@@ -61,8 +62,10 @@ async function imgNotify(message) {
 }
 
 chrome.tabs.onRemoved.addListener(() => { isImgSearchCapturing = false; });
-chrome.tabs.onUpdated.addListener((_tabId, info) => {
-  if (info.status === 'loading') isImgSearchCapturing = false;
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === 'loading' && tabId === imgSearchSourceTabId) {
+    isImgSearchCapturing = false;
+  }
 });
 // ── end image_search_1688 ────────────────────────────────────────────────────
 
@@ -183,6 +186,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           files: ['features/image_search_1688/content/overlay.js'],
         });
         await chrome.tabs.sendMessage(tab.id, { type: 'IMG_SEARCH_START' });
+        imgSearchSourceTabId = tab.id;
         sendResponse({ ok: true });
       } catch (e) {
         isImgSearchCapturing = false;
@@ -223,6 +227,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: String(e) });
       } finally {
         isImgSearchCapturing = false;
+        imgSearchSourceTabId = null;
       }
     })();
     return true;

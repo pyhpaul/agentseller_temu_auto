@@ -39,6 +39,7 @@
     root = selectionEl = toolbarEl = null;
     start = rect = null;
     if (toastTimer) clearTimeout(toastTimer);
+    window.__img_search_overlay_loaded__ = false;
   }
 
   function onMouseDown(e) {
