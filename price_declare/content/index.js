@@ -646,27 +646,39 @@
     const before = S.readPendingTabCount()
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    try {
-      await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
-    } catch (err) {
-      log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
-      await fallbackReload(reason + '_tab_fail')
-      return
-    }
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
+      } catch (err) {
+        log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
+        await fallbackReload(reason + '_tab_fail')
+        return
+      }
 
-    // 切 tab 后给服务器最多 2s 推送更新；超时直接继续，不重试不 reload
-    if (before != null) {
+      if (before == null) {
+        await persist({ lastAction: 'refresh_ok' })
+        return
+      }
+
+      // 每次切 tab 后等最多 3s 确认服务器已更新
       const synced = await waitFor(
         () => { const cur = S.readPendingTabCount(); return cur != null && cur < before },
-        { timeout: 2000 }
+        { timeout: 3000 }
       ).then(() => true).catch(() => false)
+
       if (synced) {
-        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})`)
-      } else {
-        log('info', `server list 暂未更新，继续执行`)
+        log('info', `server list 已同步 (${before} → ${S.readPendingTabCount()})${attempt > 1 ? ' [2/2]' : ''}`)
+        await persist({ lastAction: 'refresh_ok' })
+        return
+      }
+
+      if (attempt < 2) {
+        log('warn', `server list 未更新，再切一次 tab`)
       }
     }
 
+    // 两次切 tab 仍未同步，继续执行（不 fallback reload，下一条 RowVanished 自然跳过）
+    log('warn', 'server list 两次未同步，继续执行')
     await persist({ lastAction: 'refresh_ok' })
   }
 
@@ -737,6 +749,7 @@
           await processOneRow(rows[0])
           await persist({ lastAction: 'row_done' })
         } catch (err) {
+          if (err && err.code === 'Stopped') throw err  // 让外层 catch 正确处理停止
           const kind = classifyError(err)
           if (kind === 'RowVanished') {
             log('info', '行已消失，跳过')
