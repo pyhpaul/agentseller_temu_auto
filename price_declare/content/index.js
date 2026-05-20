@@ -225,7 +225,6 @@
 
   const DEFAULT_SETTINGS = {
     reason: '已提交活动，没有利润',
-    stopOnError: true,
     delayMultiplier: 1.0,
     maxPerSession: 300,
     panelCollapsed: false
@@ -791,7 +790,7 @@
           } catch (e) {
             log('warn', `关闭弹窗失败：${e.message || e}`)
           }
-          if (FATAL_ERRORS.has(kind) || state.settings.stopOnError) {
+          if (true) {  // 失败即暂停，不再提供关闭选项
             setMode(MODES.PAUSED)
             await persist({})
             log('warn', '已暂停，等待人工')
@@ -1270,8 +1269,6 @@
     // 设置字段只在非焦点时同步，避免打断用户输入
     const reasonInput = el.querySelector('.tpd-reason')
     if (reasonInput && document.activeElement !== reasonInput) reasonInput.value = state.settings.reason
-    const stopOnError = el.querySelector('.tpd-stop-on-error')
-    if (stopOnError) stopOnError.checked = !!state.settings.stopOnError
     const delayMul = el.querySelector('.tpd-delay-mul')
     if (delayMul) delayMul.value = String(state.settings.delayMultiplier)
 
@@ -1304,7 +1301,6 @@
         </div>
         <div class="tpd-settings" style="border-top:1px solid #f0f0f0;padding-top:7px;margin-bottom:7px">
           <label><span style="color:#888">不调整原因</span><input class="tpd-reason" type="text"></label>
-          <label><span style="color:#888">失败时暂停</span><input class="tpd-stop-on-error" type="checkbox"></label>
           <label><span style="color:#888">延时倍速</span>
             <select class="tpd-delay-mul">
               <option value="0.5">0.5x</option><option value="1">1x</option>
@@ -1333,8 +1329,6 @@
 
     viewEl.querySelector('.tpd-reason').addEventListener('change', e =>
       TPD.engine.updateSettings({ reason: e.target.value }))
-    viewEl.querySelector('.tpd-stop-on-error').addEventListener('change', e =>
-      TPD.engine.updateSettings({ stopOnError: e.target.checked }))
     viewEl.querySelector('.tpd-delay-mul').addEventListener('change', e =>
       TPD.engine.updateSettings({ delayMultiplier: Number(e.target.value) }))
   }
