@@ -507,7 +507,7 @@
 // ─── engine.js ───────────────────────────────────────────────────────────────
 ;(function () {
   const TPD = (window.TPD = window.TPD || {})
-  const { sleep, randomDelay, nowTs, waitFor } = TPD
+  const { sleep: _rawSleep, randomDelay, nowTs, waitFor: _rawWaitFor } = TPD
   const S = TPD.selectors
   const A = TPD.actions
   const ST = TPD.storage
@@ -526,6 +526,15 @@
   let state = null
   let listeners = new Set()
   let runningPromise = null
+
+  // stop wake-up 信号：stop() 时 resolve，让 engine 内部的 sleep/waitFor 立即返回
+  let _stopWakeResolve = null
+  let _stopWake = new Promise(r => { _stopWakeResolve = r })
+  function _resetStopWake() { _stopWake = new Promise(r => { _stopWakeResolve = r }) }
+
+  // 可中断的 sleep/waitFor：STOPPING 时被 _stopWake resolve 唤醒，继续执行到 checkpoint()
+  function sleep(ms) { return Promise.race([_rawSleep(ms), _stopWake]) }
+  function waitFor(predicate, opts) { return Promise.race([_rawWaitFor(predicate, opts), _stopWake]) }
 
   function emit() {
     for (const l of listeners) {
@@ -824,6 +833,8 @@
   async function stop() {
     if (runningPromise) {
       setMode(MODES.STOPPING)
+      // 唤醒所有正在等待的 sleep/waitFor，让 mainLoop 快速到达 checkpoint()
+      if (_stopWakeResolve) { _stopWakeResolve(); _resetStopWake() }
     } else {
       setMode(MODES.IDLE)
       state.stats.processedSinceRefresh = 0
@@ -1217,14 +1228,16 @@
     if (failedEl)  failedEl.textContent  = `✗ ${s.failed}`
     if (totalEl)   totalEl.textContent   = `共 ${s.totalProcessed}`
 
+    const onTargetPage = TARGET_RE.test(location.href)
     const m = state.mode
     const btnStart = el.querySelector('.tpd-btn-start')
     const btnPause = el.querySelector('.tpd-btn-pause')
     const btnStep  = el.querySelector('.tpd-btn-step')
     const btnStop  = el.querySelector('.tpd-btn-stop')
-    if (btnStart) btnStart.disabled = m === 'RUNNING' || m === 'STOPPING'
+    // 不在目标页时，开始/单步强制禁用
+    if (btnStart) btnStart.disabled = !onTargetPage || m === 'RUNNING' || m === 'STOPPING'
     if (btnPause) btnPause.disabled = m !== 'RUNNING' && m !== 'STEPPING'
-    if (btnStep)  btnStep.disabled  = m === 'RUNNING' || m === 'STOPPING'
+    if (btnStep)  btnStep.disabled  = !onTargetPage || m === 'RUNNING' || m === 'STOPPING'
     if (btnStop)  btnStop.disabled  = m === 'IDLE'
 
     // 设置字段只在非焦点时同步，避免打断用户输入
@@ -1294,9 +1307,16 @@
       </div>
     `
 
-    viewEl.querySelector('.tpd-btn-start').addEventListener('click', () => TPD.engine.start())
+    const guardTargetPage = (fn) => () => {
+      if (!TARGET_RE.test(location.href)) {
+        window.AgentSeller.showToast('请先访问调价确认页面', 'err')
+        return
+      }
+      fn()
+    }
+    viewEl.querySelector('.tpd-btn-start').addEventListener('click', guardTargetPage(() => TPD.engine.start()))
     viewEl.querySelector('.tpd-btn-pause').addEventListener('click', () => TPD.engine.pause())
-    viewEl.querySelector('.tpd-btn-step').addEventListener('click',  () => TPD.engine.step())
+    viewEl.querySelector('.tpd-btn-step').addEventListener('click',  guardTargetPage(() => TPD.engine.step()))
     viewEl.querySelector('.tpd-btn-stop').addEventListener('click',  () => TPD.engine.stop())
     viewEl.querySelector('.tpd-btn-reset').addEventListener('click', () => TPD.engine.resetStats())
 
