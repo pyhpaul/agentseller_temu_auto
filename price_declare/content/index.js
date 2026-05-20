@@ -214,7 +214,7 @@
 
   const DEFAULT_SETTINGS = {
     reason: '已提交活动，没有利润',
-    refreshEvery: 1,
+    refreshEvery: 'page',
     stopOnError: true,
     delayMultiplier: 1.0,
     maxPerSession: 300,
@@ -668,14 +668,15 @@
         return
       }
 
-      // 数值未变，不等待，立即再切一次 tab
+      // 数值未变，立即再切一次 tab
       if (attempt < 2) {
         log('warn', `count 未变 (${cur ?? 'null'})，立即再切 tab`)
       }
     }
 
-    // 两次切 tab 后 count 仍未减少，继续执行（RowVanished 会自然跳过重复行）
-    log('warn', 'server list 两次切 tab 未同步，继续执行')
+    // 两次切 tab 后 count 仍未减少：等 2s 让服务器更新后再继续，避免立即重复处理同一批行
+    log('warn', 'server list 两次切 tab 未同步，等待 2s 后继续')
+    await _rawSleep(2000)
     await persist({ lastAction: 'refresh_ok' })
   }
 
