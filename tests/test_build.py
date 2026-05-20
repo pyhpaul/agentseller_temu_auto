@@ -55,6 +55,17 @@ def test_extra_content_scripts_empty_when_absent():
     assert result == []
 
 
+def test_extra_assets_not_in_extra_content_scripts():
+    features = [{
+        'id': 'img',
+        '_dir': Path('/fake'),
+        'extra_content_scripts': [],
+        'extra_assets': ['content/overlay.css', 'content/overlay.js'],
+    }]
+    result = collect_extra_content_scripts(features)
+    assert result == []
+
+
 if __name__ == '__main__':
     test_content_matches_defaults_to_host_permissions()
     test_content_matches_overrides_with_empty_list()

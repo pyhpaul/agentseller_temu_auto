@@ -100,7 +100,7 @@ def copy_feature_assets(features):
 
 
 def copy_extra_cs_assets(features):
-    """拷贝 extra_content_scripts 引用的 js 文件到 dist/extension/features/<id>/。"""
+    """拷贝 extra_content_scripts 引用的 js 文件和 extra_assets 到 dist/extension/features/<id>/。"""
     for f in features:
         src_dir = f['_dir']
         for ecs in f.get('extra_content_scripts', []):
@@ -114,6 +114,16 @@ def copy_extra_cs_assets(features):
                 rel = src.relative_to(ROOT)
                 _inject_source_url(dst, str(rel))
                 print(f'[build] extra cs: {rel} → dist/extension/features/{f["id"]}/{js_path}')
+        for asset_path in f.get('extra_assets', []):
+            src = src_dir / asset_path
+            if not src.exists():
+                raise FileNotFoundError(f'[build] extra_asset not found: {src}')
+            dst = DIST / 'features' / f['id'] / asset_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            rel = src.relative_to(ROOT)
+            _inject_source_url(dst, str(rel))
+            print(f'[build] extra asset: {rel} → dist/extension/features/{f["id"]}/{asset_path}')
 
 
 def render_manifest(features=None):
