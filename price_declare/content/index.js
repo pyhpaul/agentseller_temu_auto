@@ -689,8 +689,9 @@
       log('warn', `count 未变 (${cur ?? 'null'}) [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
     }
 
-    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次仍未同步，继续执行`)
-    await persist({ lastAction: 'refresh_ok' })
+    // 5 次切 tab 都未触发数据更新，切 tab 机制已失效，用 reload 兜底
+    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次仍未同步，fallback reload`)
+    await fallbackReload(reason + '_sync_fail')
   }
 
   async function periodicRefreshIfNeeded() {
