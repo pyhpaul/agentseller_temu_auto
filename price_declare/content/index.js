@@ -376,14 +376,20 @@
   }
 
   async function waitModalClose(modal, { timeout = 6000 } = {}) {
-    await waitFor(
+    const closed = await waitFor(
       () => {
         if (!modal.isConnected) return true
         if (modal.offsetParent === null && modal.getClientRects().length === 0) return true
         return false
       },
       { timeout }
-    )
+    ).then(() => true).catch(() => false)
+
+    if (!closed) {
+      // 弹窗超时未关闭（可能服务器拒绝了重复操作），发 Escape 尝试关闭
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await sleep(randomDelay(400, 700))
+    }
   }
 
   async function fillReason(modal, text, { multiplier = 1 } = {}) {
@@ -676,9 +682,13 @@
       }
     }
 
-    // 两次切 tab 后 count 仍未减少：等 2s 让服务器更新后再继续，避免立即重复处理同一批行
-    log('warn', 'server list 两次切 tab 未同步，等待 2s 后继续')
-    await _rawSleep(2000)
+    // 两次切 tab 后仍未同步，等服务器更新（最多 5s），避免重复处理已确认的行
+    log('warn', 'server list 两次切 tab 未同步，等待服务器更新（最多 5s）…')
+    await waitFor(
+      () => { const cur = S.readPendingTabCount(); return cur != null && cur < before },
+      { timeout: 5000 }
+    ).then(() => log('info', `server list 最终同步 (→ ${S.readPendingTabCount()})`))
+     .catch(() => log('warn', '5s 仍未同步，继续执行'))
     await persist({ lastAction: 'refresh_ok' })
   }
 
