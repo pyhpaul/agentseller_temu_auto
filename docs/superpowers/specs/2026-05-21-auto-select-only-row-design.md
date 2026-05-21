@@ -501,3 +501,61 @@ A+ spec 的状态机不变量（N>1→1 转变触发、同 SKC 幂等、用户 c
 `fix(auto_gen_label): event delegation + 失败不更新 prevRowCount 修 React 复用 listener 丢失 + td 延迟态锁死`
 
 PR 最终合入时 squash 三个 commit (`c7b6638` 初版 + A+ refactor + A++ 补丁)。
+
+---
+
+# 决策：撤回「自动选中」功能（2026-05-21 update 3）
+
+## 决策摘要
+
+A++ 实施后用户验收仍然复现「长按选 SKC 后无法选中」bug，多轮调试证明：
+**自动选中**这一层引入的复杂度（race condition、prevRowCount 状态机锁死、跨 feature 守卫等）显著大于它带来的便利。用户提议直接撤回这个功能，专注修复**原始 bug**（手动点击商品行有时无法选中）。
+
+接受用户的 pivot。**自动选中相关代码全部删除，但调试过程中发现的核心 bug 修复（event delegation + SKC 间接寻址 + refreshRowHighlight）全部保留**——这些是「手动点击无法选中」原始 bug 的真正治本方案。
+
+## 保留 vs 撤回
+
+| 改动 | 状态 | 理由 |
+|------|------|------|
+| 删 `selectedRow` 模块变量 + 新增 `findRowBySkc` | ✅ 保留 | A+ 的核心修复：避免 detached row 引用让 `clickAndCaptureCanvas` 找不到「查看条码」按钮 |
+| 重写 `selectRow` / `clearSelection`（不存 row 引用） | ✅ 保留 | 同上 |
+| 新增 `refreshRowHighlight`（mutation + setProduct 同步） | ✅ 保留 | React 重渲后视觉跟随 `fstate.product` 自动恢复 |
+| `watchNewRows` observer attach `document.body` | ✅ 保留 | 修「observer 锁旧 tbody 节点失效」根本 bug |
+| `setupRowClickDelegation`（document 级 click delegation） | ✅ 保留 | **修「手动点击无法选中」的核心** — React 替换 row 让 row-level listener 丢失 |
+| click handler 同行幂等改 SKC 比较 | ✅ 保留 | 不依赖 row 引用 |
+| `waitForTableThenBind` 简化 | ✅ 保留 | event delegation + body observer 不依赖表格已 mount |
+| `maybeAutoSelectOnlyRow` 函数 | ❌ 撤回 | 自动选中入口 |
+| `prevRowCount` 闭包变量 | ❌ 撤回 | 仅自动选状态机用 |
+| toast「已自动选中商品 SKC」 | ❌ 撤回 | 自动选 UI |
+| active feature 守卫（仅 maybeAuto... 内用） | ❌ 撤回 | 跟随 maybeAuto... 删 |
+| `watchNewRows` callback 内 `maybeAutoSelectOnlyRow` 调用 | ❌ 撤回 | 跟随删 |
+
+## 撤回后的最终行为
+
+- 用户**手动点击商品行**任何时候都能成功选中（document-level delegation 永不失效，extractRowData 失败时给 setStatus 错误提示但仍能重试）
+- React 重渲表格不影响选中状态（`refreshRowHighlight` 在每次 mutation 同步 `.tal-selected`、`findRowBySkc` 让 `clickAndCaptureCanvas` 取当前 mounted row）
+- 不再有「自动选中」隐性行为；不再弹「已自动选中商品」toast
+- 跨 feature 隔离不再是问题（没有自动选中入口就没有跨 feature 触发）
+
+## 测试方案简化
+
+12 场景验收方案撤回。新验收清单：
+
+1. **手动选中核心** — 进条码管理页 → 任意选一行 → 行高亮 + feature view 显示 SKC（多次切换不同行验证视觉跟随）
+2. **手动取消** — 点已选中行（非链接区域） → 行高亮消失 + feature view 恢复 placeholder
+3. **React 重渲弹性** — 选中行 A → 搜索过滤后表格刷新 → 如果行 A 还在表格中，视觉自动跟随（`.tal-selected` 在新节点上）
+4. **Phase 1 实跑** — 选中商品 → 设置模板/输出 → 开始执行 → 完整跑通（验证 `clickAndCaptureCanvas` 用 `findRowBySkc` 取的 row 能正常拿到「查看条码」按钮）
+5. **长按选 SKC 文本** — 多行 → 选中 A → 长按拖拽选行 B 的 SKC 文本（用于复制） → **不应误触发任何 selectRow / setStatus 错误**（之前 bug 的原始复现路径）
+6. **回归 — Phase 2/3 全流程** — 标签生成后 Phase 2 合规填写 + Phase 3 主图插入跟现状一致
+
+## 提交策略
+
+继续在 `feat/auto-select-only-row` 分支累加 commit。新 commit:
+`refactor(auto_gen_label): 撤回自动选中，保留手动点击稳定性核心修复`
+
+PR squash 最终合入 main 时（约 4 个 commit），最终生效改动是 A+/A++ 中**只保留治 bug 部分**，自动选中部分被本 commit 撤回。PR 标题相应调整：
+`fix(auto_gen_label): 修手动点击无法选中商品（event delegation + SKC 间接寻址 + 视觉同步）`
+
+## 分支命名
+
+`feat/auto-select-only-row` 名字已不准确（pivot 后不再有 auto-select 特性）。但分支内已多个 commit 推到 origin，重命名风险大于收益（PR URL 会变），**保留现有分支名**，在 PR 标题/描述里明确实际功能即可。
