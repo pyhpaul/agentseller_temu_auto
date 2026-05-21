@@ -11,9 +11,9 @@
 
   // ── feature 内部状态 ──
   const fstate = { product: null };  // { skcNumber, skcSku }
-  let selectedRow = null;
   let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
   let rowObserver = null;
+  let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 页面判断
@@ -130,9 +130,9 @@
   }
 
   function clearSelection() {
-    if (selectedRow) { selectedRow.classList.remove('tal-selected'); selectedRow = null; }
+    // 先清 product 再刷 highlight：findRowBySkc(null) 会 return null，refreshRowHighlight 全清 .tal-selected
     setProduct(null);
-    setStatus('');
+    refreshRowHighlight();
   }
 
   function refreshProductUI() {
@@ -187,24 +187,26 @@
   // ═══════════════════════════════════════════════════════════════════════════
   // 行绑定
   // ═══════════════════════════════════════════════════════════════════════════
-  function waitForTableThenBind(timeout = 15000) {
-    const deadline = Date.now() + timeout;
-    const check = () => {
-      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
-      if (rows.length) { bindRows(rows); watchNewRows(); }
-      else if (Date.now() < deadline) setTimeout(check, 400);
-    };
-    check();
+  function waitForTableThenBind() {
+    // event delegation + body subtree observer 都不依赖表格已 mount，立即启动（内部幂等）
+    setupRowClickDelegation();
+    watchNewRows();
   }
 
-  function bindRows(rows) {
-    rows.forEach(row => {
-      if (row.getAttribute('data-tal-bound')) return;
-      row.setAttribute('data-tal-bound', '1');
-      row.addEventListener('click', e => {
-        if (e.target.closest('a, button')) return;
-        selectedRow === row ? clearSelection() : selectRow(row);
-      });
+  function setupRowClickDelegation() {
+    if (clickDelegationBound) return;
+    clickDelegationBound = true;
+    // 在 document 上绑一个全局 click listener（event delegation），
+    // 避免 React 复用/替换 row 节点时 listener 丢失（旧 bindRows 用 attribute
+    // idempotency 不可靠的根因修复）
+    document.addEventListener('click', e => {
+      const row = e.target.closest('tr[data-testid="beast-core-table-body-tr"]');
+      if (!row) return;
+      if (e.target.closest('a, button')) return;
+      const data = extractRowData(row);
+      if (!data) { setStatus('未能读取该行数据', 'err'); return; }
+      if (data.skcNumber === fstate.product?.skcNumber) clearSelection();
+      else selectRow(row);
     });
   }
 
@@ -212,31 +214,59 @@
     if (rowObserver) return;
     rowObserver = new MutationObserver(() => {
       const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
-      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'));
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      refreshRowHighlight();
+      // prevRowCount 更新逻辑移到 maybeAutoSelectOnlyRow 内，
+      // 失败（td 延迟态）时不更新 baseline，等下次 mutation 重试
       maybeAutoSelectOnlyRow(rows);
-      prevRowCount = rows.length;
     });
-    rowObserver.observe(document.querySelector('tbody') || document.body, { childList: true, subtree: true });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   function selectRow(row) {
-    if (selectedRow) selectedRow.classList.remove('tal-selected');
-    selectedRow = row;
-    row.classList.add('tal-selected');
     const product = extractRowData(row);
-    if (product) setProduct(product);
-    else setStatus('未能读取该行数据', 'err');
+    if (!product) { setStatus('未能读取该行数据', 'err'); return; }
+    setProduct(product);
+    refreshRowHighlight();
+  }
+
+  function refreshRowHighlight() {
+    // tal-selected 是本 feature 专属 class（tal- 前缀 = Temu Auto Label 命名空间），其他 feature 不应共用
+    document.querySelectorAll('tr.tal-selected').forEach(r => r.classList.remove('tal-selected'));
+    const row = findRowBySkc(fstate.product?.skcNumber);
+    if (row) row.classList.add('tal-selected');
   }
 
   function maybeAutoSelectOnlyRow(rows) {
-    // 转变触发：prev 不是 1 行 && cur 是 1 行
-    if (prevRowCount === 1 || rows.length !== 1) return;
+    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
+    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
+    //         click delegation 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
+    const uiState = window.__AgentSellerUI?.getState?.();
+    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') {
+      prevRowCount = rows.length;
+      return;
+    }
+    // 守卫 2：非 N>1→1 转变，更新 baseline 后返回。
+    if (prevRowCount === 1 || rows.length !== 1) {
+      prevRowCount = rows.length;
+      return;
+    }
     const row = rows[0];
-    if (selectedRow === row) return;  // 同一行幂等保护
+    const newSkc = extractRowData(row)?.skcNumber;
+    // td 延迟态：row 已 mount 但 td 文本未填好，**不更新 baseline**，等下次 mutation 重试。
+    // 这是 A++ 修 prevRowCount 锁死 bug 的关键。
+    if (!newSkc) return;
+    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
+    if (newSkc === fstate.product?.skcNumber) {
+      prevRowCount = rows.length;
+      return;
+    }
     selectRow(row);
     if (fstate.product) {
       U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
     }
+    prevRowCount = rows.length;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -256,11 +286,21 @@
     return skc && skcSku ? { skcNumber: skc, skcSku } : null;
   }
 
+  function findRowBySkc(skc) {
+    if (!skc) return null;
+    const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+    for (const row of rows) {
+      if (extractRowData(row)?.skcNumber === skc) return row;
+    }
+    return null;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Phase 1：标签生成
   // ═══════════════════════════════════════════════════════════════════════════
   async function onRunAllPhases() {
-    if (!fstate.product || !selectedRow) return;
+    const row = findRowBySkc(fstate.product?.skcNumber);
+    if (!fstate.product || !row) return;
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
@@ -271,7 +311,7 @@
     try {
       // Phase 1：生成标签
       setStatus('① 正在捕获条码...', 'loading');
-      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(selectedRow);
+      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
       setStatus('① 标签生成中，请稍候...', 'loading');
       U.ensureExtensionAlive();
       const result = await sendNative('PROCESS_LABEL', {
@@ -309,7 +349,8 @@
 
   // 调试：只跑 Phase 1（标签生成），用当前调试栏 ratio
   async function onRunPhase1Only() {
-    if (!fstate.product || !selectedRow) return;
+    const row = findRowBySkc(fstate.product?.skcNumber);
+    if (!fstate.product || !row) return;
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
@@ -320,7 +361,7 @@
     btn.disabled = true;
     try {
       setStatus(`调试：捕获条码（ratio=${ratio}）...`, 'loading');
-      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(selectedRow);
+      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
       setStatus('调试：标签生成中...', 'loading');
       U.ensureExtensionAlive();
       const result = await sendNative('PROCESS_LABEL', {
