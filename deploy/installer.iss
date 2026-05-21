@@ -77,8 +77,11 @@ Filename: "{sys}\reg.exe"; \
 
 [UninstallRun]
 ; 卸载时清理注册表项
+; RunOnceId 让 Inno Setup 在 update install（先卸旧后装新）时仅执行一次此条目，
+; 消除 ISCC "[UninstallRun] section entries without a RunOnceId parameter" warning
 Filename: "{sys}\reg.exe"; \
     Parameters: "delete ""HKCU\Software\Google\Chrome\NativeMessagingHosts\{#MyHostName}"" /f"; \
+    RunOnceId: "DelNativeHostReg"; \
     Flags: runhidden
 
 [Code]
