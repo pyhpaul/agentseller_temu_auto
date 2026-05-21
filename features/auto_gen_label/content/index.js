@@ -13,7 +13,6 @@
   const fstate = { product: null };  // { skcNumber, skcSku }
   let rowObserver = null;
   let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
-  let pendingSelectRow = null;       // 最近 click 的 row（virtual scroll td 延迟态 retry 用）
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 页面判断
@@ -131,7 +130,6 @@
 
   function clearSelection() {
     // 先清 product 再刷 highlight：findRowBySkc(null) 会 return null，refreshRowHighlight 全清 .tal-selected
-    pendingSelectRow = null;  // 中止可能在跑的 retry，避免延迟回写已被取消的选中
     setProduct(null);
     refreshRowHighlight();
   }
@@ -206,8 +204,9 @@
       if (e.target.closest('a, button')) return;
       const data = extractRowData(row);
       if (!data) { setStatus('未能读取该行数据', 'err'); return; }
+      if (!data.skcSku) { setStatus('该商品没有 SKC货号，标签生成需要 SKC货号，请选择其他商品', 'err'); return; }
       if (data.skcNumber === fstate.product?.skcNumber) clearSelection();
-      else selectRow(row);
+      else selectRow(data);
     });
   }
 
@@ -222,28 +221,9 @@
     rowObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  function selectRow(row) {
-    // Temu 表格用 virtual scroll：可视区外的 row 在 DOM 中但 td 文本未渲染，
-    // extractRowData 立即调用会返回 null。改用 retry 等 td 内容填好。
-    // 同时用 pendingSelectRow 做 race 保护：用户快速切换 row 时，旧 retry 自动放弃。
-    pendingSelectRow = row;
-    const tryExtract = (attemptsLeft) => {
-      if (pendingSelectRow !== row) return;  // 用户已 click 别的 row，放弃此次 retry
-      const product = extractRowData(row);
-      if (product) {
-        pendingSelectRow = null;
-        setProduct(product);
-        refreshRowHighlight();
-        return;
-      }
-      if (attemptsLeft > 0) {
-        setTimeout(() => tryExtract(attemptsLeft - 1), 200);
-      } else if (pendingSelectRow === row) {
-        pendingSelectRow = null;
-        setStatus('未能读取该行数据', 'err');
-      }
-    };
-    tryExtract(5);  // 5 次 × 200ms = 最多 1 秒等 virtual scroll 填好
+  function selectRow(product) {
+    setProduct(product);
+    refreshRowHighlight();
   }
 
   function refreshRowHighlight() {
@@ -263,11 +243,14 @@
   }
 
   function extractRowData(row) {
+    // SKC货号 列对部分单 SKU 商品本身为空，故只用 SKC 判定 row 是否可读
+    // 业务拦截（无 SKC货号 不能打标签）在调用方做
     const si = getColumnIndex('SKC'), ki = getColumnIndex('SKC货号');
     if (si < 0 || ki < 0) return null;
     const tds = row.querySelectorAll('td[data-testid="beast-core-table-td"]');
-    const skc = tds[si - 1]?.textContent.trim(), skcSku = tds[ki - 1]?.textContent.trim();
-    return skc && skcSku ? { skcNumber: skc, skcSku } : null;
+    const skc = tds[si - 1]?.textContent.trim();
+    const skcSku = tds[ki - 1]?.textContent.trim();
+    return skc ? { skcNumber: skc, skcSku: skcSku || '' } : null;
   }
 
   function findRowBySkc(skc) {
