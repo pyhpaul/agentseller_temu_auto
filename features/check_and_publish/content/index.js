@@ -564,12 +564,18 @@
     return list;
   }
 
-  function makeBtn(text, color, onClick) {
+  function makeBtn(text, color, onClick, opts = {}) {
     const b = document.createElement('button');
     b.className = 'tal-action-btn';
     if (color) b.style.background = color;
     b.textContent = text;
-    b.addEventListener('click', onClick);
+    if (opts.disabled) {
+      b.disabled = true;
+      b.style.opacity = '0.5';
+      b.style.cursor = 'not-allowed';
+    } else {
+      b.addEventListener('click', onClick);
+    }
     return b;
   }
 
@@ -594,10 +600,16 @@
   }
 
   function renderIdle(viewEl) {
-    viewEl.appendChild(makeBtn('🔍 检查并发布', null, () => onCheck(viewEl)));
+    const editPage = isEditPage();
+    viewEl.appendChild(makeBtn('🔍 检查并发布', null, () => onCheck(viewEl), { disabled: !editPage }));
     const tip = document.createElement('div');
     tip.className = 'tal-status';
-    tip.textContent = '点按钮开始检查';
+    if (editPage) {
+      tip.textContent = '点按钮开始检查';
+    } else {
+      tip.style.cssText = 'color:#cf1322;background:#fff2f0;border:1px solid #ffccc7;padding:8px 10px;border-radius:6px;margin-top:8px;font-size:12px;line-height:1.4;';
+      tip.textContent = '请在店小秘商品编辑页使用此功能（当前 URL 不含 edit）';
+    }
     viewEl.appendChild(tip);
   }
 
@@ -649,10 +661,8 @@
 
   // ─── 用户交互 ────────────────────────────────────────────────────────
   function onCheck(viewEl) {
-    if (!isEditPage()) {
-      showToast('请在店小秘商品编辑页使用此功能（当前 URL 不含 edit）', 'err');
-      return;
-    }
+    // 静默 guard：按钮在 renderIdle 已 disabled，正常路径走不到这里；保留防御
+    if (!isEditPage()) return;
     const { results } = runChecks();
     const buckets = bucketize(results);
     state.report = { ...buckets, all: results };
