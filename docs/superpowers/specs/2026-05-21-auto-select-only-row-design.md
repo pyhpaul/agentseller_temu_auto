@@ -315,3 +315,189 @@ function maybeAutoSelectOnlyRow(rows) {
 - 新 commit：`refactor(auto_gen_label): selectedRow 改 SKC 间接寻址，observer 改 body 修复 detached row bug`
 
 PR 合入时 squash 成单 commit 进 main，commit message 用 spec 的 Why/What/Test 结构。
+
+---
+
+# 方案 A++ 补丁（2026-05-21 update 2）
+
+## 缘起
+
+A+ 实施后用户 WSL 端验收暴露两个新 bug：
+
+**复现路径（稳定）**：
+1. 表格多商品
+2. 手动点击商品 A 选中（fstate.product = A）
+3. 长按选中商品 B 的 SKC 文本（拖拽 / 双击）→ **必然提示「未能读取该行数据」**
+4. 此后搜索任何 SKC（表格变 1 行）→ **无法自动选中**、**手动点击也无效**、**feature view「当前商品」残留旧数据**
+
+## 诊断证据（Console 实测）
+
+在「bug 锁死」状态下：
+
+```
+listener count on current row: 3
+[0] function tn(){}                          ← Temu 自己的空 listener
+[1] (Temu React 包装的 listener)             ← Temu 自己的
+[2] (Temu React 包装的 listener)             ← Temu 自己的
+
+→ 我们 content script 的 click handler 完全不在 row 上！
+
+但 row.getAttribute('data-tal-bound') === '1'   ← bindRows 看 attribute 跳过补绑
+fstate.product.skcNumber === 82301884773       ← 旧选中残留
+extractRowData(currentRow) === { skcNumber: 53735174727 } ← 当前 row SKC 是新的
+```
+
+## 根因（两个独立 bug 复合锁死）
+
+### Bug A++.1：`bindRows` attribute idempotency 不可靠
+
+`bindRows` 用 `if (row.getAttribute('data-tal-bound')) return;` 做去重。但 React reconcile 表格时，会出现 **attribute 保留但 listener 丢失**的状态：
+- React 复用 / 移动 row 节点：`data-tal-bound` attribute 跟节点一起被保留
+- 但 listener 在节点替换/移动过程中被 React 清除（具体机制由 Temu 的 React 实现决定，可能是 React 在 unmount 旧节点时调用了 `removeEventListener`，也可能是节点本身被换成新节点但 attribute 字符串通过 innerHTML 路径复制）
+
+结果：bindRows 看 attribute='1' 跳过补绑 → row 上永远只剩 Temu 自己的 listener → 我们的 click handler 不触发 → 手动点击 row 无反应。
+
+### Bug A++.2：`extractRowData` 在 td 延迟态返回 null + `prevRowCount` 状态机锁死
+
+Temu 搜索过渡态：row 节点已 mount 但 td 文本尚未填好（loading）。此时 mutation 触发：
+
+1. `maybeAutoSelectOnlyRow` 跑 → `extractRowData` 返回 null（td 文本是空）
+2. `selectRow` 走 `setStatus('未能读取该行数据', 'err')` 错误分支，`setProduct` 没调用，`fstate.product` 不更新
+3. **但 `watchNewRows` callback 末尾无条件 `prevRowCount = rows.length` 设为 1**
+4. 之后 mutation（td 填好那次）`maybeAutoSelectOnlyRow` 看 `prevRowCount === 1` 守卫拦截，永不重试
+5. 锁死状态：`fstate.product` 留着旧 SKC（A）、row 没视觉高亮、自动选不触发
+
+「长按数据」触发 click event 也会走到 `maybeAutoSelectOnlyRow` 路径（mouseup → click event → DOM mutation → callback），加剧 race。
+
+## A++ 方案：2 处改动
+
+### 1. 改 `bindRows` 为 document 级 event delegation
+
+**删 `bindRows` 函数**和所有 `data-tal-bound` attribute 逻辑。改在 feature init 时给 `document` 绑一个全局 click listener，运行时通过 `e.target.closest()` 定位 row：
+
+```js
+function setupRowClickDelegation() {
+  if (clickDelegationBound) return;
+  clickDelegationBound = true;
+  document.addEventListener('click', e => {
+    const row = e.target.closest('tr[data-testid="beast-core-table-body-tr"]');
+    if (!row) return;
+    if (e.target.closest('a, button')) return;
+    const data = extractRowData(row);
+    if (!data) { setStatus('未能读取该行数据', 'err'); return; }
+    if (data.skcNumber === fstate.product?.skcNumber) clearSelection();
+    else selectRow(row);
+  });
+}
+```
+
+`clickDelegationBound` 是闭包 boolean，确保只绑一次（content script 重复 init 也只绑 1 个 listener）。
+
+**优势**：
+- listener attach 在 `document` 上，永远不会被 React 替换/丢失
+- 不需要 attribute idempotency check
+- 节省 N 个 row listener → 1 个全局 listener
+- React 怎么折腾表格 DOM 都无影响
+
+### 2. `maybeAutoSelectOnlyRow` 内控 `prevRowCount`，失败时不更新
+
+把 `prevRowCount` 更新逻辑从 `watchNewRows` callback 末尾**移到 `maybeAutoSelectOnlyRow` 内部**，由它根据情况决定是否更新：
+
+```js
+function maybeAutoSelectOnlyRow(rows) {
+  // 守卫 1: feature view 非 auto_gen_label 时不触发，但仍更新 baseline
+  const uiState = window.__AgentSellerUI?.getState?.();
+  if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') {
+    prevRowCount = rows.length;
+    return;
+  }
+  // 守卫 2: 非 N>1→1 转变，仅更新 baseline
+  if (prevRowCount === 1 || rows.length !== 1) {
+    prevRowCount = rows.length;
+    return;
+  }
+  const row = rows[0];
+  const newSkc = extractRowData(row)?.skcNumber;
+  // td 延迟态：行已挂载但 td 文本未渲染好，**不更新 baseline**，等下次 mutation 重试
+  if (!newSkc) return;
+  // 守卫 3: 同 SKC 幂等
+  if (newSkc === fstate.product?.skcNumber) {
+    prevRowCount = rows.length;
+    return;
+  }
+  selectRow(row);
+  if (fstate.product) U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+  prevRowCount = rows.length;
+}
+```
+
+关键区别：原 A+ 版本无论 `selectRow` 成功失败都更新 `prevRowCount`（更新在 callback 外），新 A++ 在 `extractRowData` 失败时不更新，让下次 mutation 重新评估。
+
+### 3. `watchNewRows` 简化
+
+callback 内删除 `bindRows` 调用 + `prevRowCount = rows.length` 末尾赋值（移到 maybeAutoSelectOnlyRow 内）：
+
+```js
+function watchNewRows() {
+  if (rowObserver) return;
+  rowObserver = new MutationObserver(() => {
+    const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+    refreshRowHighlight();
+    maybeAutoSelectOnlyRow(rows);
+  });
+  rowObserver.observe(document.body, { childList: true, subtree: true });
+}
+```
+
+### 4. `waitForTableThenBind` 简化
+
+不再调 `bindRows`，只调 `setupRowClickDelegation` + `watchNewRows`：
+
+```js
+function waitForTableThenBind(timeout = 15000) {
+  // event delegation 跟表格存在与否无关，立即绑（幂等）
+  setupRowClickDelegation();
+  // mutation observer 也立即启动，attach 在 body 永不失效
+  watchNewRows();
+  // （删去原 setTimeout 轮询逻辑）
+}
+```
+
+由于 event delegation + body attach 不依赖表格已 mount，可以直接同步启动，不再需要 polling。
+
+## Bug 自然消失对照
+
+| 旧 bug | A+ 现状 | A++ 修复后 |
+|--------|--------|----------|
+| Bug A++.1：row 上无 listener、手动点无效 | bindRows 看 attr 跳过补绑 | document 全局 listener，永不失效 |
+| Bug A++.2：td 延迟态锁死 prevRowCount | 失败仍更新 baseline | 失败不更新，等下次 mutation 重试 |
+| 长按选中文本触发 click 误判 | 锁死 + 残留状态 | 全局 delegation 正确识别 + 失败重试 |
+
+## 与原 spec 状态机不变量的关系
+
+A+ spec 的状态机不变量（N>1→1 转变触发、同 SKC 幂等、用户 clear 后不自动选回）**全部保留语义**。区别仅在 `prevRowCount` 更新的时机：
+- 原 A+：mutation 末尾无条件更新
+- 新 A++：成功 / 已知非触发场景才更新；td 延迟态失败时跳过更新等待重试
+
+## 新增测试场景
+
+加 **场景 11**「长按选中文本不触发误选中」：
+
+操作：表格多行 → 手动选中行 A → 长按 / 拖拽选中行 B 的 SKC 文本（用于复制）→ 不该弹「未能读取该行数据」。
+
+加 **场景 12**「td 延迟态自动重试」：
+
+操作：表格多行 → 搜索 → 表格立即变 1 行但 td 内容延迟 200ms 才填好（如果能复现）→ 自动选中应在 td 填好那次 mutation 触发。
+
+## 影响范围
+
+| 文件 | 改动 |
+|------|------|
+| `features/auto_gen_label/content/index.js` | -10/+15 行：删 bindRows、改 maybeAutoSelectOnlyRow / watchNewRows / waitForTableThenBind、新增 setupRowClickDelegation |
+
+## 提交策略
+
+继续在 `feat/auto-select-only-row` 分支累加 commit。新 commit:
+`fix(auto_gen_label): event delegation + 失败不更新 prevRowCount 修 React 复用 listener 丢失 + td 延迟态锁死`
+
+PR 最终合入时 squash 三个 commit (`c7b6638` 初版 + A+ refactor + A++ 补丁)。
