@@ -1141,3 +1141,158 @@ gh pr comment <PR#> --body "补 commit <sha> A++ 补丁：event delegation + td 
 ```
 
 > PR 在 Task 12 已创建。本 Task 不再新建 PR，沿用同一 PR。
+
+---
+
+# Pivot 撤回自动选中 Task（2026-05-21 update 3）
+
+> 用户决策：撤回自动选中功能，保留 event delegation + SKC 间接寻址 + refreshRowHighlight 等核心 bug 修复。详见 spec 末尾「决策：撤回自动选中」章节。
+
+## Task 17: 删自动选中相关代码
+
+**Files:** `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 17.1: 删 `prevRowCount` 闭包变量**
+
+old_string:
+```
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
+  let rowObserver = null;
+  let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
+```
+
+new_string:
+```
+  let rowObserver = null;
+  let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
+```
+
+- [ ] **Step 17.2: 删 `maybeAutoSelectOnlyRow` 函数（整段）**
+
+Read 确认当前 maybeAutoSelectOnlyRow 完整内容（A++ 版本，约 27 行），整段删除。
+
+old_string（含函数前后空行确保唯一）:
+```
+
+  function maybeAutoSelectOnlyRow(rows) {
+    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
+    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
+    //         click delegation 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
+    const uiState = window.__AgentSellerUI?.getState?.();
+    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') {
+      prevRowCount = rows.length;
+      return;
+    }
+    // 守卫 2：非 N>1→1 转变，更新 baseline 后返回。
+    if (prevRowCount === 1 || rows.length !== 1) {
+      prevRowCount = rows.length;
+      return;
+    }
+    const row = rows[0];
+    const newSkc = extractRowData(row)?.skcNumber;
+    // td 延迟态：row 已 mount 但 td 文本未填好，**不更新 baseline**，等下次 mutation 重试。
+    // 这是 A++ 修 prevRowCount 锁死 bug 的关键。
+    if (!newSkc) return;
+    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
+    if (newSkc === fstate.product?.skcNumber) {
+      prevRowCount = rows.length;
+      return;
+    }
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
+    prevRowCount = rows.length;
+  }
+```
+
+new_string:
+```
+
+```
+
+- [ ] **Step 17.3: 从 `watchNewRows` callback 内删 `maybeAutoSelectOnlyRow` 调用**
+
+old_string:
+```
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      refreshRowHighlight();
+      // prevRowCount 更新逻辑移到 maybeAutoSelectOnlyRow 内，
+      // 失败（td 延迟态）时不更新 baseline，等下次 mutation 重试
+      maybeAutoSelectOnlyRow(rows);
+    });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+```
+
+new_string:
+```
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      // 这是手动选中能在 React 重渲后保持视觉一致的关键
+      refreshRowHighlight();
+    });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+```
+
+- [ ] **Step 17.4: 验证自动选中相关全部删除**
+
+```
+grep -n "maybeAutoSelectOnlyRow\|prevRowCount\|已自动选中商品" features/auto_gen_label/content/index.js
+```
+Expected: **无输出**（exit 1）。
+
+```
+grep -n "__AgentSellerUI" features/auto_gen_label/content/index.js
+```
+Expected: 仅 init() 内的原 `uiState` 使用 1 处（line 1670 附近，跟自动选无关），**不是 maybeAuto... 内那处**。
+
+```
+grep -n "setupRowClickDelegation\|findRowBySkc\|refreshRowHighlight" features/auto_gen_label/content/index.js
+```
+Expected: ≥ 6 行（核心修复都还在）。
+
+## Task 18: 语法 + build + 验证
+
+- [ ] **Step 18.1: node --check** → exit 0
+- [ ] **Step 18.2: `python3 build/build_extension.py`** → `[build] done`
+- [ ] **Step 18.3: dist 同步**
+  ```
+  grep -c "maybeAutoSelectOnlyRow" dist/extension/features/auto_gen_label/content/index.js
+  ```
+  Expected: **0**
+
+  ```
+  grep -c "setupRowClickDelegation" dist/extension/features/auto_gen_label/content/index.js
+  ```
+  Expected: ≥ 2
+
+## Task 19: 端到端验收 6 场景
+
+按 spec 末尾「测试方案简化」清单：
+
+1. 手动选中核心（多次切换行）
+2. 手动取消（点已选行）
+3. React 重渲弹性（搜索过滤后视觉跟随）
+4. Phase 1 实跑
+5. 长按选 SKC 文本（原始 bug 复现路径，必须无错）
+6. Phase 2/3 全流程回归
+
+## Task 20: Commit + push + 调整 PR 标题
+
+- [ ] commit message：
+  ```
+  refactor(auto_gen_label): 撤回自动选中，保留手动点击稳定性核心修复
+  ```
+- push
+- 如未创建 PR：`gh pr create --title "fix(auto_gen_label): 修手动点击无法选中商品（event delegation + SKC 间接寻址 + 视觉同步）"`
+- 如 PR 已存在：`gh pr edit <PR#> --title "..."` 更新标题
