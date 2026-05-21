@@ -11,7 +11,7 @@
 ## 文件结构
 
 ```
-image_search_1688/
+features/image_search_1688/
 ├── feature.json
 ├── content/
 │   ├── index.js       # 注册 feature，渲染「开始截图」按钮

@@ -27,10 +27,10 @@ def _src_to_dst(src_path: Path):
     # core/sub/... → dist/extension/sub/...（不直接映射 manifest.template.json，那个走重生 manifest 分支）
     if parts[0] == 'core' and len(parts) >= 3 and parts[1] != 'manifest.template.json':
         return DIST / Path(*parts[1:])
-    # <feature>/content/... → dist/extension/features/<feature>/content/...
-    if len(parts) >= 3 and parts[1] == 'content':
-        feature_id = parts[0]
-        return DIST / 'features' / feature_id / Path(*parts[1:])
+    # features/<feature>/content/... → dist/extension/features/<feature>/content/...
+    if len(parts) >= 4 and parts[0] == 'features' and parts[2] == 'content':
+        feature_id = parts[1]
+        return DIST / 'features' / feature_id / Path(*parts[2:])
     return None
 
 
@@ -77,7 +77,7 @@ class Handler(FileSystemEventHandler):
 def main():
     print('[dev] 启动初始构建...')
     build_all()
-    print('[watch] monitoring: core/, */content/, */feature.json')
+    print('[watch] monitoring: core/, features/*/content/, features/*/feature.json')
     print(f'[watch] chrome 请加载 {DIST}，修改源码会自动同步')
 
     obs = Observer()
