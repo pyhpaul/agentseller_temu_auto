@@ -2,6 +2,7 @@
 build_extension.py — 把 core/ 和 features 内容聚合到 dist/extension/。
 v1：仅 core 资产拷贝；feature 扫描在 Task 7 加入。
 """
+import datetime
 import json
 import shutil
 import sys
@@ -127,6 +128,18 @@ def copy_extra_cs_assets(features):
             print(f'[build] extra asset: {rel} → dist/extension/features/{f["id"]}/{asset_path}')
 
 
+def emit_build_info():
+    """生成 content/build-info.js，注入 window.__AS_BUILD_INFO__ = { ts, isDev }。
+    dev 默认 isDev=true；release 由 package_all.py 用 string replace 改成 false。
+    UI 仅在 isDev=true 时显示构建时间，方便开发期确认 reload 是否生效。
+    """
+    ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    content = f"window.__AS_BUILD_INFO__ = {{ ts: '{ts}', isDev: true }};\n"
+    dst = DIST / 'content' / 'build-info.js'
+    dst.write_text(content, encoding='utf-8')
+    print(f'[build] build-info.js generated  ts={ts} isDev=true')
+
+
 def render_manifest(features=None):
     """读模板 → 替换占位符 → 写 dist/extension/manifest.json。
     v1 features=None，仅写 core 的 content_scripts 占位（空数组）。
@@ -138,8 +151,9 @@ def render_manifest(features=None):
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
     content_script_matches = collect_content_matches(features)
     extra_cs = collect_extra_content_scripts(features)
+    # build-info.js 必须最先注入，让 ui.js 能读到 window.__AS_BUILD_INFO__
     content_scripts_js = (
-        ['content/utils.js', 'content/ui.js', 'content/registry.js', 'content/core.js']
+        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js', 'content/core.js']
         + [f'features/{f["id"]}/{f["content_script"]}' for f in sorted(features, key=lambda x: x.get('order', 999))]
     )
 
@@ -157,6 +171,7 @@ def render_manifest(features=None):
 def build_all():
     clean_dist()
     copy_core_assets()
+    emit_build_info()
     features = scan_features()
     copy_feature_assets(features)
     copy_extra_cs_assets(features)
