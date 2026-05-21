@@ -368,3 +368,482 @@ Expected: 输出 PR URL。
 Placeholder scan: 无 TBD / TODO / "implement later" / "add appropriate"。每个 Step 含完整代码或命令。
 
 Type consistency: `prevRowCount` / `maybeAutoSelectOnlyRow` / `selectedRow` / `selectRow` / `fstate.product` / `U.showToast` 名称在 Task 1-4 间一致。
+
+---
+
+# 方案 A+ 重构 Task（2026-05-21 update）
+
+> 缘起 + 诊断证据 + 4 处改动 spec 详见 `docs/superpowers/specs/2026-05-21-auto-select-only-row-design.md` 末尾「方案 A+ 重构」章节。本节给具体实施 task。
+
+## Task 5: 删 `selectedRow` 模块变量 + 新增 `findRowBySkc`
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: 删 `selectedRow` 模块变量**
+
+Edit `features/auto_gen_label/content/index.js`：
+
+old_string:
+```js
+  let selectedRow = null;
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
+```
+
+new_string:
+```js
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
+```
+
+> 删除 selectedRow 后，所有引用它的代码必须改造（后续 Step 6/7/8 处理）。
+
+- [ ] **Step 2: 新增 `findRowBySkc` 工具函数**
+
+在 `extractRowData` 函数之后插入：
+
+old_string:
+```js
+  function extractRowData(row) {
+    const si = getColumnIndex('SKC'), ki = getColumnIndex('SKC货号');
+    if (si < 0 || ki < 0) return null;
+    const tds = row.querySelectorAll('td[data-testid="beast-core-table-td"]');
+    const skc = tds[si - 1]?.textContent.trim(), skcSku = tds[ki - 1]?.textContent.trim();
+    return skc && skcSku ? { skcNumber: skc, skcSku } : null;
+  }
+```
+
+new_string:
+```js
+  function extractRowData(row) {
+    const si = getColumnIndex('SKC'), ki = getColumnIndex('SKC货号');
+    if (si < 0 || ki < 0) return null;
+    const tds = row.querySelectorAll('td[data-testid="beast-core-table-td"]');
+    const skc = tds[si - 1]?.textContent.trim(), skcSku = tds[ki - 1]?.textContent.trim();
+    return skc && skcSku ? { skcNumber: skc, skcSku } : null;
+  }
+
+  function findRowBySkc(skc) {
+    if (!skc) return null;
+    const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+    for (const row of rows) {
+      if (extractRowData(row)?.skcNumber === skc) return row;
+    }
+    return null;
+  }
+```
+
+## Task 6: 重写 `selectRow` / `clearSelection` + 新增 `refreshRowHighlight`
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: 重写 `clearSelection`**
+
+old_string:
+```js
+  function clearSelection() {
+    if (selectedRow) { selectedRow.classList.remove('tal-selected'); selectedRow = null; }
+    setProduct(null);
+  }
+```
+
+new_string:
+```js
+  function clearSelection() {
+    setProduct(null);
+    refreshRowHighlight();
+  }
+```
+
+- [ ] **Step 2: 重写 `selectRow`**
+
+old_string:
+```js
+  function selectRow(row) {
+    if (selectedRow) selectedRow.classList.remove('tal-selected');
+    selectedRow = row;
+    row.classList.add('tal-selected');
+    const product = extractRowData(row);
+    if (product) setProduct(product);
+    else setStatus('未能读取该行数据', 'err');
+  }
+```
+
+new_string:
+```js
+  function selectRow(row) {
+    const product = extractRowData(row);
+    if (!product) { setStatus('未能读取该行数据', 'err'); return; }
+    setProduct(product);
+    refreshRowHighlight();
+  }
+```
+
+- [ ] **Step 3: 新增 `refreshRowHighlight` 函数（紧跟 `selectRow` 之后）**
+
+定位 `selectRow` 函数之后、`maybeAutoSelectOnlyRow` 之前的位置。
+
+old_string（合并 selectRow 末尾 + maybeAutoSelectOnlyRow 起始作锚点定位）:
+```js
+  function selectRow(row) {
+    const product = extractRowData(row);
+    if (!product) { setStatus('未能读取该行数据', 'err'); return; }
+    setProduct(product);
+    refreshRowHighlight();
+  }
+
+  function maybeAutoSelectOnlyRow(rows) {
+```
+
+new_string:
+```js
+  function selectRow(row) {
+    const product = extractRowData(row);
+    if (!product) { setStatus('未能读取该行数据', 'err'); return; }
+    setProduct(product);
+    refreshRowHighlight();
+  }
+
+  function refreshRowHighlight() {
+    document.querySelectorAll('tr.tal-selected').forEach(r => r.classList.remove('tal-selected'));
+    const row = findRowBySkc(fstate.product?.skcNumber);
+    if (row) row.classList.add('tal-selected');
+  }
+
+  function maybeAutoSelectOnlyRow(rows) {
+```
+
+## Task 7: 改造 `maybeAutoSelectOnlyRow`（active 守卫 + SKC 幂等比较）
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: 全量替换 `maybeAutoSelectOnlyRow`**
+
+old_string:
+```js
+  function maybeAutoSelectOnlyRow(rows) {
+    // 转变触发：prev 不是 1 行 && cur 是 1 行
+    if (prevRowCount === 1 || rows.length !== 1) return;
+    const row = rows[0];
+    if (selectedRow === row) return;  // 同一行幂等保护
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
+  }
+```
+
+new_string:
+```js
+  function maybeAutoSelectOnlyRow(rows) {
+    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
+    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
+    //         bindRows 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
+    const uiState = window.__AgentSellerUI?.getState?.();
+    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') return;
+
+    // 守卫 2：转变触发（prev !== 1 && cur === 1）。
+    if (prevRowCount === 1 || rows.length !== 1) return;
+    const row = rows[0];
+    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
+    if (fstate.product?.skcNumber === extractRowData(row)?.skcNumber) return;
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
+  }
+```
+
+## Task 8: 改造 `watchNewRows`（observer attach body + mutation 同步视觉）
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: 改造 `watchNewRows`**
+
+old_string:
+```js
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'));
+      maybeAutoSelectOnlyRow(rows);
+      prevRowCount = rows.length;
+    });
+    rowObserver.observe(document.querySelector('tbody') || document.body, { childList: true, subtree: true });
+  }
+```
+
+new_string:
+```js
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'));
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      refreshRowHighlight();
+      maybeAutoSelectOnlyRow(rows);
+      prevRowCount = rows.length;
+    });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+```
+
+## Task 9: 改造所有 `selectedRow` 调用点
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: 列出所有 selectedRow 引用位置**
+
+跑：
+```
+grep -n "selectedRow" features/auto_gen_label/content/index.js
+```
+
+Expected 输出包含以下位置（行号可能因前面 task 改动有偏移）：
+- click handler 内 `selectedRow === row ? clearSelection() : selectRow(row)`（line ~205）
+- `onRunAllPhases` 内 `if (!fstate.product || !selectedRow) return;`（line ~248）
+- `onRunAllPhases` 内 `clickAndCaptureCanvas(selectedRow)`（line ~259）
+- `onRunPhase1Only` 内同样两处（line ~297, ~308）
+
+如有其他引用，本 Step 全部纳入修改。
+
+- [ ] **Step 2: 改 click handler 同行幂等判断**
+
+old_string:
+```js
+      row.addEventListener('click', e => {
+        if (e.target.closest('a, button')) return;
+        selectedRow === row ? clearSelection() : selectRow(row);
+      });
+```
+
+new_string:
+```js
+      row.addEventListener('click', e => {
+        if (e.target.closest('a, button')) return;
+        const data = extractRowData(row);
+        if (data?.skcNumber === fstate.product?.skcNumber) clearSelection();
+        else selectRow(row);
+      });
+```
+
+- [ ] **Step 3: 改 `onRunAllPhases` 取 row 方式**
+
+定位 `async function onRunAllPhases() {` 函数体首两行（守卫）+ `clickAndCaptureCanvas(selectedRow)` 调用。
+
+old_string:
+```js
+  async function onRunAllPhases() {
+    if (!fstate.product || !selectedRow) return;
+```
+
+new_string:
+```js
+  async function onRunAllPhases() {
+    const row = findRowBySkc(fstate.product?.skcNumber);
+    if (!fstate.product || !row) return;
+```
+
+然后再 Edit 同函数内的 `clickAndCaptureCanvas(selectedRow)` 一处（注意：可能有多次，确保只改 `onRunAllPhases` 函数内的，可用 around-context 让 old_string 唯一）：
+
+old_string:
+```js
+      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(selectedRow);
+```
+
+> 此处 selectedRow 在文件中出现两次（onRunAllPhases / onRunPhase1Only 内各一次），需用更大的 context block 让两处分别可定位。建议每次 Edit 用更长的 around-context（含上一行或下一行作锚点）。
+
+参考做法 onRunAllPhases 内：
+```js
+    const btn = document.getElementById('tal-btn-auto');
+    ...
+      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(selectedRow);
+```
+
+new_string 替换为：
+```js
+    const btn = document.getElementById('tal-btn-auto');
+    ...
+      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
+```
+
+> 注意：上面的 `...` 占位不能直接写入；要把 Read 到的真实代码内容作为 around-context。具体实施时按文件实际内容定位。
+
+- [ ] **Step 4: 改 `onRunPhase1Only` 取 row 方式**
+
+类似 Step 3 处理 `onRunPhase1Only` 函数内的两处引用：
+- 守卫：`if (!fstate.product || !selectedRow) return;` → 加 `const row = findRowBySkc(fstate.product?.skcNumber);` + 改 `|| !row`
+- `clickAndCaptureCanvas(selectedRow)` → `clickAndCaptureCanvas(row)`
+
+- [ ] **Step 5: 验证无残留 selectedRow**
+
+跑：
+```
+grep -n "selectedRow" features/auto_gen_label/content/index.js
+```
+
+Expected: **无输出**（exit code 1，grep no match）。
+
+如有残留，回 Step 1-4 检查漏处。
+
+## Task 10: 语法检查 + 端到端 build
+
+**Files:**
+- Read: `dist/extension/features/auto_gen_label/content/index.js`
+
+- [ ] **Step 1: node --check 语法验证**
+
+```
+node --check features/auto_gen_label/content/index.js
+```
+
+Expected: exit 0, no SyntaxError。
+
+- [ ] **Step 2: 全量 build**
+
+```
+python3 build/build_extension.py
+```
+
+Expected 末行 `[build] done → ...`。
+
+- [ ] **Step 3: 验证 dist 同步 A+ 改动**
+
+```
+grep -c "findRowBySkc\|refreshRowHighlight" dist/extension/features/auto_gen_label/content/index.js
+```
+
+Expected: **≥ 6**（findRowBySkc 函数定义 + 4+ 调用点；refreshRowHighlight 函数定义 + 3+ 调用点）。
+
+## Task 11: 端到端验收 10 个场景
+
+> 在 Chrome reload 扩展后跑。原 7 个场景 + 新 3 个场景。
+
+- [ ] **Step 1: 场景 1-7（原测试方案）**
+
+按原 plan Task 3 的 7 个场景跑一遍，所有应通过。
+
+- [ ] **Step 2: 新场景 8 — 跨 feature 隔离**
+
+进条码管理页 → FAB 不展开（保持 Hub 状态或切到别的 feature）→ 搜索 SKC → 表格剩 1 行。
+
+Expected: **不弹 toast**「已自动选中商品」。fstate 是否 set 不强制（实施细节）。
+
+- [ ] **Step 3: 新场景 9 — observer 长期稳定性**
+
+进条码管理页 → 等 30 秒不操作 → 搜索 SKC → 表格剩 1 行。
+
+Expected: 自动选中触发、视觉高亮、toast 弹出（验证 observer 长期没 detach）。
+
+- [ ] **Step 4: 新场景 10 — Phase 1 实跑**
+
+自动选中后点 feature view「开始执行」按钮，跑完 Phase 1。
+
+Expected: 不报「未找到查看条码按钮」/ 不报 detached row 错。条码 canvas 正常捕获、native_host 正常生成标签 PDF/PNG。
+
+- [ ] **Step 5: 总结**
+
+10 场景全通过 → 进 Task 12 commit。
+任何失败 → 贴现象，回 Task 5-9 调整。
+
+## Task 12: Commit + push + PR
+
+**Files:**
+- Modify: `features/auto_gen_label/content/index.js`（多处累积）
+
+- [ ] **Step 1: 确认在 feat 分支 + 改动符合预期**
+
+```
+git status
+git branch --show-current     # feat/auto-select-only-row
+git diff features/auto_gen_label/content/index.js | wc -l   # 应有几十行 diff
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add features/auto_gen_label/content/index.js
+git commit -m "$(cat <<'EOF'
+refactor(auto_gen_label): selectedRow 改 SKC 间接寻址，修复 detached row + observer bug
+
+Why: 初版 commit c7b6638 (自动选中) Windows 端验收暴露：用户视觉一直看不到行高亮、
+Phase 1 跑不通、手动点击也无响应。Console 诊断锁定两个潜伏 bug：
+- Bug 1: rowObserver attach 在初次 tbody 引用上，Temu React 替换 tbody 后 observer
+  失效，新 row 不绑 click handler。
+- Bug 2: selectedRow 引用 detached row 节点（Temu React 短时间内多次 re-render
+  导致 row swap），.tal-selected 残留旧节点、clickAndCaptureCanvas 找不到按钮。
+另暴露 1 个 UX 问题：feature view 没切到 auto_gen_label 时也弹自动选 toast。
+
+What:
+- 删 selectedRow 模块变量，新增 findRowBySkc(skc) 工具函数（按 SKC 反向查当前
+  mounted row）。
+- 新增 refreshRowHighlight()，在 setProduct / mutation / select/clear 时同步
+  所有 row 的 .tal-selected class，永远以 fstate.product.skcNumber 为 source of truth。
+- selectRow / clearSelection 不再存 row 引用，简化为「set fstate + refresh」。
+- 所有 selectedRow 调用点（click handler / onRunAllPhases / onRunPhase1Only /
+  clickAndCaptureCanvas）改用 findRowBySkc 取当前 mounted row。
+- maybeAutoSelectOnlyRow 加 active feature 守卫（uiState.view==='feature' &&
+  feature==='auto_gen_label'），跨 feature 不触发自动选 + toast。
+- watchNewRows MutationObserver attach 改 document.body，避免 React 替换 tbody
+  时失效。mutation 回调内同步调用 refreshRowHighlight。
+
+Test: 端到端验收 10 场景（原 7 + 跨 feature 隔离 / observer 长期稳定 /
+Phase 1 实跑）。诊断证据链见 docs/superpowers/specs/2026-05-21-auto-select
+-only-row-design.md 末尾。
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+- [ ] **Step 3: Push**
+
+```
+git push
+```
+
+- [ ] **Step 4: 创建 PR**
+
+```bash
+gh pr create --title "feat(auto_gen_label): 表格变 1 行时自动选中商品 + selectedRow 间接寻址重构" --body "$(cat <<'EOF'
+## Summary
+
+实现「表格变 1 行时自动选中商品」（spec: \`docs/superpowers/specs/2026-05-21-auto-select-only-row-design.md\`），并修复实施过程中暴露的两个潜伏 bug：
+
+1. **\`rowObserver\` 锁旧 tbody 引用**：React 替换 tbody 后 observer 失效，新 row 不绑 click handler、自动选不触发
+2. **\`selectedRow\` 指向 detached row 节点**：React 短时间内 re-render row，class 加在已脱离 DOM 的节点上，Phase 1 找不到「查看条码」按钮
+
+外加 1 个 UX 改进：跨 feature 不弹自动选 toast。
+
+## Architecture
+
+\`fstate.product.skcNumber\` 是唯一 source of truth；不再存 row 引用：
+
+- \`findRowBySkc(skc)\` 按 SKC 反向查当前 mounted row（取代 selectedRow 全局变量）
+- \`refreshRowHighlight()\` 在 mutation / setProduct 时同步 \`.tal-selected\` class
+- \`rowObserver\` attach 在 \`document.body\` subtree，永不 detach
+
+## Test plan
+
+- [x] 原 7 个手动场景（核心 / 多次切换 / 手动 clear 后 / 同 SKC 重搜 / 空表格 / 手动覆盖 / Phase 1-3 全流程）
+- [x] 跨 feature 隔离（Hub 状态搜索不弹 toast）
+- [x] observer 长期稳定（30 秒后搜索仍正常）
+- [x] Phase 1 实跑通
+
+## Risk
+
+- \`observe(document.body, subtree:true)\` 监听范围大但 MutationObserver native + callback 内极少 DOM 操作，实测 Temu 商家中心可接受。若未来出 perf 问题加 throttle，YAGNI。
+- 回滚：\`git revert <commit>\` 一行
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+- [ ] **Step 5: 报告 PR URL**
