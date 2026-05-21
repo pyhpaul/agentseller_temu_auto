@@ -847,3 +847,297 @@ EOF
 ```
 
 - [ ] **Step 5: 报告 PR URL**
+
+---
+
+# 方案 A++ 补丁 Task（2026-05-21 update 2）
+
+> A+ 实施后用户验收暴露 2 个新 bug：1) bindRows attribute idempotency 不可靠，2) td 延迟态 prevRowCount 锁死。spec 详见 `docs/superpowers/specs/2026-05-21-auto-select-only-row-design.md` 末尾「方案 A++ 补丁」章节。
+
+## Task 13: 实施 A++ 4 处改动
+
+**Files:** `features/auto_gen_label/content/index.js`
+
+- [ ] **Step 13.1: 在 fstate 附近新增 `clickDelegationBound` 闭包变量**
+
+Edit `features/auto_gen_label/content/index.js`：
+
+old_string:
+```
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
+  let rowObserver = null;
+```
+
+new_string:
+```
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
+  let rowObserver = null;
+  let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
+```
+
+- [ ] **Step 13.2: 删 `bindRows` 函数**
+
+定位 `function bindRows(rows) { ... }` 完整定义（约 9 行），整个删除。
+
+old_string（含函数定义 + 内部代码 + 闭合 `}`，以及前后的空行用于让 old_string 唯一）：
+```
+  function bindRows(rows) {
+    rows.forEach(row => {
+      if (row.getAttribute('data-tal-bound')) return;
+      row.setAttribute('data-tal-bound', '1');
+      row.addEventListener('click', e => {
+        if (e.target.closest('a, button')) return;
+        const data = extractRowData(row);
+        if (data?.skcNumber === fstate.product?.skcNumber) clearSelection();
+        else selectRow(row);
+      });
+    });
+  }
+```
+
+new_string（空字符串 / 删整段；为了 Edit 工具的唯一性可用空格占位然后调整）:
+直接用 Edit 把 old_string 替换为「单空行」即可：
+```
+
+```
+
+- [ ] **Step 13.3: 新增 `setupRowClickDelegation` 函数**
+
+在 `function watchNewRows()` 定义之前（删 bindRows 留下的空位）插入：
+
+old_string（用 watchNewRows 函数签名作锚点）:
+```
+  function watchNewRows() {
+```
+
+new_string:
+```
+  function setupRowClickDelegation() {
+    if (clickDelegationBound) return;
+    clickDelegationBound = true;
+    // 在 document 上绑一个全局 click listener（event delegation），
+    // 避免 React 复用/替换 row 节点时 listener 丢失（旧 bindRows 用 attribute
+    // idempotency 不可靠的根因修复）
+    document.addEventListener('click', e => {
+      const row = e.target.closest('tr[data-testid="beast-core-table-body-tr"]');
+      if (!row) return;
+      if (e.target.closest('a, button')) return;
+      const data = extractRowData(row);
+      if (!data) { setStatus('未能读取该行数据', 'err'); return; }
+      if (data.skcNumber === fstate.product?.skcNumber) clearSelection();
+      else selectRow(row);
+    });
+  }
+
+  function watchNewRows() {
+```
+
+- [ ] **Step 13.4: 简化 `watchNewRows`（删 bindRows 调用 + prevRowCount 末尾赋值）**
+
+old_string:
+```
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'));
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      refreshRowHighlight();
+      maybeAutoSelectOnlyRow(rows);
+      prevRowCount = rows.length;
+    });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+```
+
+new_string:
+```
+  function watchNewRows() {
+    if (rowObserver) return;
+    rowObserver = new MutationObserver(() => {
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      refreshRowHighlight();
+      // prevRowCount 更新逻辑移到 maybeAutoSelectOnlyRow 内，
+      // 失败（td 延迟态）时不更新 baseline，等下次 mutation 重试
+      maybeAutoSelectOnlyRow(rows);
+    });
+    // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
+    rowObserver.observe(document.body, { childList: true, subtree: true });
+  }
+```
+
+- [ ] **Step 13.5: 改造 `maybeAutoSelectOnlyRow`（内控 prevRowCount，失败不更新）**
+
+old_string:
+```
+  function maybeAutoSelectOnlyRow(rows) {
+    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
+    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
+    //         bindRows 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
+    const uiState = window.__AgentSellerUI?.getState?.();
+    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') return;
+
+    // 守卫 2：转变触发（prev !== 1 && cur === 1）。
+    if (prevRowCount === 1 || rows.length !== 1) return;
+    const row = rows[0];
+    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
+    if (fstate.product?.skcNumber === extractRowData(row)?.skcNumber) return;
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
+  }
+```
+
+new_string:
+```
+  function maybeAutoSelectOnlyRow(rows) {
+    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
+    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
+    //         click delegation 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
+    const uiState = window.__AgentSellerUI?.getState?.();
+    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') {
+      prevRowCount = rows.length;
+      return;
+    }
+    // 守卫 2：非 N>1→1 转变，更新 baseline 后返回。
+    if (prevRowCount === 1 || rows.length !== 1) {
+      prevRowCount = rows.length;
+      return;
+    }
+    const row = rows[0];
+    const newSkc = extractRowData(row)?.skcNumber;
+    // td 延迟态：row 已 mount 但 td 文本未填好，**不更新 baseline**，等下次 mutation 重试。
+    // 这是 A++ 修 prevRowCount 锁死 bug 的关键。
+    if (!newSkc) return;
+    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
+    if (newSkc === fstate.product?.skcNumber) {
+      prevRowCount = rows.length;
+      return;
+    }
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
+    prevRowCount = rows.length;
+  }
+```
+
+- [ ] **Step 13.6: 简化 `waitForTableThenBind`**
+
+old_string:
+```
+  function waitForTableThenBind(timeout = 15000) {
+    const deadline = Date.now() + timeout;
+    const check = () => {
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      if (rows.length) { bindRows(rows); watchNewRows(); }
+      else if (Date.now() < deadline) setTimeout(check, 400);
+    };
+    check();
+  }
+```
+
+new_string:
+```
+  function waitForTableThenBind(/* timeout 参数保留兼容签名，event delegation 不需要轮询 */) {
+    // event delegation + body subtree observer 都不依赖表格已 mount，立即启动（内部幂等）
+    setupRowClickDelegation();
+    watchNewRows();
+  }
+```
+
+- [ ] **Step 13.7: 验证 bindRows 完全删除 + 新逻辑就位**
+
+```
+grep -n "bindRows\|data-tal-bound" features/auto_gen_label/content/index.js
+```
+Expected: **无输出**（exit 1）。
+
+```
+grep -n "setupRowClickDelegation\|clickDelegationBound" features/auto_gen_label/content/index.js
+```
+Expected: 至少 4 行（变量声明 + 函数定义 + waitForTableThenBind 内调用 + 函数内部使用）。
+
+```
+grep -n "prevRowCount" features/auto_gen_label/content/index.js
+```
+Expected: 多次出现在 maybeAutoSelectOnlyRow 内，**不在 watchNewRows callback 末尾**。
+
+## Task 14: 语法 + build + 验证
+
+- [ ] **Step 14.1: node --check**
+```
+node --check features/auto_gen_label/content/index.js
+```
+Expected: exit 0。
+
+- [ ] **Step 14.2: 全量 build**
+```
+python3 build/build_extension.py
+```
+
+- [ ] **Step 14.3: dist 同步验证**
+```
+grep -c "setupRowClickDelegation" dist/extension/features/auto_gen_label/content/index.js
+```
+Expected: ≥ 2。
+
+## Task 15: 端到端验收 12 场景
+
+原 10 场景 + 新 2 场景：
+
+- 场景 1-10：见 Task 11
+- 场景 11 — **长按选中文本不误判**：多行 → 手动选中行 A → 长按 / 拖拽选中行 B 的 SKC 文本（用于复制） → **不应弹「未能读取该行数据」**、行 A 仍保持选中
+- 场景 12 — **td 延迟态自动重试**：搜索 → 表格 1 行（如能复现 td 延迟）→ 自动选中应在 td 填好那次 mutation 触发
+
+## Task 16: Commit + push（PR 已不需要新创建，沿用 task 12 PR）
+
+- [ ] **Step 16.1: Commit**
+
+```bash
+git add features/auto_gen_label/content/index.js
+git commit -m "$(cat <<'EOF'
+fix(auto_gen_label): event delegation + td 延迟态不锁死
+
+Why: A+ 后用户验收暴露 2 个稳定复现的 bug：
+- bindRows 用 data-tal-bound attribute idempotency 不可靠（React 复用 row 节点
+  保留 attribute 但 listener 跟节点替换丢失），导致 row 上无我们的 click handler、
+  手动点击无效
+- maybeAutoSelectOnlyRow 在 td 延迟态返回 null 时仍被 watchNewRows callback 末尾
+  无条件更新 prevRowCount=1，下次 mutation 守卫 2 锁死永不重试
+- 长按选中商品 SKC 文本时触发 click event 加剧 race condition，复现路径：
+  多行 → 选中 A → 长按 B 的 SKC → 必然「未能读取」→ 后续搜索锁死
+
+What:
+- 删 bindRows 函数 + data-tal-bound attribute 逻辑
+- 新增 setupRowClickDelegation：在 document 上绑全局 click listener，
+  通过 e.target.closest 定位 row。listener attach 在 document 永不丢失、
+  也不需要 attribute idempotency。
+- prevRowCount 更新逻辑从 watchNewRows callback 末尾移到 maybeAutoSelectOnlyRow
+  内部。extractRowData 返回 null（td 延迟态）时直接 return 不更新 baseline，
+  等下次 mutation（td 填好那次）重试。
+- waitForTableThenBind 简化（event delegation + body observer 不依赖表格已
+  mount，立即启动，删原轮询逻辑）。
+
+Test: 端到端 12 场景手动验收（原 10 + 长按选中文本不误判 + td 延迟态自动重试）。
+诊断证据：spec 文件「方案 A++ 补丁」章节。
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+- [ ] **Step 16.2: Push**
+```
+git push
+```
+
+- [ ] **Step 16.3: 评论 PR 说明 A++ 补丁已 push**
+```
+gh pr comment <PR#> --body "补 commit <sha> A++ 补丁：event delegation + td 延迟态不锁死。详见 spec 末尾章节。"
+```
+
+> PR 在 Task 12 已创建。本 Task 不再新建 PR，沿用同一 PR。
