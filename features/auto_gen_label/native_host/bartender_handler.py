@@ -18,11 +18,29 @@ import sys
 import base64
 import tempfile
 import logging
+from typing import Optional
 
-BT_DLL     = r'C:\Program Files\Seagull\BarTender 2022\Seagull.BarTender.Print.dll'
+# DLL 查找优先级：环境变量 TEMU_LABEL_BT_DLL → Program Files → Program Files (x86)
+# 第一个存在的即用。员工把 BarTender 装到非默认目录时设置环境变量覆盖即可
+BT_DLL_ENV_VAR = 'TEMU_LABEL_BT_DLL'
+BT_DLL_CANDIDATES = [
+    r'C:\Program Files\Seagull\BarTender 2022\Seagull.BarTender.Print.dll',
+    r'C:\Program Files (x86)\Seagull\BarTender 2022\Seagull.BarTender.Print.dll',
+]
 NS_BARCODE = '具名条形码'
 NS_SERIAL  = '具名序列号'
 EXPORT_DPI = 1200
+
+
+def resolve_bt_dll() -> Optional[str]:
+    """按优先级查找 BarTender DLL。找到第一个存在的返回完整路径，否则 None。"""
+    env_path = os.environ.get(BT_DLL_ENV_VAR)
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    for path in BT_DLL_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return None
 
 # 底图：background.png（空白盒子）
 # 流程：标签按宽度比例等比缩放 → 居中放置（水平+垂直）
@@ -44,6 +62,18 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
         return {'success': False, 'error': f'模板文件不存在: {template_path}'}
     if not output_dir or not os.path.isdir(output_dir):
         return {'success': False, 'error': f'输出目录不存在: {output_dir}'}
+    bt_dll = resolve_bt_dll()
+    if not bt_dll:
+        env_hint = os.environ.get(BT_DLL_ENV_VAR)
+        env_msg = f'（环境变量 {BT_DLL_ENV_VAR} 当前值: {env_hint!r}，文件不存在）' if env_hint else ''
+        return {
+            'success': False,
+            'error': (
+                f'未找到 BarTender DLL（Seagull.BarTender.Print.dll）。'
+                f'请确认已安装 BarTender 2022，或设置环境变量 {BT_DLL_ENV_VAR} 指向该 DLL 完整路径。'
+                f' 已尝试默认路径: {" / ".join(BT_DLL_CANDIDATES)}{env_msg}'
+            ),
+        }
 
     safe_stem = f'SKC-{skc_number}'.replace('/', '_').replace('\\', '_').replace(':', '_')
     sub_dir   = os.path.join(output_dir, safe_stem)
@@ -55,7 +85,7 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
 
     png_path = _save_b64_png(barcode_png_b64, skc_number)
     try:
-        _run_bartender(template_path, png_path, skc_sku, out_pdf, out_raw_png)
+        _run_bartender(template_path, png_path, skc_sku, out_pdf, out_raw_png, bt_dll)
         _composite_with_background(out_raw_png, out_jpeg_final, width_ratio=width_ratio)
     finally:
         _safe_remove(png_path)
@@ -83,10 +113,10 @@ def _save_b64_png(b64_data: str, name_hint: str) -> str:
 
 
 def _run_bartender(btw_path: str, png_path: str, skc_sku: str,
-                   out_pdf: str, out_png: str) -> None:
+                   out_pdf: str, out_png: str, bt_dll: str) -> None:
     """打开 BarTender 模板，写入数据，导出 600 DPI 的 PDF 和原始 PNG。"""
     import clr
-    clr.AddReference(BT_DLL)
+    clr.AddReference(bt_dll)
     from Seagull.BarTender.Print import (
         Engine, ImageType, ColorDepth,
         OverwriteOptions, SaveOptions, Resolution
