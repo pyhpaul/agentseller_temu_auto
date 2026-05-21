@@ -29,7 +29,7 @@
 ## 目录结构
 
 ```
-check_and_publish/
+features/check_and_publish/
 ├── feature.json
 ├── CLAUDE.md                  # 本文件
 ├── content/

@@ -20,15 +20,16 @@ agentseller_temu/
 │   │   └── core.js                  # 装配入口（manifest 内排在最后一个 core 文件）
 │   ├── popup/{popup.html, popup.js}
 │   └── icons/icon{16,48,128}.png
-├── <feature>/                       # 每个 feature 一个自治目录（当前：auto_gen_label/）
-│   ├── feature.json                 # feature 元数据
-│   ├── content/index.js             # feature 业务代码
-│   ├── native_host/                 # 本地资源端（如该 feature 需要）
-│   ├── build/                       # feature 内部构建（如 PyInstaller 打 EXE）
-│   ├── samples/                     # 调试辅料（DOM 抓取、日志样本等）
-│   └── CLAUDE.md                    # feature 自己的文档
+├── features/                        # 所有 feature 集中在此目录下
+│   └── <feature>/                   # 每个 feature 一个自治子目录（如 auto_gen_label/）
+│       ├── feature.json             # feature 元数据
+│       ├── content/index.js         # feature 业务代码
+│       ├── native_host/             # 本地资源端（如该 feature 需要）
+│       ├── build/                   # feature 内部构建（如 PyInstaller 打 EXE）
+│       ├── samples/                 # 调试辅料（DOM 抓取、日志样本等）
+│       └── CLAUDE.md                # feature 自己的文档
 ├── build/                           # 顶层构建脚本
-│   ├── build_extension.py           # 全量构建：扫 feature.json + 拷文件 + 拼 manifest → dist/extension/
+│   ├── build_extension.py           # 全量构建：扫 features/*/feature.json + 拷文件 + 拼 manifest → dist/extension/
 │   ├── dev.py                       # watch 模式（日常开发跑这个）
 │   ├── package_all.py               # 串联：extension dist + native_host EXE + 员工部署包
 │   └── requirements-dev.txt         # watchdog
@@ -65,7 +66,7 @@ agentseller_temu/
 | `host_permissions` / `permissions` | 构建时聚合去重写入 manifest |
 | `native_host` | 关联 native host 名（可选） |
 
-**当前 feature 列表**：用 `ls */feature.json` 自查（不在此文档硬列，避免多 worktree 并行加 feature 时冲突）。
+**当前 feature 列表**：用 `ls features/*/feature.json` 自查（不在此文档硬列，避免多 worktree 并行加 feature 时冲突）。
 
 ## Core API（feature 业务可调用）
 
@@ -152,7 +153,7 @@ python build/package_all.py                    # 含 extension + EXE + install.b
    ```
 
 5. **在 feature 目录内开发**
-   - 建 `<your_feature>/` 目录 + `feature.json` + `content/index.js`
+   - 建 `features/<your_feature>/` 目录 + `feature.json` + `content/index.js`
    - 跑 `python build/dev.py` 开始调试
    - feature 内部改动不会和其它 feature worktree 冲突
 
@@ -177,7 +178,7 @@ git worktree add ../wt-<feature_or_task_name> -b feature/<branch_name>
 |----|---------|------|
 | 源码 / feature 目录 | ✓ worktree 各自一份 | feature.json / content/*.js 互不可见 |
 | `dist/extension/` 输出 | ✓ 各自构建互不覆盖 | `dist/` 是 gitignored |
-| `build_extension.py` 扫描范围 | ✓ 只扫本 worktree 的 `*/feature.json` | 失败也不连累其他 worktree |
+| `build_extension.py` 扫描范围 | ✓ 只扫本 worktree 的 `features/*/feature.json` | 失败也不连累其他 worktree |
 | 多个 `dev.py` 并行 | ✓ 无冲突 | watchdog 不占端口 |
 | Chrome Extension 加载点 | ✗ 全局唯一 | 一次只能加载一个 worktree 的 dist，调试时轮流 |
 | Windows Native Host 注册表 | ✗ 全局唯一 | `HKCU\Software\Google\Chrome\NativeMessagingHosts\<host_name>` 只能指向一个 EXE，多 worktree 同时调试 native_host 需轮流跑各自的 `dev_install.bat` |

@@ -30,7 +30,7 @@
 ## 内部组织
 
 ```
-auto_gen_label/
+features/auto_gen_label/
 ├── feature.json
 ├── content/index.js          # chrome 端业务（Phase 1/2/3 全部，约 1500 行）
 ├── native_host/              # Python 本地资源端

@@ -9,9 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / 'core'
+FEATURES_DIR = ROOT / 'features'
 DIST = ROOT / 'dist' / 'extension'
-
-SKIP_DIRS = {'core', 'build', 'dist', 'docs', '__pycache__', '.git'}
 
 
 def _inject_source_url(dst_file: Path, src_rel: str):
@@ -45,10 +44,12 @@ def copy_core_assets():
 
 
 def scan_features():
-    """扫描 <ROOT>/*/feature.json，返回 feature 元数据列表。"""
+    """扫描 features/*/feature.json，返回 feature 元数据列表。"""
     features = []
-    for entry in sorted(ROOT.iterdir()):
-        if not entry.is_dir() or entry.name in SKIP_DIRS or entry.name.startswith('.'):
+    if not FEATURES_DIR.exists():
+        return features
+    for entry in sorted(FEATURES_DIR.iterdir()):
+        if not entry.is_dir() or entry.name.startswith('.'):
             continue
         fjson = entry / 'feature.json'
         if not fjson.exists():
