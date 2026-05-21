@@ -34,7 +34,8 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\TemuLabel
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-DisableDirPage=yes
+; DisableDirPage 留默认（向导显示「选择安装位置」页），员工可改装到 D:\ 等
+; 其他用户可写目录；受 PrivilegesRequired=lowest 限制无法装到 Program Files
 OutputBaseFilename=TemuLabelSetup
 OutputDir=..\dist
 PrivilegesRequired=lowest
@@ -43,12 +44,14 @@ Compression=lzma2/ultra
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\extension\icons\icon128.png
-SetupIconFile=..\core\icons\icon128.png
+; SetupIconFile 嵌入 PE 资源，必须是 .ico 多分辨率图标（不接受 .png）
+SetupIconFile=..\core\icons\icon128.ico
 ; 安装时旧版本同目录文件会被新版覆盖；卸载时清理 {app} 整目录
 Uninstallable=yes
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; ChineseSimplified.isl 项目自带（deploy/languages/），不依赖 ISCC 本地装了简体中文
+Name: "chinesesimplified"; MessagesFile: "languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
@@ -74,8 +77,11 @@ Filename: "{sys}\reg.exe"; \
 
 [UninstallRun]
 ; 卸载时清理注册表项
+; RunOnceId 让 Inno Setup 在 update install（先卸旧后装新）时仅执行一次此条目，
+; 消除 ISCC "[UninstallRun] section entries without a RunOnceId parameter" warning
 Filename: "{sys}\reg.exe"; \
     Parameters: "delete ""HKCU\Software\Google\Chrome\NativeMessagingHosts\{#MyHostName}"" /f"; \
+    RunOnceId: "DelNativeHostReg"; \
     Flags: runhidden
 
 [Code]
