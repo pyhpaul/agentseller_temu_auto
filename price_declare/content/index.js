@@ -247,7 +247,6 @@
 
   const DEFAULT_SETTINGS = {
     reason: '已提交活动，没有利润',
-    delayMultiplier: 1.0,
     maxPerSession: 300,
     panelCollapsed: false
   }
@@ -657,18 +656,15 @@
     const hjd = S.readHJD(row) || '(no-hjd)'
     log('info', '开始处理', hjd)
     await A.clickNoAdjust(row)
-    await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
     const modal = await A.waitModalAppear()
     await checkpoint()
     const type = S.detectModalType(modal)
     if (type === 'single') {
-      await A.fillReason(modal, state.settings.reason, { multiplier: state.settings.delayMultiplier })
-      await sleep(randomDelay(200, 500, state.settings.delayMultiplier))
+      await A.fillReason(modal, state.settings.reason)
       await A.clickConfirm(modal)
       log('info', '单SKU 已确认', hjd)
     } else if (type === 'multi') {
-      await A.selectAllNoAdjust(modal, { multiplier: state.settings.delayMultiplier })
-      await sleep(randomDelay(200, 500, state.settings.delayMultiplier))
+      await A.selectAllNoAdjust(modal)
       await A.clickConfirm(modal)
       log('info', '多SKU 已确认', hjd)
     } else {
@@ -701,14 +697,14 @@
     const MAX_TAB_ATTEMPTS = 5
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
       try {
-        await A.refreshListByTabSwitch({ multiplier: state.settings.delayMultiplier })
+        await A.refreshListByTabSwitch({ multiplier: 1 })
       } catch (err) {
         log('warn', `切 tab 失败 (${err.message || err})，fallback reload`)
         await fallbackReload(reason + '_tab_fail')
         return
       }
 
-      await _rawSleep(2000)
+      await _rawSleep(500)
 
       // 优先用 SKU key 判断（多 SKU 场景：等所有相同 SPU+SKC 的行消失）
       // 降级用 HJD 判断（SKU key 读取失败时）
@@ -739,7 +735,7 @@
       while (true) {
         await checkpoint()
         try {
-          await A.ensureTargetTab('待卖家确认', { multiplier: state.settings.delayMultiplier })
+          await A.ensureTargetTab('待卖家确认', { multiplier: 1 })
         } catch (err) {
           log('error', `切换 tab 失败：${err.message || err}`)
           setMode(MODES.PAUSED)
@@ -779,7 +775,7 @@
             }
             await persist({ lastAction: 'next_page' })
             await A.clickNextPage()
-            await sleep(randomDelay(600, 1100, state.settings.delayMultiplier))
+            await sleep(randomDelay(600, 1100, 1))
             await A.waitListReady().catch(() => {})
             continue
           }
@@ -815,7 +811,7 @@
               const cancelBtn = S.findCancelButton(modal)
               if (cancelBtn) { cancelBtn.click(); log('info', '已点击取消关闭弹窗') }
               else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-              await sleep(randomDelay(300, 500, state.settings.delayMultiplier))
+              await sleep(randomDelay(300, 500, 1))
             }
           } catch (e) {
             log('warn', `关闭弹窗失败：${e.message || e}`)
@@ -826,7 +822,7 @@
             log('warn', '已暂停，等待人工')
             return
           }
-          await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
+          await sleep(randomDelay(800, 1500, 1))
         }
 
         await checkpoint()
@@ -839,7 +835,6 @@
           return
         }
 
-        await sleep(randomDelay(400, 900, state.settings.delayMultiplier))
       }
     } catch (err) {
       if (err && err.code === 'Stopped') {
@@ -913,7 +908,7 @@
     if (await ST.shouldAutoResume()) {
       log('info', '刷新后自动续跑')
       try {
-        await A.ensureTargetTab('待卖家确认', { multiplier: state.settings.delayMultiplier })
+        await A.ensureTargetTab('待卖家确认', { multiplier: 1 })
       } catch (e) {
         log('warn', `续跑时切 tab 失败：${e.message || e}（mainLoop 会重试）`)
       }
@@ -953,7 +948,7 @@
       }
 
       await persist({ lastAction: 'resumed' })
-      await sleep(randomDelay(800, 1500, state.settings.delayMultiplier))
+      await sleep(randomDelay(800, 1500, 1))
       if (!runningPromise) {
         runningPromise = mainLoop().finally(() => { runningPromise = null })
       }
@@ -1115,7 +1110,7 @@
     refs.reason.value = state.settings.reason
     refs.refreshEvery.value = String(state.settings.refreshEvery)
     refs.stopOnError.checked = !!state.settings.stopOnError
-    refs.delayMul.value = String(state.settings.delayMultiplier)
+    refs.delayMul.value = String(1)
 
     refs.log.innerHTML = ''
     for (const it of (state.log || [])) {
@@ -1299,8 +1294,6 @@
     // 设置字段只在非焦点时同步，避免打断用户输入
     const reasonInput = el.querySelector('.tpd-reason')
     if (reasonInput && document.activeElement !== reasonInput) reasonInput.value = state.settings.reason
-    const delayMul = el.querySelector('.tpd-delay-mul')
-    if (delayMul) delayMul.value = String(state.settings.delayMultiplier)
 
   }
 
@@ -1331,12 +1324,6 @@
         </div>
         <div class="tpd-settings" style="border-top:1px solid #f0f0f0;padding-top:7px;margin-bottom:7px">
           <label><span style="color:#888">不调整原因</span><input class="tpd-reason" type="text"></label>
-          <label><span style="color:#888">延时倍速</span>
-            <select class="tpd-delay-mul">
-              <option value="0.5">0.5x</option><option value="1">1x</option>
-              <option value="1.5">1.5x</option><option value="2">2x</option><option value="3">3x</option>
-            </select>
-          </label>
         </div>
         <div style="border-top:1px solid #f0f0f0;padding-top:6px;font-size:11px;color:#bbb">
           日志见 DevTools Console（过滤 [TPD]）
@@ -1359,8 +1346,6 @@
 
     viewEl.querySelector('.tpd-reason').addEventListener('change', e =>
       TPD.engine.updateSettings({ reason: e.target.value }))
-    viewEl.querySelector('.tpd-delay-mul').addEventListener('change', e =>
-      TPD.engine.updateSettings({ delayMultiplier: Number(e.target.value) }))
   }
 
   async function bootstrap() {
