@@ -173,8 +173,12 @@
   }
 
   function readPaginationState() {
+    // ready: 分页器是否已经渲染到 DOM
+    //   false = 未渲染（切 tab 后异步重渲染中），调用方应该等待重读，不能用 hasNext 判断
+    //   true  = 已渲染，hasNext/current/totalText 才有意义
+    // 不要把「未渲染」和「真无下一页」用同一个 hasNext=false 表达，否则 mainLoop 会误判完成
     const root = document.querySelector(PAGINATION_SEL)
-    if (!root) return { current: 1, hasNext: false, totalText: '' }
+    if (!root) return { ready: false, current: 0, hasNext: false, totalText: '' }
     const active = root.querySelector('[class*="PGT_pagerItemActive"]')
     const current = active ? Number(active.textContent.trim()) || 1 : 1
     const nextLi = root.querySelector(NEXT_PAGE_SEL)
@@ -182,6 +186,7 @@
     const hasNext = !!nextLi && !nextDisabled
     const totalEl = root.querySelector('[class*="PGT_totalText"]')
     return {
+      ready: true,
       current,
       hasNext,
       totalText: totalEl ? totalEl.textContent.trim() : ''
@@ -284,7 +289,8 @@
       settings: { ...DEFAULT_SETTINGS },
       snapshot: {
         beforeReloadCount: null,
-        reloadRetries: 0
+        reloadRetries: 0,
+        fallbackReloadCount: 0  // 防 fallback reload 死循环：达上限后暂停等人工
       },
       lastTouchedAt: 0,
       lastAction: null,
@@ -405,7 +411,10 @@
     return S.findActiveModal()
   }
 
-  async function waitModalClose(modal, { timeout = 6000 } = {}) {
+  async function waitModalClose(modal, { timeout = 15000 } = {}) {
+    // 成功路径下 modal 通常 1-3s 关闭，timeout 给到 15s 容忍 Temu 慢响应
+    // 超时未关 = confirm 后 Temu 拒绝（弹「数据对不上 / 更新失败」toast，多 SKU modal 不自动关）
+    // 改为抛错，让 mainLoop 错误分支接管：关 modal + 加 skip set + 跳过该行继续
     const closed = await waitFor(
       () => {
         if (!modal.isConnected) return true
@@ -416,9 +425,9 @@
     ).then(() => true).catch(() => false)
 
     if (!closed) {
-      // 弹窗超时未关闭（可能服务器拒绝了重复操作），发 Escape 尝试关闭
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      await sleep(randomDelay(400, 700))
+      const e = new Error('ConfirmModalStuck')
+      e.code = 'ConfirmModalStuck'
+      throw e
     }
   }
 
@@ -521,7 +530,8 @@
     }
     if (!detourTab) throw new Error('NoDetourTab')
     robustClick(detourTab)
-    await sleep(randomDelay(500, 900, multiplier))
+    // Temu 后台缓存更新慢，detour 后等久一点让 React 真重拉数据再切回（原 500-900ms 不够）
+    await sleep(randomDelay(1500, 2500, multiplier))
     await ensureTargetTab('待卖家确认', { multiplier })
   }
 
@@ -638,6 +648,7 @@
     const m = String(err && err.message || err)
     if (err && err.code && FATAL_ERRORS.has(err.code)) return err.code
     if (/^RowVanished/.test(m)) return 'RowVanished'
+    if (/^ConfirmModalStuck/.test(m)) return 'ConfirmModalStuck'
     if (/^(TextareaMissing|NoRadioGroups|NoAdjustRadioMissing|ConfirmButtonMissing|NextPageMissing)/.test(m)) return 'StructureMissing'
     if (/^ButtonDisabled/.test(m)) return 'ButtonDisabled'
     if (/timeout/i.test(m)) return 'TimeoutError'
@@ -680,7 +691,20 @@
   }
 
   async function fallbackReload(reason) {
+    // 防死循环：连续 fallback reload 超 3 次 = 页面/后端真坏了，暂停等人工而非无限刷
+    // 成功处理一行（processOneRow 后）或用户主动 start() 时会重置 fallbackReloadCount
+    const MAX_FALLBACK = 3
     state.snapshot.reloadRetries = 0
+    const count = (state.snapshot.fallbackReloadCount || 0) + 1
+    state.snapshot.fallbackReloadCount = count
+    if (count > MAX_FALLBACK) {
+      log('error', `fallback reload 已达上限 ${MAX_FALLBACK} 次（reason=${reason}），暂停等人工`)
+      setMode(MODES.PAUSED)
+      state.snapshot.fallbackReloadCount = 0
+      await persist({ lastAction: 'fallback_giveup', reloadReason: reason })
+      return
+    }
+    log('warn', `fallback reload [${count}/${MAX_FALLBACK}] reason=${reason}`)
     await persist({ lastAction: 'reload', reloadReason: reason })
     await A.reloadPage()
   }
@@ -704,7 +728,7 @@
         return
       }
 
-      await _rawSleep(500)
+      await _rawSleep(2000)
 
       // 优先用 SKU key 判断（多 SKU 场景：等所有相同 SPU+SKC 的行消失）
       // 降级用 HJD 判断（SKU key 读取失败时）
@@ -732,6 +756,9 @@
     try {
       await A.waitListReady().catch(() => {})
       let emptyPageStreak = 0  // 连续翻到空页的次数，防止无限翻页
+      const skippedHJDs = new Set()  // 本次 session confirm 失败已跳过的 HJD，避免死循环再次尝试
+      let consecutiveFailures = 0    // 连续 ConfirmModalStuck 次数，达上限暂停等人工
+      const MAX_CONSECUTIVE_FAILURES = 5
       while (true) {
         await checkpoint()
         try {
@@ -755,7 +782,10 @@
           await persist({ lastAction: 'max_reached' })
           return
         }
-        let rows = S.findPendingRows()
+        let rows = S.findPendingRows().filter(r => {
+          const h = S.readHJD(r)
+          return !(h && skippedHJDs.has(h))
+        })
         if (rows.length === 0) {
           // DOM 可能还在渲染，等一次（最多 3s），看是否有行出现
           const appeared = await A.waitListReady({ timeout: 3000 }).then(() => true).catch(() => false)
@@ -764,10 +794,39 @@
             if (rows.length > 0) continue  // 有行了，重新进入循环处理
           }
           const pg = S.readPaginationState()
+
+          // 分页器尚未渲染：React 切 tab 后异步重渲染中，不能用此态判断完成
+          // 限流 5 次（约 10s），都没就绪才 fallback reload
+          if (!pg.ready) {
+            emptyPageStreak++
+            if (emptyPageStreak >= 5) {
+              log('warn', '连续 5 次分页器未就绪，fallback reload')
+              await fallbackReload('pagination_not_ready')
+              return
+            }
+            log('info', `分页器未就绪 [${emptyPageStreak}/5]，等待重读`)
+            await sleep(randomDelay(1500, 2500, 1))
+            continue
+          }
+
           if (pg.hasNext) {
             emptyPageStreak++
             if (emptyPageStreak >= 3) {
-              log('warn', '连续 3 次翻页均无待处理行，认为全部完成')
+              // 多信号兜底：badge 优先（最稳），totalText 降级
+              const badgeCount = S.readPendingTabCount()
+              const finalMatch = pg.totalText.match(/(\d+)/)
+              const finalTotal = finalMatch ? Number(finalMatch[1]) : 0
+              if (badgeCount != null && badgeCount > 0) {
+                log('warn', `连续 3 次翻页 0 行但 tab badge 显示 ${badgeCount} 条，fallback reload`)
+                await fallbackReload('badge_list_mismatch')
+                return
+              }
+              if (finalTotal > 0) {
+                log('warn', `连续 3 次翻页 0 行但分页显示 ${finalTotal} 条，fallback reload`)
+                await fallbackReload('paging_render_lag')
+                return
+              }
+              log('warn', `连续 3 次翻页均无待处理行，全部完成 badge=${badgeCount ?? '?'} totalText="${pg.totalText}"`)
               setMode(MODES.IDLE)
               state.stats.processedSinceRefresh = 0
               await persist({ lastAction: 'done' })
@@ -779,7 +838,38 @@
             await A.waitListReady().catch(() => {})
             continue
           }
-          log('ok', `全部完成 (success=${state.stats.success}, failed=${state.stats.failed})`)
+
+          // 末页且无行：totalText 在切 tab 瞬间是「共有 0 条」/ 空字符串等 loading 占位，不可信
+          // 每次 retry 主动切 tab 触发 React 重拉（被动 sleep 无效，React 不会自己刷新）
+          const RETRY_DELAYS = [1000, 2000, 3000, 5000, 8000]
+          emptyPageStreak++
+          if (emptyPageStreak <= RETRY_DELAYS.length) {
+            const wait = RETRY_DELAYS[emptyPageStreak - 1]
+            log('info', `末页 0 行 [${emptyPageStreak}/${RETRY_DELAYS.length}]（totalText="${pg.totalText}"），等 ${wait / 1000}s 后切 tab 重拉`)
+            await sleep(wait)
+            try {
+              await A.refreshListByTabSwitch({ multiplier: 1 })
+            } catch (e) {
+              log('warn', `retry 切 tab 失败：${e.message || e}`)
+            }
+            continue
+          }
+          // 5 次 retry 后仍 0 行——多信号兜底判断真完成 vs 页面卡死
+          // 优先用 tab badge（直接来自标签数字，比 totalText 稳），totalText 作降级
+          const badgeCount = S.readPendingTabCount()
+          const finalMatch = pg.totalText.match(/(\d+)/)
+          const finalTotal = finalMatch ? Number(finalMatch[1]) : 0
+          if (badgeCount != null && badgeCount > 0) {
+            log('warn', `${RETRY_DELAYS.length} 次 retry 后仍 0 行但 tab badge 显示 ${badgeCount} 条（totalText="${pg.totalText}"），fallback reload`)
+            await fallbackReload('badge_list_mismatch')
+            return
+          }
+          if (finalTotal > 0) {
+            log('warn', `${RETRY_DELAYS.length} 次 retry 后仍 0 行但分页显示 ${finalTotal} 条，fallback reload`)
+            await fallbackReload('list_render_lag')
+            return
+          }
+          log('ok', `全部完成 (success=${state.stats.success}, failed=${state.stats.failed}) badge=${badgeCount ?? '?'} totalText="${pg.totalText}"`)
           setMode(MODES.IDLE)
           state.stats.processedSinceRefresh = 0
           await persist({ lastAction: 'done' })
@@ -792,6 +882,8 @@
         const targetSKUKey = S.readSKUKey(rows[0])
         try {
           await processOneRow(rows[0])
+          state.snapshot.fallbackReloadCount = 0  // 成功处理一行 = mainLoop 已恢复正常，重置 fallback 计数
+          consecutiveFailures = 0                 // 成功也重置 confirm 失败计数
           await persist({ lastAction: 'row_done' })
         } catch (err) {
           if (err && err.code === 'Stopped') throw err  // 让外层 catch 正确处理停止
@@ -804,7 +896,7 @@
           state.stats.failed += 1
           log('error', `✗ ${kind}: ${err.message || err}`)
           await persist({ lastAction: 'row_failed' })
-          // 无论是否暂停，先关闭可能还开着的弹窗（取消按钮 > Escape）
+          // 关闭可能残留的弹窗（取消按钮 > Escape）
           try {
             const modal = S.findActiveModal()
             if (modal) {
@@ -816,13 +908,44 @@
           } catch (e) {
             log('warn', `关闭弹窗失败：${e.message || e}`)
           }
-          if (true) {  // 失败即暂停，不再提供关闭选项
-            setMode(MODES.PAUSED)
-            await persist({})
-            log('warn', '已暂停，等待人工')
-            return
+
+          // ConfirmModalStuck：Temu 拒绝该 confirm（多 SKU 弹「数据对不上」等），不暂停，跳过整组同 SPU+SKC 继续
+          // 限流：连续 N 次失败才暂停（防异常状态下死循环）
+          if (kind === 'ConfirmModalStuck') {
+            const skuKey = S.readSKUKey(rows[0])
+            const hjd = S.readHJD(rows[0])
+            // 多 SKU 共享同 SPU+SKC 调价单：一条拒绝 = 整组都是脏数据，全跳过避免再触发
+            if (skuKey) {
+              const sameKeyRows = S.findPendingRows().filter(r => S.readSKUKey(r) === skuKey)
+              sameKeyRows.forEach(r => { const h = S.readHJD(r); if (h) skippedHJDs.add(h) })
+              log('warn', `跳过 SKU=${skuKey} 共 ${sameKeyRows.length} 条调价单（confirm 被拒）`)
+            } else if (hjd) {
+              skippedHJDs.add(hjd)
+              log('warn', `跳过 HJD=${hjd}（confirm 被拒，无 SKU key 降级）`)
+            }
+            consecutiveFailures++
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              log('error', `连续 ${MAX_CONSECUTIVE_FAILURES} 次 confirm 被 Temu 拒绝，暂停等人工`)
+              setMode(MODES.PAUSED)
+              await persist({ lastAction: 'consecutive_confirm_fail_giveup' })
+              return
+            }
+            // 固定 3s 冷却（等 Temu 后台稳定），再切 tab 强制 React 重拉数据
+            log('info', `冷却 3s + 切 tab 刷新 [连续失败 ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}]`)
+            await _rawSleep(3000)
+            try {
+              await A.refreshListByTabSwitch({ multiplier: 1 })
+            } catch (e) {
+              log('warn', `切 tab 刷新失败：${e.message || e}`)
+            }
+            continue
           }
-          await sleep(randomDelay(800, 1500, 1))
+
+          // 其他错误：暂停等人工
+          setMode(MODES.PAUSED)
+          await persist({})
+          log('warn', '已暂停，等待人工')
+          return
         }
 
         await checkpoint()
@@ -861,6 +984,7 @@
       state.stats = ST.defaults().stats
       state.stats.sessionStart = nowTs()
     }
+    state.snapshot.fallbackReloadCount = 0  // 新 session 重置 fallback 计数
     setMode(MODES.RUNNING)
     await persist({ lastAction: 'start' })
     runningPromise = mainLoop().finally(() => { runningPromise = null })
@@ -907,6 +1031,8 @@
   async function autoResumeIfNeeded() {
     if (await ST.shouldAutoResume()) {
       log('info', '刷新后自动续跑')
+      // reload 后浮窗默认收回成 FAB，自动展开到本 feature view 让用户立刻看到状态
+      try { window.AgentSeller?.openFeature?.('price_declare') } catch (e) {}
       try {
         await A.ensureTargetTab('待卖家确认', { multiplier: 1 })
       } catch (e) {

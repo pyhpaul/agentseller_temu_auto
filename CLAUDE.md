@@ -82,8 +82,11 @@ window.AgentSeller = {
     findByText, setInputValue, showToast, makeDraggable,
   },
   sendNative(action, data),               // 透传到 service worker → native host
+  openFeature(fid),                       // 程序化展开 Panel + 切到指定 feature view（reload 自动续跑场景常用）
 };
 ```
+
+**dev 构建标识**：build 时 `build_extension.py` 生成 `dist/extension/content/build-info.js`，注入 `window.__AS_BUILD_INFO__ = { ts, isDev: true }`。Panel 标题栏在 `isDev=true` 时显示 `dev:<ts>` 灰色小字（用于判断 Chrome 是否真 reload 了新版）。`package_all.py` 在 release 时用 string replace 把 `isDev: true` 改成 `false` 自动隐藏。
 
 Feature 注册示例（feature 内部）：
 

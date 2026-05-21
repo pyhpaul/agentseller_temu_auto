@@ -54,6 +54,24 @@ def _replace_tal_debug_to_false(extension_root: Path):
     print(f'[package] TAL_DEBUG = false 已写入 {target.relative_to(ROOT)}')
 
 
+def _disable_build_info_for_release(extension_root: Path):
+    """release 部署包关闭 dev 构建时间戳显示——把 build-info.js 里 isDev: true 改成 false。
+    同 _replace_tal_debug_to_false 的失败保护：未命中直接退出。
+    """
+    target = extension_root / 'content' / 'build-info.js'
+    if not target.exists():
+        print(f'[package] 警告：未找到 {target}，跳过 isDev 替换')
+        return
+    src = target.read_text(encoding='utf-8')
+    needle = 'isDev: true'
+    if needle not in src:
+        print(f'[package] 错误：{target} 中未找到 "{needle}"', file=sys.stderr)
+        sys.exit(2)
+    dst = src.replace(needle, 'isDev: false', 1)
+    target.write_text(dst, encoding='utf-8')
+    print(f'[package] isDev = false 已写入 {target.relative_to(ROOT)}')
+
+
 def build_installer():
     """用 Inno Setup 把 dist/TemuLabel_Setup/ 打成 dist/TemuLabelSetup.exe。
 
@@ -101,8 +119,9 @@ def main():
 
     # extension 目录（dist 产物）
     shutil.copytree(DIST, SETUP_DIR / 'extension')
-    # 关掉 release 版的 TAL_DEBUG
+    # 关掉 release 版的 TAL_DEBUG + dev build 时间戳显示
     _replace_tal_debug_to_false(SETUP_DIR / 'extension')
+    _disable_build_info_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（features/auto_gen_label/build/build.bat 的 --distpath native_host 决定落点）
     exe_src = ROOT / 'features' / 'auto_gen_label' / 'native_host' / 'TemuLabelHost.exe'

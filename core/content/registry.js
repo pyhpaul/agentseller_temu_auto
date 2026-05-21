@@ -70,5 +70,13 @@
     showToast: (...args) => window.__AgentSellerUtils.showToast(...args),
     utils: null,  // 由 core.js 在初始化时填入
     sendNative,
+    // 程序化打开 feature view（reload 后自动续跑场景：feature 主动展开 UI 让用户看到状态）
+    openFeature: (fid) => {
+      const ui = window.__AgentSellerUI;
+      if (!ui) return;
+      const view = ui.getState().view;
+      if (view === 'fab') ui.showHub(true);  // FAB → 先展开 Panel 到 Hub
+      ui.showFeature(fid);                    // 再切到 feature view
+    },
   };
 })();

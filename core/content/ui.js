@@ -183,6 +183,7 @@
       <div class="tal-titlebar" id="tal-titlebar">
         <span id="tal-back" style="display:none;cursor:pointer;" title="返回">←</span>
         <span class="tal-titlebar-title" id="tal-titlebar-title">📦 Temu Auto Label</span>
+        <span id="tal-build-info" style="display:none;font-size:10px;color:#888;margin-right:8px;font-family:monospace;" title="开发构建时间戳"></span>
         <button id="tal-close" title="收起">×</button>
       </div>
       <div id="tal-hub-view">
@@ -191,6 +192,14 @@
       <div id="tal-feature-view" style="display:none"></div>
     `;
     document.body.appendChild(panel);
+
+    // dev build 才显示构建时间戳；release 由 package_all.py 把 isDev 改成 false，自动隐藏
+    const bi = window.__AS_BUILD_INFO__;
+    if (bi && bi.isDev === true && bi.ts) {
+      const el = panel.querySelector('#tal-build-info');
+      el.textContent = `dev:${bi.ts}`;
+      el.style.display = 'inline';
+    }
     window.__AgentSellerUtils.makeDraggable(panel, panel.querySelector('#tal-titlebar'), () => {
       panelTargetBottom = panel.getBoundingClientRect().bottom;
     });
