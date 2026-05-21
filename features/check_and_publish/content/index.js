@@ -522,7 +522,18 @@
     return b;
   }
 
+  // 外部入口：core 切回 feature view 时调用。清掉过期的检查结果，避免用户
+  // 看见"填值前"的旧 panel 误以为修没生效。publishing/done 是进行中状态不能打断
   function render(viewEl) {
+    if (state.phase === 'failed' || state.phase === 'passed') {
+      state.phase = 'idle';
+      state.report = null;
+    }
+    renderInternal(viewEl);
+  }
+
+  // 内部刷新入口：onCheck/onPublish/resetAndRender 调用，不复位 state
+  function renderInternal(viewEl) {
     viewEl.innerHTML = '';
     if (state.phase === 'idle')       return renderIdle(viewEl);
     if (state.phase === 'failed')     return renderFailed(viewEl);
@@ -549,6 +560,7 @@
       <div class="tal-kv"><span class="tal-k">跳过</span><span class="tal-v">${skippeds.length}</span></div>`;
     viewEl.appendChild(head);
     viewEl.appendChild(renderResultList([...blocks, ...warns, ...skippeds]));
+    viewEl.appendChild(makeBtn('🔍 重新检查', null, () => onCheck(viewEl)));
     viewEl.appendChild(makeBtn('停止', '#888', () => resetAndRender(viewEl)));
   }
 
@@ -581,7 +593,7 @@
   function resetAndRender(viewEl) {
     state.phase = 'idle';
     state.report = null;
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   // ─── 用户交互 ────────────────────────────────────────────────────────
@@ -594,12 +606,12 @@
     const buckets = bucketize(results);
     state.report = { ...buckets, all: results };
     state.phase = buckets.blocks.length ? 'failed' : 'passed';
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   async function onPublish(viewEl) {
     state.phase = 'publishing';
-    render(viewEl);
+    renderInternal(viewEl);
     try {
       await clickPublishImmediate();
       state.phase = 'done';
@@ -608,7 +620,7 @@
       showToast('发布失败：' + e.message, 'err');
       state.phase = 'passed';
     }
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   // ─── 注册 ────────────────────────────────────────────────────────────
