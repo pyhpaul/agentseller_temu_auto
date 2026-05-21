@@ -68,7 +68,11 @@
 
   const ROW_SEL = 'tr[data-testid="beast-core-table-body-tr"]'
   const ROW_LINK_SEL = 'a[data-testid="beast-core-button-link"]'
-  const MODAL_SEL = '[data-testid="beast-core-modal-innerWrapper"]'
+  // 单 SKU 弹窗有 innerWrapper；多 SKU 弹窗只有 inner（无 Wrapper）
+  const MODAL_SELS = [
+    '[data-testid="beast-core-modal-innerWrapper"]',
+    '[data-testid="beast-core-modal-inner"]',
+  ]
   const PAGINATION_SEL = '[data-testid="beast-core-pagination"]'
   const REASON_TEXTAREA_SEL = 'textarea[placeholder="请输入不调整原因"]'
   const RADIO_GROUP_SEL = '[data-testid="beast-core-radioGroup"]'
@@ -96,13 +100,17 @@
   }
 
   function findActiveModal() {
-    const modals = document.querySelectorAll(MODAL_SEL)
-    const list = [...modals]
-    for (let i = list.length - 1; i >= 0; i--) {
-      const m = list[i]
-      if (m.offsetParent !== null || m.getClientRects().length > 0) return m
+    // 优先找 innerWrapper（单 SKU），找不到再找 inner（多 SKU 弹窗无 Wrapper）
+    for (const sel of MODAL_SELS) {
+      const modals = document.querySelectorAll(sel)
+      const list = [...modals]
+      for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i]
+        if (m.offsetParent !== null || m.getClientRects().length > 0) return m
+      }
+      if (list.length > 0) return list[list.length - 1]
     }
-    return list[list.length - 1] || null
+    return null
   }
 
   function detectModalType(modal) {
