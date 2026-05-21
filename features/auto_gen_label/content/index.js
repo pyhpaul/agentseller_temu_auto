@@ -12,6 +12,7 @@
   // ── feature 内部状态 ──
   const fstate = { product: null };  // { skcNumber, skcSku }
   let selectedRow = null;
+  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
   let rowObserver = null;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -209,9 +210,12 @@
 
   function watchNewRows() {
     if (rowObserver) return;
-    rowObserver = new MutationObserver(() =>
-      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'))
-    );
+    rowObserver = new MutationObserver(() => {
+      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+      bindRows(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]:not([data-tal-bound])'));
+      maybeAutoSelectOnlyRow(rows);
+      prevRowCount = rows.length;
+    });
     rowObserver.observe(document.querySelector('tbody') || document.body, { childList: true, subtree: true });
   }
 
@@ -222,6 +226,17 @@
     const product = extractRowData(row);
     if (product) setProduct(product);
     else setStatus('未能读取该行数据', 'err');
+  }
+
+  function maybeAutoSelectOnlyRow(rows) {
+    // 转变触发：prev 不是 1 行 && cur 是 1 行
+    if (prevRowCount === 1 || rows.length !== 1) return;
+    const row = rows[0];
+    if (selectedRow === row) return;  // 同一行幂等保护
+    selectRow(row);
+    if (fstate.product) {
+      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
