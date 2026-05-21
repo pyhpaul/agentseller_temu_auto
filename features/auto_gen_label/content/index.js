@@ -13,6 +13,7 @@
   const fstate = { product: null };  // { skcNumber, skcSku }
   let rowObserver = null;
   let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
+  let pendingSelectRow = null;       // 最近 click 的 row（virtual scroll td 延迟态 retry 用）
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 页面判断
@@ -130,6 +131,7 @@
 
   function clearSelection() {
     // 先清 product 再刷 highlight：findRowBySkc(null) 会 return null，refreshRowHighlight 全清 .tal-selected
+    pendingSelectRow = null;  // 中止可能在跑的 retry，避免延迟回写已被取消的选中
     setProduct(null);
     refreshRowHighlight();
   }
@@ -221,10 +223,27 @@
   }
 
   function selectRow(row) {
-    const product = extractRowData(row);
-    if (!product) { setStatus('未能读取该行数据', 'err'); return; }
-    setProduct(product);
-    refreshRowHighlight();
+    // Temu 表格用 virtual scroll：可视区外的 row 在 DOM 中但 td 文本未渲染，
+    // extractRowData 立即调用会返回 null。改用 retry 等 td 内容填好。
+    // 同时用 pendingSelectRow 做 race 保护：用户快速切换 row 时，旧 retry 自动放弃。
+    pendingSelectRow = row;
+    const tryExtract = (attemptsLeft) => {
+      if (pendingSelectRow !== row) return;  // 用户已 click 别的 row，放弃此次 retry
+      const product = extractRowData(row);
+      if (product) {
+        pendingSelectRow = null;
+        setProduct(product);
+        refreshRowHighlight();
+        return;
+      }
+      if (attemptsLeft > 0) {
+        setTimeout(() => tryExtract(attemptsLeft - 1), 200);
+      } else if (pendingSelectRow === row) {
+        pendingSelectRow = null;
+        setStatus('未能读取该行数据', 'err');
+      }
+    };
+    tryExtract(5);  // 5 次 × 200ms = 最多 1 秒等 virtual scroll 填好
   }
 
   function refreshRowHighlight() {

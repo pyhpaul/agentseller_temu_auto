@@ -559,3 +559,80 @@ PR squash 最终合入 main 时（约 4 个 commit），最终生效改动是 A+
 ## 分支命名
 
 `feat/auto-select-only-row` 名字已不准确（pivot 后不再有 auto-select 特性）。但分支内已多个 commit 推到 origin，重命名风险大于收益（PR URL 会变），**保留现有分支名**，在 PR 标题/描述里明确实际功能即可。
+
+---
+
+# Virtual Scroll 适配（2026-05-21 update 4）
+
+## 缘起
+
+Pivot 后验收依然复现「未能读取该行数据」：用户描述「**页面刚打开时只有前两个商品可视，前两个怎么选都没问题，第三个之后就报错**」。
+
+这是 Pivot 之前所有调试都没考虑到的根因：**Temu 表格用 virtual scroll / lazy rendering**。
+
+可视区内 row：td 文本立即渲染。
+可视区外 row：tr 节点存在于 DOM、testid attribute 存在，但 **td 文本是空的**（占位），等用户滚动到才填好。
+
+`extractRowData(row)` 读 td.textContent → 空字符串 → 返回 null → `selectRow` 走错误分支 `setStatus('未能读取该行数据', 'err')`。
+
+## 修复方案：retry + race protection（不涉及主动滚动）
+
+`selectRow` 改为异步轮询：
+
+```js
+let pendingSelectRow = null;       // 模块级闭包变量
+
+function selectRow(row) {
+  pendingSelectRow = row;          // 标记当前期待的 row
+  const tryExtract = (attemptsLeft) => {
+    if (pendingSelectRow !== row) return;       // race 保护：用户已 click 别的 row
+    const product = extractRowData(row);
+    if (product) {
+      pendingSelectRow = null;
+      setProduct(product);
+      refreshRowHighlight();
+      return;
+    }
+    if (attemptsLeft > 0) {
+      setTimeout(() => tryExtract(attemptsLeft - 1), 200);
+    } else if (pendingSelectRow === row) {
+      pendingSelectRow = null;
+      setStatus('未能读取该行数据', 'err');
+    }
+  };
+  tryExtract(5);                   // 5 次 × 200ms = 最多 1 秒等 virtual scroll 填好
+}
+```
+
+`clearSelection` 内同步清 `pendingSelectRow = null`，避免延迟回写已被取消的选中。
+
+## 行为对照
+
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| 点击可视区内 row（td 有文本） | 同步 selectRow 成功 | 第 1 次 extract 命中，立即 setProduct（**无新增延迟**） |
+| 点击可视区外 row（td 占位空文本） | 立即 setStatus error | 200ms 后第 2 次尝试，1s 内大概率拿到数据 |
+| 快速切换 row：先点 A 再点 B | A 的 selectRow 抛 error / B 覆盖 | A 的 retry 看 pendingSelectRow !== A 自动放弃，B 接管 |
+| 点击 row 后立即点已选行取消 | clearSelection 不影响在跑的 retry | clearSelection 内清 pendingSelectRow，retry 自动放弃 |
+| 1 秒后 virtual scroll 仍未填（边界情况） | 同左 | setStatus error，用户重点击 / 滚动到 row 后重点击 |
+
+## 不采用 scrollIntoView 的考量
+
+可选 fallback「点击时主动 `row.scrollIntoView()` 触发 Temu 加载」被用户拒绝：会扰乱用户当前滚动位置。retry 方案对绝大多数场景已足够，1 秒超时后报错给用户主动 fallback 也比强行滚动友好。
+
+## 测试场景调整
+
+简化测试方案的「场景 5 长按选 SKC 文本」改为：
+
+5. **virtual scroll 边界**：进条码管理页 → 滚动表格让多个 row 进入/离开可视区 → 选中不同位置的 row（含初始可视外的）→ 都应能成功选中（可能有 ≤1 秒延迟，期间 feature view 暂不更新，无 toast、无视觉抖动）
+
+## 影响
+
+| 文件 | 改动 |
+|------|------|
+| `features/auto_gen_label/content/index.js` | +18 行（新增 `pendingSelectRow` 变量 + 重写 `selectRow` + `clearSelection` 内清理） |
+
+## 提交策略
+
+继续在 `feat/auto-select-only-row` 累加 commit:
+`fix(auto_gen_label): selectRow 加 retry 适配 virtual scroll td 延迟态`
