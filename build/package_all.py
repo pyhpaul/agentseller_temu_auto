@@ -12,6 +12,7 @@ package_all.py — 出员工部署包：
 Inno Setup 是可选步骤：找不到 ISCC.exe（非 Windows、或 Windows 上未装）会打印警告
 并跳过，不影响前面四步的产物（TemuLabel_Setup/ 仍可用于手动部署）。
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -87,7 +88,9 @@ def main():
         print(f'[package] 错误：{build_bat} 不存在', file=sys.stderr)
         sys.exit(1)
     if sys.platform == 'win32':
-        subprocess.check_call(['cmd', '/c', str(build_bat)], cwd=str(build_bat.parent))
+        # PACKAGE_ALL=1 让 build.bat 跳过末尾交互式 pause，避免 subprocess 死锁
+        env = {**os.environ, 'PACKAGE_ALL': '1'}
+        subprocess.check_call(['cmd', '/c', str(build_bat)], cwd=str(build_bat.parent), env=env)
     else:
         print('[package] 非 Windows 平台，跳过 EXE 构建（仅在 Windows 上能出可用部署包）')
 
