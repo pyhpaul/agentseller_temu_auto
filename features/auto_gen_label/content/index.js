@@ -11,7 +11,6 @@
 
   // ── feature 内部状态 ──
   const fstate = { product: null };  // { skcNumber, skcSku }
-  let prevRowCount = null;  // 表格行数 baseline，用于检测 N>1→1 转变触发自动选中
   let rowObserver = null;
   let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
 
@@ -213,12 +212,9 @@
   function watchNewRows() {
     if (rowObserver) return;
     rowObserver = new MutationObserver(() => {
-      const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
       // 每次 mutation 同步视觉：React 重新渲染 row 时自动恢复 .tal-selected
+      // 这是手动选中能在 React 重渲后保持视觉一致的关键
       refreshRowHighlight();
-      // prevRowCount 更新逻辑移到 maybeAutoSelectOnlyRow 内，
-      // 失败（td 延迟态）时不更新 baseline，等下次 mutation 重试
-      maybeAutoSelectOnlyRow(rows);
     });
     // attach 到 document.body 而非 tbody，避免 React 替换整个 tbody 时 observer 失效
     rowObserver.observe(document.body, { childList: true, subtree: true });
@@ -236,37 +232,6 @@
     document.querySelectorAll('tr.tal-selected').forEach(r => r.classList.remove('tal-selected'));
     const row = findRowBySkc(fstate.product?.skcNumber);
     if (row) row.classList.add('tal-selected');
-  }
-
-  function maybeAutoSelectOnlyRow(rows) {
-    // 守卫 1：仅在 feature view 切到 auto_gen_label 时才自动选 + toast，
-    //         避免用户在 Hub / 别的 feature 下搜索就被弹「已自动选中」toast。
-    //         click delegation 和 manual selectRow 不受此限制（用户主动点击是明确意图）。
-    const uiState = window.__AgentSellerUI?.getState?.();
-    if (uiState?.view !== 'feature' || uiState?.feature !== 'auto_gen_label') {
-      prevRowCount = rows.length;
-      return;
-    }
-    // 守卫 2：非 N>1→1 转变，更新 baseline 后返回。
-    if (prevRowCount === 1 || rows.length !== 1) {
-      prevRowCount = rows.length;
-      return;
-    }
-    const row = rows[0];
-    const newSkc = extractRowData(row)?.skcNumber;
-    // td 延迟态：row 已 mount 但 td 文本未填好，**不更新 baseline**，等下次 mutation 重试。
-    // 这是 A++ 修 prevRowCount 锁死 bug 的关键。
-    if (!newSkc) return;
-    // 守卫 3：同 SKC 幂等（不依赖 row 引用，按值比较）。
-    if (newSkc === fstate.product?.skcNumber) {
-      prevRowCount = rows.length;
-      return;
-    }
-    selectRow(row);
-    if (fstate.product) {
-      U.showToast(`已自动选中商品 ${fstate.product.skcNumber}`, 'ok');
-    }
-    prevRowCount = rows.length;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
