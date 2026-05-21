@@ -164,8 +164,13 @@
     if (document.getElementById('tal-fab')) return;
     const fab = document.createElement('button');
     fab.id = 'tal-fab';
-    fab.innerHTML = '📦<span class="tal-fab-hint">Ctrl+点击 展开</span>';
-    fab.addEventListener('click', e => { if (e.ctrlKey) showHub(true); });
+    fab.innerHTML = '📦<span class="tal-fab-hint">点击展开</span>';
+    // mousedown 记起始坐标，click 距离 < 5px 才算真点击；否则视为拖动尾随 click，不展开
+    let downX = 0, downY = 0;
+    fab.addEventListener('mousedown', e => { downX = e.clientX; downY = e.clientY; });
+    fab.addEventListener('click', e => {
+      if (Math.abs(e.clientX - downX) < 5 && Math.abs(e.clientY - downY) < 5) showHub(true);
+    });
     window.__AgentSellerUtils.makeDraggable(fab, fab);
     document.body.appendChild(fab);
   }
