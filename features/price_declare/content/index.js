@@ -1291,6 +1291,10 @@
     if (btnStep)  btnStep.disabled  = !onTargetPage || m === 'RUNNING' || m === 'STOPPING'
     if (btnStop)  btnStop.disabled  = m === 'IDLE'
 
+    // 非目标页提示框（替代旧的 toast，常驻在 panel 顶部）
+    const warn = el.querySelector('.tpd-target-warn')
+    if (warn) warn.style.display = onTargetPage ? 'none' : ''
+
     // 设置字段只在非焦点时同步，避免打断用户输入
     const reasonInput = el.querySelector('.tpd-reason')
     if (reasonInput && document.activeElement !== reasonInput) reasonInput.value = state.settings.reason
@@ -1315,6 +1319,9 @@
           <span class="tpd-failed"  style="color:#c0392b;font-size:12px;margin:0 4px">✗ 0</span>
           <span class="tpd-total"   style="color:#999;font-size:12px">共 0</span>
         </div>
+        <div class="tpd-target-warn" style="display:none;color:#cf1322;background:#fff2f0;border:1px solid #ffccc7;padding:6px 8px;border-radius:6px;margin-bottom:8px;font-size:12px;line-height:1.4">
+          请先访问<a href="https://agentseller.temu.com/main/adjust-price-manage/order-price" style="color:#cf1322;text-decoration:underline">商品价格申报页</a>（开始/单步按钮已禁用）
+        </div>
         <div class="tpd-grid">
           <button class="tal-action-btn tpd-btn-start" style="margin:0;background:#1677ff;color:#fff">▶ 开始</button>
           <button class="tal-action-btn tpd-btn-pause" style="margin:0;background:#fa8c16;color:#fff">⏸ 暂停</button>
@@ -1331,11 +1338,9 @@
       </div>
     `
 
+    // 静默 guard：按钮在 updateHubView 已 disabled，UI 已显示红色提示框；保留防御
     const guardTargetPage = (fn) => () => {
-      if (!TARGET_RE.test(location.href)) {
-        window.AgentSeller.showToast('请先访问商品价格申报', 'err')
-        return
-      }
+      if (!TARGET_RE.test(location.href)) return
       fn()
     }
     viewEl.querySelector('.tpd-btn-start').addEventListener('click', guardTargetPage(() => TPD.engine.start()))
@@ -1398,6 +1403,10 @@
         if (TARGET_RE.test(location.href) && !bootstrapped) {
           setTimeout(bootstrap, 300)
         }
+        // URL 变化时即时刷新 panel 按钮 disabled 状态和红色提示框
+        const TPD = window.TPD
+        const state = TPD?.engine?.getState?.()
+        if (state) updateHubView(state)
       })
     },
     render(viewEl) {

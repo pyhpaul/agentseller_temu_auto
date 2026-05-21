@@ -35,6 +35,25 @@
     'sale','discount','clearance','bogo','buy one get one','flash sale','limited time','best price',
   ];
 
+  // 产品分类违禁词（来源：samples/类目.docx）
+  // 命中即阻断：选择敏感品类（母婴/儿童/电子/医疗/成人/化妆品/电池/含电产品等）会被 Temu 拒收
+  // "手机、智能手机" 在原表里是一项，拆为两个独立词避免 includes 永不命中
+  const CATEGORY_FORBIDDEN = [
+    '母婴','婴儿','幼儿','男婴','女婴','婴幼儿','新生儿','托儿','儿童','幼童','女童','男童','宝宝','育婴','育儿',
+    '童车','奶嘴','温奶器','吸奶器','母乳','孕','哺乳','玩具与游戏','图书','早教','各色美食',
+    '充电','电池','电线','电热','电暖','电石','电动','电压','电容','电路','电炸','天线','线缆',
+    'SD','USB','GPS','PDA','POS','Wi-Fi','蓝牙','音箱',
+    '电容笔','触控笔','手写笔','激光笔','录音笔','数据线','投影仪','扫描仪','显示器','监视器','监控器',
+    '摄像机','摄像头','录像机','扬声器','追踪器','适配器','遥控器','演示器','播放器','收发器','传感器',
+    '无人机','复印机','传真机','寻呼机','对讲机','交换机','打字机','碎纸机','翻译机','电视机','录音机','麦克风',
+    '智能手表','手机','智能手机','电子词典','电子白板','电炖锅','电煎锅','电炖盅','电饭煲',
+    '灯','照明','光源','风扇','病','医疗','急救','专业','营养素','成人用品','情趣',
+    '皮肤护理','手足护理','唇部护理','眼睛护理','香体剂和止汗剂','穿洞和纹身用品','彩妆','美甲胶水',
+    '膏','霜','粉','香水','精华','精油','乳液','保湿','香皂','喷雾','洗发水','护发素','染发剂','显色剂','止汗剂','沐浴露','卸妆液',
+    '油漆笔','马克笔','燃油输送与润滑产品','罐装蜡烛',
+    '耳饰','耳环','耳钉','女装领带','项链','手链',
+  ];
+
   // 中文标点 — 店小秘官方明确：会导致发布失败（block 级）
   // 不含 Unicode 弯引号 "" ''（U+201C/201D/2018/2019）：视觉近似英文直引号，
   // 来源是 smart quotes 自动转换而非中文输入法；如实测 Temu 也拒收再单独加规则
@@ -205,6 +224,23 @@
     return { value: imgs, el: item, source: `产品轮播图 × ${imgs.length}` };
   }
 
+  // 产品分类全路径取值：店小秘选完后会把"办公用品 > ... > 末级"渲染到 .category-list 里。
+  // ant-select 控件本身只显示末级文本（不含上层），不足以匹配 CATEGORY_FORBIDDEN 里的高层关键词
+  function getCategoryField() {
+    const list = document.querySelector('.category-list');
+    if (list) {
+      const text = list.textContent.replace(/\s+/g, ' ').trim();
+      if (text) return { value: text, el: list, source: '.category-list' };
+    }
+    // fallback：仅末级（兼容店小秘未来改 DOM 的情况，至少能匹配末级关键词）
+    const label = document.querySelector('label[title="产品分类"]');
+    if (!label) return { value: null, el: null, source: null };
+    const item = label.closest('.ant-form-item, .ant-row');
+    if (!item) return { value: null, el: null, source: null };
+    const text = item.textContent.replace(label.textContent, '').replace(/\s+/g, ' ').trim();
+    return { value: text, el: item, source: 'label[title="产品分类"] form-item (仅末级)' };
+  }
+
   function findPublishButton() {
     const btns = document.querySelectorAll('button.btn-green');
     for (const b of btns) {
@@ -305,6 +341,20 @@
         if (d == null) return { pass: true, skipped: true, reason: '未识别到描述字段' };
         const hits = matchWords(d, BASE_FORBIDDEN);
         if (hits.length) return { pass: false, reason: '描述命中违禁词', hits };
+        return { pass: true };
+      },
+    },
+    {
+      id: 'category_forbidden',
+      name: '产品分类违禁词',
+      field: 'category',
+      severity: 'block',
+      check(ctx) {
+        const c = ctx.fields.category?.value;
+        if (c == null) return { pass: true, skipped: true, reason: '未识别到产品分类字段' };
+        if (!c) return { pass: true, skipped: true, reason: '产品分类未选择' };
+        const hits = matchWords(c, CATEGORY_FORBIDDEN);
+        if (hits.length) return { pass: false, reason: '产品分类命中违禁词（敏感品类，Temu 会拒收）', hits };
         return { pass: true };
       },
     },
@@ -451,6 +501,7 @@
       variationSku: getVariationSkuField(),
       variationCount: getVariationCountField(),
       carouselImages: getCarouselImagesField(),
+      category: getCategoryField(),
     };
   }
 
@@ -513,16 +564,33 @@
     return list;
   }
 
-  function makeBtn(text, color, onClick) {
+  function makeBtn(text, color, onClick, opts = {}) {
     const b = document.createElement('button');
     b.className = 'tal-action-btn';
     if (color) b.style.background = color;
     b.textContent = text;
-    b.addEventListener('click', onClick);
+    if (opts.disabled) {
+      b.disabled = true;
+      b.style.opacity = '0.5';
+      b.style.cursor = 'not-allowed';
+    } else {
+      b.addEventListener('click', onClick);
+    }
     return b;
   }
 
+  // 外部入口：core 切回 feature view 时调用。清掉过期的检查结果，避免用户
+  // 看见"填值前"的旧 panel 误以为修没生效。publishing/done 是进行中状态不能打断
   function render(viewEl) {
+    if (state.phase === 'failed' || state.phase === 'passed') {
+      state.phase = 'idle';
+      state.report = null;
+    }
+    renderInternal(viewEl);
+  }
+
+  // 内部刷新入口：onCheck/onPublish/resetAndRender 调用，不复位 state
+  function renderInternal(viewEl) {
     viewEl.innerHTML = '';
     if (state.phase === 'idle')       return renderIdle(viewEl);
     if (state.phase === 'failed')     return renderFailed(viewEl);
@@ -532,10 +600,16 @@
   }
 
   function renderIdle(viewEl) {
-    viewEl.appendChild(makeBtn('🔍 检查并发布', null, () => onCheck(viewEl)));
+    const editPage = isEditPage();
+    viewEl.appendChild(makeBtn('🔍 检查并发布', null, () => onCheck(viewEl), { disabled: !editPage }));
     const tip = document.createElement('div');
     tip.className = 'tal-status';
-    tip.textContent = '点按钮开始检查';
+    if (editPage) {
+      tip.textContent = '点按钮开始检查';
+    } else {
+      tip.style.cssText = 'color:#cf1322;background:#fff2f0;border:1px solid #ffccc7;padding:8px 10px;border-radius:6px;margin-top:8px;font-size:12px;line-height:1.4;';
+      tip.textContent = '请在店小秘商品编辑页使用此功能（当前 URL 不含 edit）';
+    }
     viewEl.appendChild(tip);
   }
 
@@ -549,6 +623,7 @@
       <div class="tal-kv"><span class="tal-k">跳过</span><span class="tal-v">${skippeds.length}</span></div>`;
     viewEl.appendChild(head);
     viewEl.appendChild(renderResultList([...blocks, ...warns, ...skippeds]));
+    viewEl.appendChild(makeBtn('🔍 重新检查', null, () => onCheck(viewEl)));
     viewEl.appendChild(makeBtn('停止', '#888', () => resetAndRender(viewEl)));
   }
 
@@ -581,25 +656,23 @@
   function resetAndRender(viewEl) {
     state.phase = 'idle';
     state.report = null;
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   // ─── 用户交互 ────────────────────────────────────────────────────────
   function onCheck(viewEl) {
-    if (!isEditPage()) {
-      showToast('请在店小秘商品编辑页使用此功能（当前 URL 不含 edit）', 'err');
-      return;
-    }
+    // 静默 guard：按钮在 renderIdle 已 disabled，正常路径走不到这里；保留防御
+    if (!isEditPage()) return;
     const { results } = runChecks();
     const buckets = bucketize(results);
     state.report = { ...buckets, all: results };
     state.phase = buckets.blocks.length ? 'failed' : 'passed';
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   async function onPublish(viewEl) {
     state.phase = 'publishing';
-    render(viewEl);
+    renderInternal(viewEl);
     try {
       await clickPublishImmediate();
       state.phase = 'done';
@@ -608,7 +681,7 @@
       showToast('发布失败：' + e.message, 'err');
       state.phase = 'passed';
     }
-    render(viewEl);
+    renderInternal(viewEl);
   }
 
   // ─── 注册 ────────────────────────────────────────────────────────────
