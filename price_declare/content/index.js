@@ -99,6 +99,19 @@
     return div ? div.textContent.trim().split(/\s+/)[0] : null
   }
 
+  // 读行的 SPU ID + SKC ID 组合作为商品唯一 key
+  // 同一商品的多条调价单（多 SKU 场景）共享相同 key，确认后一起消失
+  function readSKUKey(row) {
+    const ps = row.querySelectorAll('p')
+    let spuId = null, skcId = null
+    for (const p of ps) {
+      const text = p.textContent.trim()
+      if (text.startsWith('SPU ID:')) spuId = text.slice('SPU ID:'.length).trim()
+      else if (text.startsWith('SKC ID:')) skcId = text.slice('SKC ID:'.length).trim()
+    }
+    return spuId && skcId ? `${spuId}:${skcId}` : null
+  }
+
   function findActiveModal() {
     // 优先找 innerWrapper（单 SKU），找不到再找 inner（多 SKU 弹窗无 Wrapper）
     for (const sel of MODAL_SELS) {
@@ -211,6 +224,7 @@
     findPendingRows,
     findNoAdjustLink,
     readHJD,
+    readSKUKey,
     findActiveModal,
     detectModalType,
     findReasonTextarea,
@@ -675,12 +689,14 @@
     await A.reloadPage()
   }
 
-  // targetHJD: 刚处理完的行的 HJD，切 tab 后等该行从列表消失才继续
-  async function triggerRefresh(reason, targetHJD) {
+  // targetSKUKey: SPU+SKC 组合 key（优先），多 SKU 场景下等所有关联行消失
+  // targetHJD: fallback，SKU key 读取失败时用 HJD 判断
+  async function triggerRefresh(reason, targetHJD, targetSKUKey) {
     state.stats.processedSinceRefresh = 0
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    log('info', `触发刷新，等待行 ${targetHJD ?? '?'} 消失`)
+    const label = targetSKUKey ? `SKU(${targetSKUKey})` : `HJD(${targetHJD ?? '?'})`
+    log('info', `触发刷新，等待 ${label} 相关行消失`)
 
     const MAX_TAB_ATTEMPTS = 5
     for (let attempt = 1; attempt <= MAX_TAB_ATTEMPTS; attempt++) {
@@ -694,21 +710,25 @@
 
       await _rawSleep(2000)
 
-      // 目标行已消失 → 服务器确认更新，可以继续
-      const stillPresent = targetHJD
-        ? S.findPendingRows().some(r => S.readHJD(r) === targetHJD)
-        : false
+      // 优先用 SKU key 判断（多 SKU 场景：等所有相同 SPU+SKC 的行消失）
+      // 降级用 HJD 判断（SKU key 读取失败时）
+      const pendingRows = S.findPendingRows()
+      const stillPresent = targetSKUKey
+        ? pendingRows.some(r => S.readSKUKey(r) === targetSKUKey)
+        : targetHJD
+          ? pendingRows.some(r => S.readHJD(r) === targetHJD)
+          : false
+
       if (!stillPresent) {
-        log('info', `行 ${targetHJD ?? '?'} 已消失，同步完成 [${attempt}/${MAX_TAB_ATTEMPTS}]`)
+        log('info', `${label} 相关行已消失，同步完成 [${attempt}/${MAX_TAB_ATTEMPTS}]`)
         await persist({ lastAction: 'refresh_ok' })
         return
       }
 
-      log('warn', `行 ${targetHJD ?? '?'} 仍在列表 [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
+      log('warn', `${label} 相关行仍在列表 [${attempt}/${MAX_TAB_ATTEMPTS}]，再切 tab`)
     }
 
-    // 5 次切 tab 后行仍未消失，切 tab 机制失效，用 reload 兜底
-    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次行仍未消失，fallback reload`)
+    log('warn', `切 tab ${MAX_TAB_ATTEMPTS} 次相关行仍未消失，fallback reload`)
     await fallbackReload(reason + '_sync_fail')
   }
 
@@ -772,6 +792,8 @@
         emptyPageStreak = 0  // 有行时重置
 
         const targetHJD = S.readHJD(rows[0])
+        // 优先用 SPU+SKC key 判断同步：多 SKU 场景下所有关联行共享同一 key
+        const targetSKUKey = S.readSKUKey(rows[0])
         try {
           await processOneRow(rows[0])
           await persist({ lastAction: 'row_done' })
@@ -808,7 +830,7 @@
         }
 
         await checkpoint()
-        await triggerRefresh('per_row', targetHJD)
+        await triggerRefresh('per_row', targetHJD, targetSKUKey)
 
         if (state.mode === MODES.STEPPING) {
           setMode(MODES.PAUSED)
