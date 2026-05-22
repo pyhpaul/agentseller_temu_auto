@@ -129,15 +129,16 @@ def copy_extra_cs_assets(features):
 
 
 def emit_build_info():
-    """生成 content/build-info.js，注入 window.__AS_BUILD_INFO__ = { ts, isDev }。
-    dev 默认 isDev=true；release 由 package_all.py 用 string replace 改成 false。
-    UI 仅在 isDev=true 时显示构建时间，方便开发期确认 reload 是否生效。
+    """生成 content/build-info.js，注入 window.__AS_BUILD_INFO__ = { ts, isDev, version }。
+    dev 默认 isDev=true / version='dev'；release 由 package_all.py 用 string replace 改成
+    isDev=false 并从 installer.iss 读真实版本号写入 version。
+    UI 显示：dev 模式 dev:<ts>；release 模式 v<version>（员工自助查版本号）。
     """
     ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    content = f"window.__AS_BUILD_INFO__ = {{ ts: '{ts}', isDev: true }};\n"
+    content = f"window.__AS_BUILD_INFO__ = {{ ts: '{ts}', isDev: true, version: 'dev' }};\n"
     dst = DIST / 'content' / 'build-info.js'
     dst.write_text(content, encoding='utf-8')
-    print(f'[build] build-info.js generated  ts={ts} isDev=true')
+    print(f'[build] build-info.js generated  ts={ts} isDev=true version=dev')
 
 
 def render_manifest(features=None):

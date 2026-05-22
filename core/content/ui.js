@@ -183,7 +183,7 @@
       <div class="tal-titlebar" id="tal-titlebar">
         <span id="tal-back" style="display:none;cursor:pointer;" title="返回">←</span>
         <span class="tal-titlebar-title" id="tal-titlebar-title">📦 Temu Auto Label</span>
-        <span id="tal-build-info" style="display:none;font-size:10px;color:#888;margin-right:8px;font-family:monospace;" title="开发构建时间戳"></span>
+        <span id="tal-build-info" style="display:none;font-size:10px;color:#888;margin-right:8px;font-family:monospace;" title="构建信息"></span>
         <button id="tal-close" title="收起">×</button>
       </div>
       <div id="tal-hub-view">
@@ -193,12 +193,19 @@
     `;
     document.body.appendChild(panel);
 
-    // dev build 才显示构建时间戳；release 由 package_all.py 把 isDev 改成 false，自动隐藏
+    // 标题栏右侧显示构建信息：
+    // - dev 构建：dev:<ts>，用于判断 Chrome 是否真 reload 了新版
+    // - release 构建：v<version>，让员工自助查当前装的版本号
     const bi = window.__AS_BUILD_INFO__;
-    if (bi && bi.isDev === true && bi.ts) {
+    if (bi) {
       const el = panel.querySelector('#tal-build-info');
-      el.textContent = `dev:${bi.ts}`;
-      el.style.display = 'inline';
+      if (bi.isDev === true && bi.ts) {
+        el.textContent = `dev:${bi.ts}`;
+        el.style.display = 'inline';
+      } else if (bi.isDev === false && bi.version) {
+        el.textContent = `v${bi.version}`;
+        el.style.display = 'inline';
+      }
     }
     window.__AgentSellerUtils.makeDraggable(panel, panel.querySelector('#tal-titlebar'), () => {
       panelTargetBottom = panel.getBoundingClientRect().bottom;
