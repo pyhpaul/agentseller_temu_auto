@@ -39,7 +39,15 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // 单例 toast + auto-dismiss。
+  // 同时只显示一个 toast；新调用立即覆盖旧内容并重置定时器，避免旧 timer 误关新 toast。
+  // 超时按严重程度：ok 2s / info 3s / err 5s（err 给用户更多阅读时间）。
+  // 'error' 与 'err' 等价（历史调用方有两种写法）。
+  const TOAST_TIMEOUT = { ok: 2000, info: 3000, err: 5000 };
+  let toastShowTimer = null;
+  let toastHideTimer = null;
   function showToast(msg, type = 'info') {
+    const kind = (type === 'error') ? 'err' : type;
     let t = document.getElementById('tal-toast');
     if (!t) {
       t = document.createElement('div');
@@ -53,15 +61,18 @@
       });
       document.body.appendChild(t);
     }
+    clearTimeout(toastShowTimer);
+    clearTimeout(toastHideTimer);
     t.textContent = msg;
-    t.style.background = type === 'err' ? '#ff4d4f' : type === 'ok' ? '#52c41a' : '#1677ff';
+    t.style.background = kind === 'err' ? '#ff4d4f' : kind === 'ok' ? '#52c41a' : '#1677ff';
     t.style.color = '#fff';
     t.style.display = 'block';
     t.style.opacity = '1';
-    if (type === 'ok') setTimeout(() => {
+    const timeout = TOAST_TIMEOUT[kind] ?? TOAST_TIMEOUT.info;
+    toastShowTimer = setTimeout(() => {
       t.style.opacity = '0';
-      setTimeout(() => { t.style.display = 'none'; }, 300);
-    }, 3000);
+      toastHideTimer = setTimeout(() => { t.style.display = 'none'; }, 300);
+    }, timeout);
   }
 
   function makeDraggable(el, handle, onDragEnd) {
