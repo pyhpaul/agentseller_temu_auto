@@ -111,6 +111,51 @@ window.AgentSeller.registerFeature({
 
 `setStatus` / 商品状态等具体 feature 状态归 feature 内部实现，不在 core API。
 
+## 工作流约定（开发 → PR → 发版）
+
+> **通用三路径协议 + 触发词约定见 `~/.claude/rules/shipping-rules.md`**「Three Execution Paths」/「User Trigger Words」/「Hard Bans on Autonomous Escalation」/「Release Tag Decision Protocol」段。本节只写本项目特有的具体命令和细节。
+
+### 本地验证路径（最常用）
+
+用户说「本地验证一下」/「快速测试」/「先本地跑跑」等触发词时：
+
+1. `python3 build/build_extension.py` 全量构建到 `dist/extension/`
+2. 提示用户去 `chrome://extensions` 点扩展卡片右下角 reload
+3. 用户在 Temu 商家中心验证；panel 标题栏右上角 `dev:<ts>` 灰色小字可确认 Chrome 是否真 reload 了新版
+4. **不开 PR、不推 tag、不触发 CI**
+
+如果改动只在某个 feature 内，且 watchdog 已装，可推荐 `python3 build/dev.py` watch 模式自动同步。但通常一次性 build 更稳。
+
+### PR 路径
+
+用户验证通过说「提 PR」/「提交」时：
+
+1. `git switch -c feature/<topic>` 或 `fix/<topic>`
+2. 精确暂存（不要 `git add .`），commit message 走 `<type>(<scope>): <summary>` + Why/What/Test
+3. `git push -u origin <branch>` + `gh pr create`
+4. 用户说「merge」→ `gh pr merge <N> --squash --delete-branch` + `git fetch + switch main + pull --ff-only`
+
+### Release 路径（推 tag 触发 CI）
+
+用户说「发版」/「打 tag」时：
+
+1. **必须先看上次 tag**：`git tag --sort=-v:refname | head -3`
+2. **本项目 tag 规则**：
+   - `vMAJOR.MINOR.PATCH` 正式发布（员工部署）
+   - `vX.Y.Z-rc.N` CI 端到端验证用（**不发员工**——Inno Setup 升级识别只看数字段，带后缀会让员工机器升级时弹「已安装相同版本」）
+   - 首发版本从 `v1.0.1` 起步（现有员工注册表 DisplayVersion 都是 1.0.0）
+3. **风险改动 / MAJOR / MINOR 强制先推 rc**；PATCH 类小修复可以直接推正式 tag
+4. `git tag vX.Y.Z && git push origin vX.Y.Z`
+5. `gh run watch <id> --exit-status`（后台监控 CI），跑完把 release URL 直接发给用户
+
+完整 tag 命名规则 + 升级语义见 `生产环境使用指导.md` A.7。
+
+### Agent 主动提醒边界
+
+- 本地验证通过 → 问一次「本地 OK 了，要开 PR 吗？」
+- PR merged → 问一次「要打 tag 发版吗？」
+- 用户说「暂不」/「下次」 → 不再追问
+
 ## Build Commands
 
 ```
