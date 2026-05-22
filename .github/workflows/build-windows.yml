@@ -12,6 +12,10 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Windows cmd 默认 cp1252 codepage 无法编码中文，Python print 中文会 UnicodeEncodeError
+      # 让 Python 3.7+ 走 UTF-8 模式输出 stdout（覆盖系统 locale）
+      PYTHONUTF8: '1'
 
     steps:
       - name: Checkout
