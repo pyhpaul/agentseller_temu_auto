@@ -183,7 +183,7 @@
       <div class="tal-titlebar" id="tal-titlebar">
         <span id="tal-back" style="display:none;cursor:pointer;" title="返回">←</span>
         <span class="tal-titlebar-title" id="tal-titlebar-title">📦 Temu Auto Label</span>
-        <span id="tal-build-info" style="display:none;font-size:10px;color:#888;margin-right:8px;font-family:monospace;" title="构建信息"></span>
+        <span id="tal-build-info" style="display:none;font-size:10px;color:rgba(255,255,255,.65);margin-right:8px;font-family:monospace;" title="构建信息"></span>
         <button id="tal-close" title="收起">×</button>
       </div>
       <div id="tal-hub-view">
