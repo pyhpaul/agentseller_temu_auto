@@ -1,0 +1,69 @@
+name: Build Windows installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # softprops/action-gh-release 创建 release 需要
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git describe 需要完整 tag 历史
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Python deps (native_host + dev)
+        shell: cmd
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r features\auto_gen_label\native_host\requirements.txt
+          pip install -r build\requirements-dev.txt
+
+      - name: Install Inno Setup
+        shell: cmd
+        run: choco install innosetup -y --no-progress
+
+      - name: Inject version from git tag
+        shell: cmd
+        env:
+          CI: 'true'  # CI 严格模式：dev 兜底硬退出
+        run: python build\inject_version.py
+
+      - name: Build deployment package
+        shell: cmd
+        run: python build\package_all.py
+
+      - name: Resolve version for artifact name
+        id: ver
+        shell: bash
+        run: |
+          v=$(grep '#define MyAppVersion' deploy/installer.iss | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Upload setup.exe as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TemuLabelSetup-${{ steps.ver.outputs.version }}
+          path: dist/TemuLabelSetup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release (tag triggers only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/TemuLabelSetup.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
