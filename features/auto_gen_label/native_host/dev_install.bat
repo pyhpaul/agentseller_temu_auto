@@ -1,5 +1,5 @@
 @echo off
-chcp 65001 > nul
+chcp 65001 >nul 2>&1
 setlocal
 :: pushd 比 cd /d 友好：支持 UNC 路径（\\wsl$\... 或 \\wsl.localhost\...），会自动分配临时盘符
 pushd %~dp0
@@ -70,7 +70,7 @@ echo }
 echo [OK] 生成 manifest: %MANIFEST_DEST%
 
 :: 注册表
-reg add "%REG_KEY%" /ve /t REG_SZ /d "%MANIFEST_DEST%" /f >nul
+reg add "%REG_KEY%" /ve /t REG_SZ /d "%MANIFEST_DEST%" /f >nul 2>&1
 echo [OK] 注册表已写入
 
 echo.
@@ -83,5 +83,7 @@ echo   日志文件: %HOST_DIR%temu_label_host.log
 echo   手动测试: python "%MAIN_PY%"
 echo.
 pause
+:: 兜底清理 chcp redirect cmd bug 可能误创建的 "nul\r" 文件
+if exist nul* del /q /f nul* 2>nul
 popd
 endlocal
