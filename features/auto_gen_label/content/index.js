@@ -307,7 +307,8 @@
         spuId: null,
         continueToPhase3: true,
       });
-      window.location.href = '/govern/compliant-live-photos'; // window.open('/govern/compliant-live-photos', '_blank');
+      // 开新 tab 启动 phase2，保留 phase1（条码管理页）tab 供用户继续操作
+      window.open('/govern/compliant-live-photos', '_blank');
     } catch (err) {
       setStatus(`出错: ${err.message}`, 'err');
       btn.disabled = false;
@@ -833,10 +834,10 @@
     trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     trigger.click();
 
-    // 轮询等待下拉出现（不依赖 hidden 类，用 computedStyle 判断可见性）
+    // 轮询等待下拉出现（check-first：直接命中 0ms 而非固定 sleep 200ms 起跳）
     let dropdown = null;
-    for (let i = 0; i < 25; i++) {
-      await U.sleep(200);
+    const dropdownDeadline = Date.now() + 5000;
+    while (Date.now() < dropdownDeadline) {
       for (const d of document.querySelectorAll('.rocket-select-dropdown')) {
         const cs = window.getComputedStyle(d);
         if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
@@ -844,6 +845,7 @@
         if (items.length > 0) { dropdown = d; break; }
       }
       if (dropdown) break;
+      await U.sleep(50);
     }
     if (!dropdown) throw new Error('下拉菜单未出现（等待 5s 超时）');
 
@@ -942,6 +944,7 @@
       }
       for (let attempt = 1; attempt <= 2; attempt++) {
         await safeSelect(container, option, fieldName);
+        if (rocketSelectHasValue(container)) return;
         await U.sleep(300);
         if (rocketSelectHasValue(container)) return;
         console.warn(`[TAL] ${fieldName} 按下标 ${option} 第 ${attempt} 次未生效，重试`);
@@ -968,6 +971,7 @@
       }
       for (let attempt = 1; attempt <= 2; attempt++) {
         await safeSelect(container, option, fieldName);
+        if (matchTarget()) return;
         await U.sleep(300);
         if (matchTarget()) return;
         console.warn(`[TAL] ${fieldName} 设置为「${option}」未生效，第 ${attempt} 次重试`);
@@ -987,6 +991,7 @@
     }
     for (let attempt = 1; attempt <= 2; attempt++) {
       await safeSelect(container, option, fieldName);
+      if (matchTarget()) return;
       await U.sleep(300);
       if (matchTarget()) return;
       console.warn(`[TAL] ${fieldName} 改为「${option}」未生效，第 ${attempt} 次重试`);
@@ -1002,6 +1007,7 @@
     }
     for (let attempt = 1; attempt <= 2; attempt++) {
       await safeSelect(container, option, fieldName);
+      if (rocketSelectHasValue(container)) return;
       await U.sleep(300);
       if (rocketSelectHasValue(container)) return;
       console.warn(`[TAL] ${fieldName} 选完后仍为空，第 ${attempt} 次重试`);
@@ -1071,22 +1077,11 @@
   // ═══════════════════════════════════════════════════════════════════════════
   // Phase 2 主流程
   // ═══════════════════════════════════════════════════════════════════════════
-  async function onStartCompliance() {
-    if (!fstate.product) return;
-    setCFlow({
-      active: true, step: 1,
-      skcNumber: fstate.product.skcNumber,
-      skcSku: fstate.product.skcSku,
-      spuId: null,
-    });
-    window.location.href = '/govern/compliant-live-photos'; // window.open('/govern/compliant-live-photos', '_blank');
-  }
 
   // ── Step 1：实拍图页面 — 用 SKC 查 SPU ───────────────────────────────────
   async function checkAndRunStep1() {
     const flow = getCFlow();
     if (!flow?.active || flow.step !== 1) return;
-    await U.sleep(2000);
     try { await runStep1(flow); }
     catch (e) { U.showToast('步骤1失败: ' + e.message, 'err'); clearCFlow(); }
   }
@@ -1124,10 +1119,10 @@
     const spuId = extractSpuFromPage();
     if (!spuId) throw new Error('未找到 SPU（查询结果为空？）');
 
-    U.showToast(`找到 SPU: ${spuId}，开新标签继续...`, 'info');
+    U.showToast(`找到 SPU: ${spuId}，跳转继续...`, 'info');
     setCFlow({ ...flow, step: 2, spuId });
     await U.sleep(800);
-    window.location.href = '/govern/information-supplementation'; // window.open('/govern/information-supplementation', '_blank');
+    window.location.href = '/govern/information-supplementation';
   }
 
   function extractSpuFromPage() {
@@ -1147,7 +1142,6 @@
   async function checkAndRunStep2or3() {
     const flow = getCFlow();
     if (!flow?.active) return;
-    await U.sleep(2000);
     if (flow.step === 2) {
       try { await runStep2(flow); }
       catch (e) { U.showToast('步骤2失败: ' + e.message, 'err'); clearCFlow(); clearImgFlow(); }
@@ -1322,14 +1316,16 @@
     await applyPhase2Rules(drawer, { skcSku: flow.skcSku, NA: '该项目不适用该产品' });
 
     await U.sleep(500);
-    const confirmBtn = U.findByText('button', '确认');
+    // drawer 是 .rocket-drawer-body，footer 是它的兄弟节点（在 .rocket-drawer-wrapper-body 下），
+    // 必须 closest 到 .rocket-drawer 整体再向下找 footer
+    const confirmBtn = drawer.closest('.rocket-drawer')
+      ?.querySelector('.rocket-drawer-footer button.rocket-btn-primary');
     if (!confirmBtn) throw new Error('未找到确认按钮');
     confirmBtn.click();
 
-    await U.sleep(1500);
     const continueToPhase3 = flow.continueToPhase3;
 
-    // 等 drawer 关闭
+    // 等 drawer 关闭（条件轮询本身吸收 React 处理 click 的延时，无需前置 sleep）
     for (let i = 0; i < 25; i++) {
       if (!document.querySelector('.rocket-drawer-body')) break;
       await U.sleep(200);
@@ -1359,7 +1355,7 @@
     if (labelPng && skcNumber) {
       await U.sleep(800);
       setImgFlow({ active: true, skcNumber, skcSku: flow.skcSku, spuId: flow.spuId, labelPngPath: labelPng });
-      window.location.href = '/govern/compliant-live-photos'; // window.open('/govern/compliant-live-photos', '_blank');
+      window.location.href = '/govern/compliant-live-photos';
     } else {
       U.showToast('③ 标签文件不存在，请重新执行完整流程', 'err');
     }
@@ -1461,24 +1457,10 @@
   function setImgFlow(d) { localStorage.setItem('talImgFlow', JSON.stringify(d)); }
   function clearImgFlow() { localStorage.removeItem('talImgFlow'); }
 
-  async function onStartImageUpload() {
-    if (!fstate.product) return;
-    const labelPng = localStorage.getItem('talLabelPng');
-    if (!labelPng) return;
-    setImgFlow({
-      active: true,
-      skcNumber: fstate.product.skcNumber,
-      skcSku: fstate.product.skcSku,
-      labelPngPath: labelPng,
-    });
-    window.location.href = '/govern/compliant-live-photos'; // window.open('/govern/compliant-live-photos', '_blank');
-  }
-
   // ── 页面检测 & 触发 ────────────────────────────────────────────────────────
   async function checkAndRunImgUpload() {
     const flow = getImgFlow();
     if (!flow?.active) return;
-    await U.sleep(2000);
     try { await runImgSearch(flow); }
     catch (e) { U.showToast('主图上传失败: ' + e.message, 'err'); clearImgFlow(); }
   }
