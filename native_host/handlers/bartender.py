@@ -98,6 +98,19 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
     }
 
 
+def handle(msg: dict) -> dict:
+    """native action 'generate_label' 的入口：把 msg 映射到 generate_label。
+    入参/出参与重构前完全一致。"""
+    return generate_label(
+        skc_number=msg['skc_number'],
+        skc_sku=msg['skc_sku'],
+        barcode_png_b64=msg['barcode_png_b64'],
+        template_path=msg['template_path'],
+        output_dir=msg['output_dir'],
+        width_ratio=msg.get('width_ratio')
+    )
+
+
 def _save_b64_png(b64_data: str, name_hint: str) -> str:
     """将 base64 PNG 字符串写入临时文件，返回 Windows 绝对路径。"""
     if ',' in b64_data:

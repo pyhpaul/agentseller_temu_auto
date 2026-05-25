@@ -1,7 +1,7 @@
 """
 package_all.py — 出员工部署包：
 1) 跑 build_extension 出 dist/extension/
-2) 调 features/auto_gen_label/build/build.bat 出 TemuLabelHost.exe（Windows 平台）
+2) 调 native_host/build/build.bat 出 TemuLabelHost.exe（Windows 平台）
 3) 拼装 dist/TemuLabel_Setup/{extension, TemuLabelHost.exe, install.bat, com.temu.label_host.json}
 4) 调 Inno Setup 把 dist/TemuLabel_Setup/ 打成单文件 dist/TemuLabelSetup.exe（Windows + Inno Setup 已装）
 
@@ -179,7 +179,7 @@ def main():
     build_all()
 
     print('[package] 2/5 构建 native_host EXE...')
-    build_bat = ROOT / 'features' / 'auto_gen_label' / 'build' / 'build.bat'
+    build_bat = ROOT / 'native_host' / 'build' / 'build.bat'
     if not build_bat.exists():
         print(f'[package] 错误：{build_bat} 不存在', file=sys.stderr)
         sys.exit(1)
@@ -202,8 +202,8 @@ def main():
     _disable_build_info_for_release(SETUP_DIR / 'extension')
     _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
-    # native_host EXE（features/auto_gen_label/build/build.bat 的 --distpath native_host 决定落点）
-    exe_src = ROOT / 'features' / 'auto_gen_label' / 'native_host' / 'TemuLabelHost.exe'
+    # native_host EXE（native_host/build/build.bat 的 --distpath . 决定落点：native_host/）
+    exe_src = ROOT / 'native_host' / 'TemuLabelHost.exe'
     if exe_src.exists():
         shutil.copy2(exe_src, SETUP_DIR / 'TemuLabelHost.exe')
         print(f'[package] EXE 已拷贝')
@@ -211,10 +211,10 @@ def main():
         print(f'[package] 警告：未找到 {exe_src.relative_to(ROOT)}，部署包不完整（Linux 上预期；Windows 上需先跑 build.bat）')
 
     # install.bat + com.temu.label_host.json
-    install_bat = ROOT / 'features' / 'auto_gen_label' / 'native_host' / 'install.bat'
+    install_bat = ROOT / 'native_host' / 'install.bat'
     if install_bat.exists():
         shutil.copy2(install_bat, SETUP_DIR / 'install.bat')
-    host_json = ROOT / 'features' / 'auto_gen_label' / 'native_host' / 'com.temu.label_host.json'
+    host_json = ROOT / 'native_host' / 'com.temu.label_host.json'
     if host_json.exists():
         shutil.copy2(host_json, SETUP_DIR / 'com.temu.label_host.json')
 

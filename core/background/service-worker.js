@@ -142,6 +142,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'SAVE_FILE_CHUNK') {
+    sendToNativeHost({
+      action: 'write_file_chunk',
+      path: msg.data.path,
+      data: msg.data.data,
+      offset: msg.data.offset,
+      done: msg.data.done
+    })
+      .then(result => sendResponse({ success: true, result }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (msg.type === 'PICK_FILE') {
     sendToNativeHost({
       action: 'pick_file',

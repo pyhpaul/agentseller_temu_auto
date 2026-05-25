@@ -33,21 +33,20 @@
 features/auto_gen_label/
 ├── feature.json
 ├── content/index.js          # chrome 端业务（Phase 1/2/3 全部，约 1500 行）
-├── native_host/              # Python 本地资源端
-│   ├── main.py               # Native Messaging 协议入口（stdin/stdout JSON）
-│   ├── bartender_handler.py  # BarTender 2022 .NET SDK 调用
-│   ├── file_dialog.py        # tkinter 文件/文件夹选择对话框
-│   ├── com.temu.label_host.json
-│   ├── install.bat           # 部署期注册 native host 到 HKCU
-│   ├── dev_install.bat       # 开发期临时注册
-│   ├── requirements.txt
-│   └── resources/            # 静态资源（含 background.png 标签背景）
-├── build/                    # feature 内部构建
-│   ├── build.bat             # PyInstaller 打 TemuLabelHost.exe
-│   └── package.bat           # 旧版部署打包（顶层 build/package_all.py 已替代，保留供 fallback）
 ├── samples/                  # 调试辅料（DOM 抓取、日志样本）
 └── CLAUDE.md
 ```
+
+> **Native host 已上移到顶层共享层 `native_host/`**（所有 feature 共用唯一 host
+> `com.temu.label_host`）。本 feature 不再持有 feature-local `native_host/` 或 `build/`。
+> 协议入口 / 通用文件能力 / 注册脚本 / EXE 构建见顶层 `native_host/`：
+>
+> - `native_host/main.py` — Native Messaging 协议入口 + `DISPATCH` 表
+> - `native_host/file_ops.py` — 通用文件能力 + tkinter 文件/文件夹对话框
+> - `native_host/handlers/bartender.py` — **本 feature 专属** `generate_label`（BarTender .NET SDK，下文是其实现细节）
+> - `native_host/resources/background.png` — Phase 1 标签底图
+> - `native_host/{install,dev_install}.bat`、`com.temu.label_host.json`、`requirements.txt`
+> - `native_host/build/build.bat` — PyInstaller 打 `TemuLabelHost.exe`
 
 `content/index.js` 内部组织（按职责顺序）：
 
@@ -186,7 +185,9 @@ if (!result.success) throw new Error(result.error);
 const { output_pdf, output_png } = result;
 ```
 
-**Native host action 清单**（由 service worker 路由）：
+**Native host action 清单**（由 service worker 路由）。`PROCESS_LABEL` 是本 feature 专属
+（→ 共享层 `native_host/handlers/bartender.py`），其余为共享文件能力（→ `native_host/file_ops.py`），
+完整路由表见项目根 `CLAUDE.md` 的「Native Messaging Protocol」段：
 
 | Action | 入参 | 出参 |
 |--------|------|------|
@@ -204,15 +205,17 @@ const { output_pdf, output_png } = result;
 - SKC 数值：`.label-value-module__label-value___1wVkH` 内 label 为 `SKC` 的 value
 - 操作按钮：`button` 内 span 文字匹配（打印条码 / 保存条码 / 取消）
 
-## Native Host 注册
+## Native Host 注册（共享层）
 
-Native Host 名称：`com.temu.label_host`
+> Native host 注册归**顶层共享 `native_host/`**，所有 feature 共用。本节只作引用，细节随共享层文档走。
+
+Native Host 名称：`com.temu.label_host`（共用唯一 host）
 注册表路径：`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.temu.label_host`
 
 `com.temu.label_host.json` 的 `allowed_origins` 中需填入插件的实际 Extension ID（首次加载插件后从 `chrome://extensions` 获取）。开发阶段临时用通配，生产部署时锁定具体 ID。
 
-开发期注册：`auto_gen_label/native_host/dev_install.bat`
-部署期注册：员工部署包内 `install.bat`
+- 开发期注册：`native_host/dev_install.bat`
+- 部署期注册：员工部署包内 `install.bat`（由顶层 `build/package_all.py` 从 `native_host/` 拷入）
 
 ## Key Dependencies
 
