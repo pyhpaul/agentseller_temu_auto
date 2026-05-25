@@ -2,12 +2,24 @@
 通用文件操作 + 文件/文件夹选择对话框。
 
 所有 feature 共用的 native 能力都放这里，与 auto_gen_label 专属的 BarTender 解耦。
-tkinter 仅在弹对话框时惰性 import（放在 _get_root / dialog 函数内），这样 main.py /
-file_ops.py 在没有 tkinter 的非 Windows 环境也能成功 import 自测。
+tkinter 必须在模块顶层 eager import（见下方注释），用 try/except 守护，
+让没装 tkinter 的非 Windows 环境仍能成功 import file_ops 自测。
 """
 import os
 import base64
 import logging
+
+# tkinter 必须在进程启动时（模块顶层）import，不能惰性 import。
+# native host 主循环已在阻塞读 stdin 之后，再首次 import tkinter 时 Tk() 创建会卡死：
+# 无窗口、无返回、消息循环挂起（pick_file/pick_folder 永不回包）。重构曾把它改成
+# 函数内惰性 import 触发了这个回归，这里回退到 eager。
+# 用 try/except 守护：没装 tkinter 的非 Windows 环境下 import file_ops 仍能成功（供自测）。
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except Exception:
+    tk = None
+    filedialog = None
 
 # 默认分块大小（与 Chrome Native Messaging 单消息 1MB 上限对齐）
 DEFAULT_CHUNK_LENGTH = 524288
@@ -90,7 +102,7 @@ def write_file_chunk(msg: dict) -> dict:
     return {'success': True, 'bytes_written': bytes_written}
 
 
-# ── 文件/文件夹选择对话框（tkinter 惰性 import）─────────────────────────────────
+# ── 文件/文件夹选择对话框（tkinter 在模块顶层 eager import）──────────────────────
 
 # 模块级共享 root：Windows 下反复 tk.Tk() + root.destroy() 会污染 Tcl 状态，
 # 多次取消对话框后第 N 次 tk.Tk() 会阻塞主线程，导致 native_host 无回包，
@@ -99,10 +111,10 @@ _shared_root = None
 
 
 def _get_root():
-    """惰性创建并复用 tkinter root。tkinter 仅在此处 import，
-    保证非 Windows / 无 tkinter 环境下 import file_ops 不报错。"""
+    """惰性创建并复用 tkinter root（tk 已在模块顶层 import）。"""
     global _shared_root
-    import tkinter as tk  # 惰性 import：仅弹对话框时才需要
+    if tk is None:
+        raise RuntimeError('本机未安装 tkinter，无法弹出文件/文件夹选择对话框')
     if _shared_root is None:
         _shared_root = tk.Tk()
         _shared_root.withdraw()
@@ -120,7 +132,6 @@ def _normalize_filetypes(raw) -> list:
 
 def ask_open_file(title: str, filetypes: list) -> str:
     """弹出文件选择对话框，返回所选路径，取消返回空字符串。"""
-    from tkinter import filedialog
     root = _get_root()
     path = filedialog.askopenfilename(
         parent=root,
@@ -132,7 +143,6 @@ def ask_open_file(title: str, filetypes: list) -> str:
 
 def ask_save_folder(title: str) -> str:
     """弹出文件夹选择对话框，返回所选路径，取消返回空字符串。"""
-    from tkinter import filedialog
     root = _get_root()
     path = filedialog.askdirectory(parent=root, title=title)
     return path or ''
