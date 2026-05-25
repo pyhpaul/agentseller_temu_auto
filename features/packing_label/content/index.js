@@ -147,7 +147,88 @@
     return false; // 没弹（已勾过 30 天）
   }
 
-  async function onStart() { /* Task 7 实现批量引擎 */ setStatus('（引擎未实现）'); }
+  // ── 商品枚举 ──────────────────────────────────────────────────────────────
+  // 表格 rowspan 分组结构：一个物流分组 = 含 checkbox 的首 tr + 后续无 checkbox 的同组 tr，
+  // 每个 tr 对应一个商品。分组级单元格（checkbox / 物流单号 / 分组操作列）用 rowspan 合并在首 tr。
+
+  function extractTrackingRaw(tr) {
+    const spans = Array.from(tr.querySelectorAll('a[data-testid="beast-core-button-link"] span'));
+    const hit = spans.find((s) => /[，,]/.test(s.textContent) && /[A-Za-z0-9]{6,}/.test(s.textContent));
+    return hit ? hit.textContent.trim() : '';
+  }
+
+  function extractQty(tr) {
+    const m = (tr.textContent || '').match(/发货数量：?\s*(\d+件)/);
+    return m ? m[1] : '';
+  }
+
+  // 商品级「打印商品打包标签」按钮：排除分组级操作列（含「运单」）和 disabled。
+  function findProductPrintBtn(tr) {
+    return Array.from(tr.querySelectorAll('a[data-testid="beast-core-button-link"]'))
+      .filter((a) => { const s = a.querySelector('span'); return s && s.textContent.trim() === '打印商品打包标签'; })
+      .filter((a) => !a.hasAttribute('disabled'))
+      .filter((a) => { const td = a.closest('td'); return td && !td.textContent.includes('运单'); })[0] || null;
+  }
+
+  // 选中分组下每个商品 → {btn, trackingRaw（分组级物流单号）, qty（商品级发货数量）}
+  function collectPrintTargets() {
+    const trs = Array.from(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]'));
+    const targets = [];
+    let group = null;
+    for (const tr of trs) {
+      const cb = tr.querySelector('[data-testid="beast-core-checkbox"] input[type="checkbox"]');
+      if (cb) { group = { checked: cb.checked, tracking: extractTrackingRaw(tr) }; } // 分组首行
+      if (!group || !group.checked) continue;
+      const btn = findProductPrintBtn(tr);
+      if (!btn) continue;
+      targets.push({ btn, trackingRaw: group.tracking, qty: extractQty(tr) });
+    }
+    return targets;
+  }
+
+  // ── 批量串行引擎 ─────────────────────────────────────────────────────────────
+  async function onStart() {
+    const dir = getSavePath();
+    if (!dir) { AS.showToast('请先设置保存文件夹', 'warn'); return; }
+    const targets = collectPrintTargets();
+    if (!targets.length) { AS.showToast('没有可打印的选中商品', 'warn'); return; }
+
+    ctrl('start');
+    let ok = 0; const fails = [];
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        const ctxId = 'pl-' + Date.now() + '-' + i;
+        setStatus(`打印中 ${i + 1}/${targets.length}…`);
+        try {
+          const info = window.__PLNaming.parseTrackingInfo(t.trackingRaw);
+          const baseName = window.__PLNaming.buildBaseFileName({
+            carrier: info.carrier, trackingNo: info.trackingNo, qty: t.qty,
+          });
+          ctrl('setCtx', ctxId);
+          t.btn.click();
+          await handleConfirmIfPresent(2500);          // 可选 confirm
+          const bytes = await awaitPdfCapture(ctxId, 8000);
+          const path = await resolveUniquePath(dir, baseName);
+          await savePdf(path, bytes);
+          ok += 1;
+        } catch (err) {
+          fails.push(`#${i + 1}(${t.qty || '?'}): ${err.message}`);
+        }
+        await U.sleep(300);
+      }
+    } finally {
+      ctrl('stop');
+    }
+    if (fails.length) {
+      console.warn('[PL] 失败明细:', fails);
+      setStatus(`完成：成功 ${ok}/${targets.length}，失败 ${fails.length}（见 console）｜保存到 ${dir}`);
+      AS.showToast(`成功 ${ok}，失败 ${fails.length}（看 console）`, 'warn');
+    } else {
+      setStatus(`✅ 全部完成：${ok} 个已存到 ${dir}`);
+      AS.showToast(`全部完成：${ok} 个`, 'success');
+    }
+  }
 
   AS.registerFeature({
     id: 'packing_label',
