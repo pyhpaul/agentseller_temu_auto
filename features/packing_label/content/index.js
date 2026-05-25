@@ -115,6 +115,38 @@
     return last;
   }
 
+  function findActiveModal() {
+    const wraps = document.querySelectorAll('[data-testid="beast-core-modal-innerWrapper"], [data-testid="beast-core-modal-inner"]');
+    return wraps.length ? wraps[wraps.length - 1] : null;
+  }
+
+  function findContinueBtn(scope) {
+    const root = scope || document;
+    return Array.from(root.querySelectorAll('[data-testid="beast-core-button"]'))
+      .find((b) => { const s = b.querySelector('span'); return s && s.textContent.trim() === '继续打印'; }) || null;
+  }
+
+  // 在 timeoutMs 内等 confirm 弹窗；出现则勾「30天不再提醒」+ 点「继续打印」，返回 true；没弹返回 false。
+  async function handleConfirmIfPresent(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const modal = findActiveModal();
+      const btn = modal && findContinueBtn(modal);
+      if (btn) {
+        const cb = modal.querySelector('[data-testid="beast-core-checkbox"]');
+        if (cb && cb.getAttribute('data-checked') === 'false') {
+          const input = cb.querySelector('input[type="checkbox"]') || cb;
+          input.click();
+          await U.sleep(80);
+        }
+        btn.click();
+        return true;
+      }
+      await U.sleep(150);
+    }
+    return false; // 没弹（已勾过 30 天）
+  }
+
   async function onStart() { /* Task 7 实现批量引擎 */ setStatus('（引擎未实现）'); }
 
   AS.registerFeature({
