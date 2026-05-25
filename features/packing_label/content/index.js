@@ -228,6 +228,36 @@
     btn.textContent = running ? '打印中…' : '开始打印选中商品';
   }
 
+  // 居中确认弹框，返回 Promise<boolean>（确认 true / 取消 false）。
+  function plConfirm(message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#fff;border-radius:8px;padding:22px 24px;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.25);font-size:14px;color:#333;line-height:1.6;';
+      const msg = document.createElement('div');
+      msg.textContent = message;
+      msg.style.cssText = 'white-space:pre-wrap;margin-bottom:18px;';
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+      const cancel = document.createElement('button');
+      cancel.textContent = '取消';
+      cancel.style.cssText = 'padding:6px 18px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:14px;';
+      const ok = document.createElement('button');
+      ok.textContent = '确认';
+      ok.style.cssText = 'padding:6px 18px;border:none;border-radius:4px;background:#fb7701;color:#fff;cursor:pointer;font-size:14px;';
+      function close(val) { overlay.remove(); resolve(val); }
+      cancel.onclick = () => close(false);
+      ok.onclick = () => close(true);
+      overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+      btns.append(cancel, ok);
+      box.append(msg, btns);
+      overlay.append(box);
+      document.body.appendChild(overlay);
+      ok.focus();
+    });
+  }
+
   // ── 滚动扫描批量引擎（虚拟列表：从顶滚到底，边滚边处理可见选中商品，按 key 去重）──────
   async function onStart() {
     const dir = getSavePath();
@@ -239,7 +269,7 @@
     const msg = selCount == null
       ? '未能读取页面已选数量，仍要开始打印吗？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）'
       : `当前已选中 ${selCount} 个商品，确认开始打印？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）`;
-    if (!window.confirm(msg)) return;
+    if (!(await plConfirm(msg))) return;
 
     setRunning(true);
     ctrl('start');
