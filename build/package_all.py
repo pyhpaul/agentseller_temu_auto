@@ -12,6 +12,7 @@ package_all.py — 出员工部署包：
 Inno Setup 是可选步骤：找不到 ISCC.exe（非 Windows、或 Windows 上未装）会打印警告
 并跳过，不影响前面四步的产物（TemuLabel_Setup/ 仍可用于手动部署）。
 """
+import json
 import os
 import re
 import shutil
@@ -69,6 +70,57 @@ def _read_installer_version() -> str:
         return ''
     m = _ISS_VERSION_RE.search(iss.read_text(encoding='utf-8'))
     return m.group(1) if m else ''
+
+
+_MANIFEST_VERSION_RE = re.compile(r'^\d+(\.\d+){0,3}$')
+
+
+def normalize_manifest_version(raw: str) -> str:
+    """把 installer.iss 的 MyAppVersion 清洗成 Chrome manifest 合法的纯数字段版本号。
+
+    Chrome manifest `version` 只接受 1-4 段点分整数，禁止后缀；带后缀会导致扩展加载失败。
+    MyAppVersion 可能形如 '1.0.1' / '1.0.1-rc.1' / '1.0.1-3-gabc123' / '0.0.0-dev.sha'，
+    统一截取首个 '-' 之前的部分，再校验是否为合法数字段。
+
+    rc 版本（'1.0.1-rc.1'）清洗后与正式版（'1.0.1'）的 manifest version 相同，
+    这是 Chrome 硬限制；rc 包不发员工，panel 标题栏仍显示完整 'v1.0.1-rc.1'。
+    """
+    base = raw.split('-', 1)[0]
+    if not _MANIFEST_VERSION_RE.match(base):
+        raise ValueError(
+            f'无法从「{raw}」得到 Chrome manifest 合法版本号'
+            f'（截取得到「{base}」，要求 1-4 段点分整数）'
+        )
+    return base
+
+
+def _set_manifest_version_for_release(extension_root: Path):
+    """release 部署包把 manifest.json 的 version 从模板默认 '1.0.0' 改成真实 tag 版本号。
+
+    与 build-info 的 version 注入对称：dev 阶段 manifest 保持模板默认（chrome://extensions
+    显示 1.0.0，无版本号语义），release 阶段从 installer.iss 读 tag 版本写入，
+    让扩展卡片与 panel 标题栏版本号一致。
+
+    失败保护：读不到 installer 版本号、或清洗后非法都直接退出，防止 release 包发出错版本。
+    """
+    target = extension_root / 'manifest.json'
+    if not target.exists():
+        print(f'[package] 错误：未找到 {target}', file=sys.stderr)
+        sys.exit(2)
+    version = _read_installer_version()
+    if not version:
+        print('[package] 错误：无法从 installer.iss 读取 MyAppVersion', file=sys.stderr)
+        sys.exit(2)
+    try:
+        manifest_version = normalize_manifest_version(version)
+    except ValueError as e:
+        print(f'[package] 错误：{e}', file=sys.stderr)
+        sys.exit(2)
+    manifest = json.loads(target.read_text(encoding='utf-8'))
+    old = manifest.get('version')
+    manifest['version'] = manifest_version
+    target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f'[package] manifest.json version: {old} → {manifest_version} → {target.relative_to(ROOT)}')
 
 
 def _disable_build_info_for_release(extension_root: Path):
@@ -145,9 +197,10 @@ def main():
 
     # extension 目录（dist 产物）
     shutil.copytree(DIST, SETUP_DIR / 'extension')
-    # 关掉 release 版的 TAL_DEBUG + dev build 时间戳显示
+    # 关掉 release 版的 TAL_DEBUG + dev build 时间戳显示，并把 manifest 版本号同步成 tag
     _replace_tal_debug_to_false(SETUP_DIR / 'extension')
     _disable_build_info_for_release(SETUP_DIR / 'extension')
+    _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（features/auto_gen_label/build/build.bat 的 --distpath native_host 决定落点）
     exe_src = ROOT / 'features' / 'auto_gen_label' / 'native_host' / 'TemuLabelHost.exe'
