@@ -6,7 +6,7 @@
 ;       员工双击 → Next/Next/Finish 即可完成 native host 注册。
 ;
 ; 设计取舍：
-;   - **不直接调 features/auto_gen_label/native_host/install.bat**：
+;   - **不直接调 native_host/install.bat**：
 ;     原 install.bat 末尾有 `pause`，Inno Setup 用 runhidden 调用会卡死
 ;     (无法响应按键)。本脚本在 [Run]/[Code] 段用 PowerShell + reg.exe
 ;     原生命令完成等价工作，行为与 install.bat 完全一致。

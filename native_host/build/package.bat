@@ -1,6 +1,6 @@
 @echo off
 echo ============================================
-echo [DEPRECATED] auto_gen_label/build/package.bat
+echo [DEPRECATED] native_host/build/package.bat
 echo ============================================
 echo.
 echo This script is deprecated after the multi-feature refactor.
