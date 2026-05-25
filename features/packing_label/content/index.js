@@ -313,13 +313,18 @@
       if (PL_DIAG) console.log('[PL-DIAG] === 完成 处理 key 数:', processed.size, '成功:', ok, '失败:', fails.length);
     }
     const total = ok + fails.length;
+    if (fails.length) console.warn('[PL] 失败明细:', fails);
+    // 对账：实际处理数 < 开始时「已选」数 → 有漏（取不到单号/够不到的行），显式告警而非静默
+    const missed = (selCount != null && total < selCount) ? selCount - total : 0;
     if (total === 0) {
       setStatus('没有可打印的选中商品');
       AS.showToast('没有可打印的选中商品', 'warn');
-    } else if (fails.length) {
-      console.warn('[PL] 失败明细:', fails);
-      setStatus(`完成：成功 ${ok}，失败 ${fails.length}（见 console）｜保存到 ${dir}`);
-      AS.showToast(`成功 ${ok}，失败 ${fails.length}（看 console）`, 'warn');
+    } else if (fails.length || missed) {
+      const parts = [`成功 ${ok}`];
+      if (fails.length) parts.push(`失败 ${fails.length}（见 console）`);
+      if (missed) parts.push(`疑似漏 ${missed}（已选 ${selCount}、仅处理 ${total}，请检查）`);
+      setStatus(`完成：${parts.join('，')}｜保存到 ${dir}`);
+      AS.showToast(parts.join('，'), 'warn');
     } else {
       setStatus(`✅ 全部完成：${ok} 个已存到 ${dir}`);
       AS.showToast(`全部完成：${ok} 个`, 'success');
