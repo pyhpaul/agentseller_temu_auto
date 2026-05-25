@@ -67,6 +67,54 @@
     });
   }
 
+  function bytesToBase64(u8) {
+    let bin = '';
+    const CH = 0x8000;
+    for (let i = 0; i < u8.length; i += CH) {
+      bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    }
+    return btoa(bin);
+  }
+
+  function joinWin(dir, name) {
+    return dir.replace(/[\\/]+$/, '') + '\\' + name;
+  }
+
+  // 用 READ_FILE_SIZE 探测：不存在即可用；存在则 _2/_3… 递增。
+  async function resolveUniquePath(dir, baseName) {
+    const dot = baseName.lastIndexOf('.');
+    const stem = dot >= 0 ? baseName.slice(0, dot) : baseName;
+    const ext = dot >= 0 ? baseName.slice(dot) : '';
+    let candidate = baseName, n = 1;
+    for (let guard = 0; guard < 999; guard++) {
+      const r = await sendNative('READ_FILE_SIZE', { path: joinWin(dir, candidate) });
+      if (!r || !r.success) return joinWin(dir, candidate); // 不存在 → 用它
+      n += 1;
+      candidate = stem + '_' + n + ext;
+    }
+    return joinWin(dir, stem + '_' + Date.now() + ext); // 极端兜底
+  }
+
+  // 分块写（512KB/块，base64 膨胀后 < Native Messaging 1MB 限制）
+  async function savePdf(path, arrayBuffer) {
+    const u8 = new Uint8Array(arrayBuffer);
+    const CHUNK = 512 * 1024;
+    if (u8.length === 0) {
+      const r = await sendNative('SAVE_FILE_CHUNK', { path, data: '', offset: 0, done: true });
+      if (!r || !r.success) throw new Error((r && r.error) || '保存失败');
+      return r;
+    }
+    let offset = 0, last = null;
+    while (offset < u8.length) {
+      const slice = u8.subarray(offset, offset + CHUNK);
+      const done = offset + slice.length >= u8.length;
+      const r = await sendNative('SAVE_FILE_CHUNK', { path, data: bytesToBase64(slice), offset, done });
+      if (!r || !r.success) throw new Error((r && r.error) || '保存失败');
+      offset += slice.length; last = r;
+    }
+    return last;
+  }
+
   async function onStart() { /* Task 7 实现批量引擎 */ setStatus('（引擎未实现）'); }
 
   AS.registerFeature({
