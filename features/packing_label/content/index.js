@@ -194,6 +194,19 @@
     return targets;
   }
 
+  // 读页面「已选：N」数量（class 带 hash，用 class 前缀匹配 + 文字回退，稳健）。
+  // 返回数字；读不到返回 null。
+  function getSelectedCount() {
+    const numEl = document.querySelector('[class*="chooseNum"]');
+    if (numEl) {
+      const n = parseInt((numEl.textContent || '').trim(), 10);
+      if (!isNaN(n)) return n;
+    }
+    const box = Array.from(document.querySelectorAll('[class*="choose"]')).find((e) => /已选/.test(e.textContent || ''));
+    if (box) { const m = (box.textContent || '').match(/已选[：:]\s*(\d+)/); if (m) return parseInt(m[1], 10); }
+    return null;
+  }
+
   // 虚拟列表滚动容器：从行向上找可滚动祖先（不依赖 hash class）。
   function findScrollContainer() {
     let n = document.querySelector('tr[data-testid="beast-core-table-body-tr"]');
@@ -219,6 +232,14 @@
   async function onStart() {
     const dir = getSavePath();
     if (!dir) { AS.showToast('请先设置保存文件夹', 'warn'); return; }
+
+    // 开始前确认已选数量
+    const selCount = getSelectedCount();
+    if (selCount === 0) { AS.showToast('请先勾选要打印的商品', 'warn'); return; }
+    const msg = selCount == null
+      ? '未能读取页面已选数量，仍要开始打印吗？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）'
+      : `当前已选中 ${selCount} 个商品，确认开始打印？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）`;
+    if (!window.confirm(msg)) return;
 
     setRunning(true);
     ctrl('start');
