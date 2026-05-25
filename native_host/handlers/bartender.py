@@ -51,7 +51,10 @@ JPEG_QUALITY      = 92
 
 
 def _resource_path(name: str) -> str:
-    base = getattr(sys, '_MEIPASS', None) or os.path.dirname(os.path.abspath(__file__))
+    # 冻结(EXE)：资源经 build.bat 的 --add-data 打到 _MEIPASS/resources/，直接用 _MEIPASS。
+    # dev：bartender.py 在 native_host/handlers/，但 resources 在 native_host/resources/，
+    #      需从 __file__ 上溯两层（handlers/bartender.py → handlers/ → native_host/）。
+    base = getattr(sys, '_MEIPASS', None) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, 'resources', name)
 
 
