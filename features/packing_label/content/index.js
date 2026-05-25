@@ -5,6 +5,7 @@
   const U = AS.utils;
   const sendNative = AS.sendNative;
   const LS_PATH = 'plSavePath';
+  const PL_DIAG = false; // 诊断日志开关（调试时置 true）
 
   function isShippingListPage(href) {
     return /seller\.kuajingmaihuo\.com\/main\/order-manager\/shipping-list/.test(href || location.href);
@@ -25,14 +26,13 @@
 
   function renderView(viewEl) {
     viewEl.innerHTML = `
-      <div class="tal-card">
-        <div class="tal-card-title">打包标签</div>
-        <div class="tal-path-row" id="pl-path-row" title="点击选择保存文件夹">
+      <div class="tal-card" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="tal-path-row" id="pl-path-row" title="点击选择保存文件夹" style="cursor:pointer;">
           <span class="tal-path-k">保存到</span>
           <span class="tal-path-v" id="pl-path-v"></span>
         </div>
         <button id="pl-start" class="tal-btn-primary">开始打印选中商品</button>
-        <div id="pl-status" class="tal-status"></div>
+        <div id="pl-status" class="tal-status" style="margin-top:4px;line-height:1.5;"></div>
       </div>`;
     viewEl.querySelector('#pl-path-row').addEventListener('click', onPickSavePath);
     viewEl.querySelector('#pl-start').addEventListener('click', onStart);
@@ -62,7 +62,7 @@
     window.addEventListener('message', onMsg);        // ① 先注册监听
     timer = setTimeout(() => { finish(); rejectFn(new Error('未捕获到标签 PDF（超时）')); }, timeoutMs);
     btn.click();                                       // ② 再点击
-    await handleConfirmIfPresent(2500);                // ③ 处理可选 confirm（监听已就位，PDF 不会漏）
+    handleConfirmIfPresent(2000).catch(() => {});      // ③ 后台处理可选 confirm，不阻塞捕获（监听已就位）
     return captured;
   }
 
@@ -139,10 +139,12 @@
           await U.sleep(80);
         }
         btn.click();
+        if (PL_DIAG) console.log('[PL-DIAG] confirm 弹窗已处理（勾选+继续打印）');
         return true;
       }
       await U.sleep(150);
     }
+    if (PL_DIAG) console.log('[PL-DIAG] confirm 未出现（超时跳过）');
     return false; // 没弹（已勾过 30 天）
   }
 
@@ -169,20 +171,38 @@
       .filter((a) => { const td = a.closest('td'); return td && !td.textContent.includes('运单'); })[0] || null;
   }
 
-  // 选中分组下每个商品 → {btn, trackingRaw（分组级物流单号）, qty（商品级发货数量）}
+  // 商品去重 key：备货单号/发货单号/包裹单号（虚拟列表重渲染时防重复打）。
+  function productKey(tr) {
+    const t = tr.textContent || '';
+    const m = t.match(/WB\d+/) || t.match(/FH\d+/) || t.match(/PC\d+/);
+    return m ? m[0] : '';
+  }
+
+  // 当前 DOM 里选中分组下每个商品 → {btn, key, trackingRaw（分组级物流单号）, qty（商品级发货数量）}
   function collectPrintTargets() {
     const trs = Array.from(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]'));
     const targets = [];
     let group = null;
     for (const tr of trs) {
       const cb = tr.querySelector('[data-testid="beast-core-checkbox"] input[type="checkbox"]');
-      if (cb) { group = { checked: cb.checked, tracking: extractTrackingRaw(tr) }; } // 分组首行
+      if (cb) group = { checked: cb.checked, tracking: extractTrackingRaw(tr) }; // 分组首行
       if (!group || !group.checked) continue;
       const btn = findProductPrintBtn(tr);
       if (!btn) continue;
-      targets.push({ btn, trackingRaw: group.tracking, qty: extractQty(tr) });
+      targets.push({ btn, key: productKey(tr), trackingRaw: group.tracking, qty: extractQty(tr) });
     }
     return targets;
+  }
+
+  // 虚拟列表滚动容器：从行向上找可滚动祖先（不依赖 hash class）。
+  function findScrollContainer() {
+    let n = document.querySelector('tr[data-testid="beast-core-table-body-tr"]');
+    while (n) {
+      const s = getComputedStyle(n);
+      if (/(auto|scroll)/.test(s.overflowY) && n.scrollHeight > n.clientHeight + 20) return n;
+      n = n.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
   }
 
   // 运行态：运行中按钮变灰禁用，结束恢复高亮可点。
@@ -195,41 +215,59 @@
     btn.textContent = running ? '打印中…' : '开始打印选中商品';
   }
 
-  // ── 批量串行引擎 ─────────────────────────────────────────────────────────────
+  // ── 滚动扫描批量引擎（虚拟列表：从顶滚到底，边滚边处理可见选中商品，按 key 去重）──────
   async function onStart() {
     const dir = getSavePath();
     if (!dir) { AS.showToast('请先设置保存文件夹', 'warn'); return; }
-    const targets = collectPrintTargets();
-    if (!targets.length) { AS.showToast('没有可打印的选中商品', 'warn'); return; }
 
     setRunning(true);
     ctrl('start');
+    const container = findScrollContainer();
+    const processed = new Set();
     let ok = 0; const fails = [];
+    if (PL_DIAG) console.log('[PL-DIAG] 滚动容器 h=', container.scrollHeight, 'client=', container.clientHeight);
     try {
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
-        setStatus(`打印中 ${i + 1}/${targets.length}…`);
-        try {
-          const info = window.__PLNaming.parseTrackingInfo(t.trackingRaw);
-          const baseName = window.__PLNaming.buildBaseFileName({
-            carrier: info.carrier, trackingNo: info.trackingNo, qty: t.qty,
-          });
-          const bytes = await printAndCapture(t.btn, 8000);
-          const path = await resolveUniquePath(dir, baseName);
-          await savePdf(path, bytes);
-          ok += 1;
-        } catch (err) {
-          fails.push(`#${i + 1}(${t.qty || '?'}): ${err.message}`);
+      container.scrollTop = 0;
+      await U.sleep(400);
+      let idleAtBottom = 0;
+      for (let guard = 0; guard < 600; guard++) {
+        const fresh = collectPrintTargets().filter((t) => t.key && !processed.has(t.key));
+        if (fresh.length) {
+          const t = fresh[0];
+          processed.add(t.key);
+          setStatus(`打印中…已完成 ${ok}${fails.length ? `，失败 ${fails.length}` : ''}`);
+          if (PL_DIAG) console.log(`[PL-DIAG] >>> key=${t.key} qty="${t.qty}" track="${t.trackingRaw}"`);
+          try {
+            const info = window.__PLNaming.parseTrackingInfo(t.trackingRaw);
+            const baseName = window.__PLNaming.buildBaseFileName({ carrier: info.carrier, trackingNo: info.trackingNo, qty: t.qty });
+            const bytes = await printAndCapture(t.btn, 8000);
+            const path = await resolveUniquePath(dir, baseName);
+            await savePdf(path, bytes);
+            ok += 1;
+          } catch (err) {
+            if (PL_DIAG) console.log('[PL-DIAG] 失败', t.key, err.message);
+            fails.push(`${t.key || '?'}(${t.qty || '?'}): ${err.message}`);
+          }
+          await U.sleep(250);
+        } else {
+          const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 4;
+          if (atBottom) { idleAtBottom += 1; if (idleAtBottom >= 2) break; } else { idleAtBottom = 0; }
+          container.scrollTop += Math.max(150, Math.round(container.clientHeight * 0.5));
+          await U.sleep(450); // 等虚拟列表重渲染
         }
-        await U.sleep(300);
       }
     } finally {
       ctrl('stop');
       setRunning(false);
+      if (PL_DIAG) console.log('[PL-DIAG] === 完成 处理 key 数:', processed.size, '成功:', ok, '失败:', fails.length);
     }
-    if (fails.length) {
+    const total = ok + fails.length;
+    if (total === 0) {
+      setStatus('没有可打印的选中商品');
+      AS.showToast('没有可打印的选中商品', 'warn');
+    } else if (fails.length) {
       console.warn('[PL] 失败明细:', fails);
-      setStatus(`完成：成功 ${ok}/${targets.length}，失败 ${fails.length}（见 console）｜保存到 ${dir}`);
+      setStatus(`完成：成功 ${ok}，失败 ${fails.length}（见 console）｜保存到 ${dir}`);
       AS.showToast(`成功 ${ok}，失败 ${fails.length}（看 console）`, 'warn');
     } else {
       setStatus(`✅ 全部完成：${ok} 个已存到 ${dir}`);
