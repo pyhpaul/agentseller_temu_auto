@@ -1,0 +1,25 @@
+{
+  "id": "packing_label",
+  "icon": "🏷️",
+  "label": "打包标签",
+  "locked": false,
+  "order": 4,
+  "content_script": "content/index.js",
+  "content_matches": ["https://seller.kuajingmaihuo.com/*"],
+  "host_permissions": ["https://seller.kuajingmaihuo.com/*"],
+  "permissions": ["nativeMessaging", "storage"],
+  "native_host": "com.temu.label_host",
+  "extra_content_scripts": [
+    {
+      "js": ["content/naming.js"],
+      "matches": ["https://seller.kuajingmaihuo.com/*"],
+      "run_at": "document_start"
+    },
+    {
+      "js": ["content/inject-main.js"],
+      "matches": ["https://seller.kuajingmaihuo.com/*"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
