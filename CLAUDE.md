@@ -95,6 +95,12 @@ window.AgentSeller = {
 
 `package_all.py` 在 release 时双重 string replace：`isDev: true → false` + `version: 'dev' → '<MyAppVersion>'`（从 `deploy/installer.iss` 读取，CI 流程下该值已被 `inject_version.py` 改成 tag 版本号）。
 
+**manifest.json version 注入**：`chrome://extensions` 扩展卡片显示的版本号来自 `dist/extension/manifest.json` 的 `version` 字段。`manifest.template.json` 硬编码 `1.0.0`，`build_extension.py` 直接透传 —— 所以 **dev 阶段卡片恒显 1.0.0**（dev 无版本号语义，靠 panel 的 `dev:<ts>` 区分）。release 时 `package_all.py` 的 `_set_manifest_version_for_release()` 从 `installer.iss` 读 `MyAppVersion`，经 `normalize_manifest_version()` 清洗后写入 manifest。
+
+> ⚠️ **版本号显示有两条独立链路**（build-info → panel 标题栏；manifest → 扩展卡片），都只在 release 路径注入、互不依赖。**改动任一处版本号逻辑时必须同步另一处**，否则会重现「panel 显示新版本但扩展卡片停在 1.0.0」这类不一致。
+>
+> Chrome manifest `version` 只接受 **1-4 段点分整数、禁止后缀**；`MyAppVersion` 的 `-rc.N` / `-dev.sha` / `-N-gsha` 后缀会让扩展加载失败，故 `normalize_manifest_version()` 截首个 `-` 之前并校验。副作用：rc 包卡片显示去后缀版本（如 `1.2.3`），panel 仍显示完整 `v1.2.3-rc.4`，此为 Chrome 硬限制，rc 不发员工故可接受。
+
 Feature 注册示例（feature 内部）：
 
 ```js
