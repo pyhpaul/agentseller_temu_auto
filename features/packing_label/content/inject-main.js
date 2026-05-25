@@ -7,14 +7,12 @@
   window.__PL_INJECTED__ = true;
 
   let captureMode = false;
-  let pendingCtxId = null;
 
-  // isolated → main 控制消息
+  // isolated → main 控制消息（串行处理，无需 ctxId 关联）
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data.__pl !== 'ctrl') return;
-    if (e.data.action === 'start') { captureMode = true; pendingCtxId = e.data.ctxId ?? null; }
-    else if (e.data.action === 'setCtx') { pendingCtxId = e.data.ctxId ?? null; }
-    else if (e.data.action === 'stop') { captureMode = false; pendingCtxId = null; }
+    if (e.data.action === 'start') captureMode = true;
+    else if (e.data.action === 'stop') captureMode = false;
   });
 
   // ① 捕获 PDF blob 字节
@@ -23,10 +21,9 @@
     const url = origCreate(obj);
     try {
       if (captureMode && obj instanceof Blob && obj.type === 'application/pdf') {
-        const ctxId = pendingCtxId;
         obj.arrayBuffer()
-          .then((buf) => window.postMessage({ __pl: 'pdf', ctxId, bytes: buf }, '*', [buf]))
-          .catch((err) => window.postMessage({ __pl: 'pdferr', ctxId, error: String(err) }, '*'));
+          .then((buf) => window.postMessage({ __pl: 'pdf', bytes: buf }, '*', [buf]))
+          .catch((err) => window.postMessage({ __pl: 'pdferr', error: String(err) }, '*'));
       }
     } catch (_) { /* 捕获失败不影响页面原流程 */ }
     return url;

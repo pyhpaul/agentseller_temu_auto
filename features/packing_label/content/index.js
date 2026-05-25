@@ -44,27 +44,26 @@
     if (el) el.textContent = msg;
   }
 
-  function ctrl(action, ctxId) {
-    window.postMessage({ __pl: 'ctrl', action, ctxId: ctxId ?? null }, '*');
+  function ctrl(action) {
+    window.postMessage({ __pl: 'ctrl', action }, '*');
   }
 
-  // 等 main world 回传指定 ctxId 的 PDF 字节（ArrayBuffer），超时 reject。
-  function awaitPdfCapture(ctxId, timeoutMs) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        window.removeEventListener('message', onMsg);
-        reject(new Error('未捕获到标签 PDF（超时）'));
-      }, timeoutMs);
-      function onMsg(e) {
-        if (e.source !== window || !e.data) return;
-        if (e.data.__pl === 'pdf' && e.data.ctxId === ctxId) {
-          clearTimeout(timer); window.removeEventListener('message', onMsg); resolve(e.data.bytes);
-        } else if (e.data.__pl === 'pdferr' && e.data.ctxId === ctxId) {
-          clearTimeout(timer); window.removeEventListener('message', onMsg); reject(new Error(e.data.error));
-        }
-      }
-      window.addEventListener('message', onMsg);
-    });
+  // 点打印 + 捕获 PDF：先注册监听再点击，避免 PDF 生成早于监听注册而丢消息。
+  // 串行处理（一次只在途一个商品），捕获到的下一个 pdf 即当前商品，无需 ctxId 关联。
+  async function printAndCapture(btn, timeoutMs) {
+    let resolveFn, rejectFn, done = false, timer;
+    const captured = new Promise((res, rej) => { resolveFn = res; rejectFn = rej; });
+    function finish() { done = true; window.removeEventListener('message', onMsg); clearTimeout(timer); }
+    function onMsg(e) {
+      if (e.source !== window || !e.data || done) return;
+      if (e.data.__pl === 'pdf') { finish(); resolveFn(e.data.bytes); }
+      else if (e.data.__pl === 'pdferr') { finish(); rejectFn(new Error(e.data.error)); }
+    }
+    window.addEventListener('message', onMsg);        // ① 先注册监听
+    timer = setTimeout(() => { finish(); rejectFn(new Error('未捕获到标签 PDF（超时）')); }, timeoutMs);
+    btn.click();                                       // ② 再点击
+    await handleConfirmIfPresent(2500);                // ③ 处理可选 confirm（监听已就位，PDF 不会漏）
+    return captured;
   }
 
   function bytesToBase64(u8) {
@@ -186,6 +185,16 @@
     return targets;
   }
 
+  // 运行态：运行中按钮变灰禁用，结束恢复高亮可点。
+  function setRunning(running) {
+    const btn = document.getElementById('pl-start');
+    if (!btn) return;
+    btn.disabled = running;
+    btn.style.opacity = running ? '0.5' : '';
+    btn.style.cursor = running ? 'not-allowed' : '';
+    btn.textContent = running ? '打印中…' : '开始打印选中商品';
+  }
+
   // ── 批量串行引擎 ─────────────────────────────────────────────────────────────
   async function onStart() {
     const dir = getSavePath();
@@ -193,22 +202,19 @@
     const targets = collectPrintTargets();
     if (!targets.length) { AS.showToast('没有可打印的选中商品', 'warn'); return; }
 
+    setRunning(true);
     ctrl('start');
     let ok = 0; const fails = [];
     try {
       for (let i = 0; i < targets.length; i++) {
         const t = targets[i];
-        const ctxId = 'pl-' + Date.now() + '-' + i;
         setStatus(`打印中 ${i + 1}/${targets.length}…`);
         try {
           const info = window.__PLNaming.parseTrackingInfo(t.trackingRaw);
           const baseName = window.__PLNaming.buildBaseFileName({
             carrier: info.carrier, trackingNo: info.trackingNo, qty: t.qty,
           });
-          ctrl('setCtx', ctxId);
-          t.btn.click();
-          await handleConfirmIfPresent(2500);          // 可选 confirm
-          const bytes = await awaitPdfCapture(ctxId, 8000);
+          const bytes = await printAndCapture(t.btn, 8000);
           const path = await resolveUniquePath(dir, baseName);
           await savePdf(path, bytes);
           ok += 1;
@@ -219,6 +225,7 @@
       }
     } finally {
       ctrl('stop');
+      setRunning(false);
     }
     if (fails.length) {
       console.warn('[PL] 失败明细:', fails);
