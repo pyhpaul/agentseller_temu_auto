@@ -44,6 +44,29 @@
     if (el) el.textContent = msg;
   }
 
+  function ctrl(action, ctxId) {
+    window.postMessage({ __pl: 'ctrl', action, ctxId: ctxId ?? null }, '*');
+  }
+
+  // 等 main world 回传指定 ctxId 的 PDF 字节（ArrayBuffer），超时 reject。
+  function awaitPdfCapture(ctxId, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener('message', onMsg);
+        reject(new Error('未捕获到标签 PDF（超时）'));
+      }, timeoutMs);
+      function onMsg(e) {
+        if (e.source !== window || !e.data) return;
+        if (e.data.__pl === 'pdf' && e.data.ctxId === ctxId) {
+          clearTimeout(timer); window.removeEventListener('message', onMsg); resolve(e.data.bytes);
+        } else if (e.data.__pl === 'pdferr' && e.data.ctxId === ctxId) {
+          clearTimeout(timer); window.removeEventListener('message', onMsg); reject(new Error(e.data.error));
+        }
+      }
+      window.addEventListener('message', onMsg);
+    });
+  }
+
   async function onStart() { /* Task 7 实现批量引擎 */ setStatus('（引擎未实现）'); }
 
   AS.registerFeature({
