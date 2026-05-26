@@ -177,14 +177,15 @@
     const net = U.findByText('.ant-dropdown .item, .dropdown .item, div.item', '网络图片');
     if (!net) return { ok: false, error: '未找到「网络图片」菜单项' };
     net.click();
+    // 网络图片弹窗：url 是 textarea（非 input），确认按钮是「添加」（非「确定」）
     let input;
-    try { input = await U.waitForEl('.ant-modal-content input, .ant-modal input', document, 5000); }
+    try { input = await U.waitForEl('textarea[placeholder*="图片URL"], .ant-modal-content textarea', document, 5000); }
     catch { return { ok: false, error: '网络图片弹窗未出现' }; }
     U.setInputValue(input, url);
     await U.sleep(150);
-    const okBtn = U.findByText('.ant-modal-footer .ant-btn-primary, .ant-modal-footer button', '确定')
-               || document.querySelector('.ant-modal-footer .ant-btn-primary');
-    if (!okBtn) return { ok: false, error: '网络图片弹窗未找到「确定」' };
+    const modal = input.closest('.ant-modal-content') || document;
+    const okBtn = U.findByText('button', '添加', modal) || modal.querySelector('.ant-btn-primary');
+    if (!okBtn) return { ok: false, error: '网络图片弹窗未找到「添加」按钮' };
     okBtn.click();
     await U.sleep(400);
     return { ok: true };
