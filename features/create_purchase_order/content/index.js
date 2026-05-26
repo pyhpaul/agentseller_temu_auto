@@ -200,15 +200,30 @@
       .filter(e => /人员信息/.test(e.textContent) && e.querySelectorAll('.ant-select').length > 0)
       .sort((a, b) => a.textContent.length - b.textContent.length)[0];
     if (!card) return { filled: 0, reason: 'no-person-card' };
+    const want = U.normText(userName);
     const selects = Array.from(card.querySelectorAll('.ant-select'));
     let filled = 0;
     for (const sel of selects) {
+      const combo = sel.querySelector('input');
       (sel.querySelector('.ant-select-selector') || sel).click();
-      await U.sleep(250);
-      const opt = U.findByText('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option', userName)
-               || U.findByText('.ant-select-item-option', userName);
+      // 锁定该 select 自己的下拉（combo 的 aria-controls 指向 rc_select_N_list）
+      const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
+      let opt = null;
+      for (let i = 0; i < 30 && !opt; i++) {            // 轮询 ~3s 等选项渲染（固定 sleep 对后续下拉不够）
+        await U.sleep(100);
+        const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
+        const scopes = scoped
+          ? [scoped]
+          : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
+        for (const s of scopes) {
+          // 精确匹配可见选项 textContent（隐藏 a11y 选项 textContent 为空，自动排除）
+          opt = Array.from(s.querySelectorAll('[role="option"], .ant-select-item-option'))
+            .find(o => U.normText(o.textContent) === want);
+          if (opt) break;
+        }
+      }
       if (opt) { opt.click(); filled++; }
-      await U.sleep(150);
+      await U.sleep(250);                                // 等下拉收起再开下一个
     }
     return { filled, total: selects.length };
   }
