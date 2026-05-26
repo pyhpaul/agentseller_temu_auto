@@ -172,10 +172,11 @@
     const trigger = choose.closest('.ant-dropdown-trigger') || choose;
     ['pointerover', 'mouseover', 'mouseenter'].forEach(n =>
       trigger.dispatchEvent(new MouseEvent(n, { bubbles: true, view: window })));
-    try { await U.waitForEl('.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu-item, .ant-dropdown-menu-item', document, 4000); } catch {}
-    const net = U.findByText('.ant-dropdown-menu-item, .ant-dropdown-menu-title-content', '网络图片');
+    // 店小秘是 Ant Design Vue：菜单项是 <div class="item">网络图片</div>，非 .ant-dropdown-menu-item
+    try { await U.waitForEl('.ant-dropdown .item, .dropdown .item', document, 4000); } catch {}
+    const net = U.findByText('.ant-dropdown .item, .dropdown .item, div.item', '网络图片');
     if (!net) return { ok: false, error: '未找到「网络图片」菜单项' };
-    (net.closest('.ant-dropdown-menu-item') || net).click();
+    net.click();
     let input;
     try { input = await U.waitForEl('.ant-modal-content input, .ant-modal input', document, 5000); }
     catch { return { ok: false, error: '网络图片弹窗未出现' }; }
