@@ -1,0 +1,35 @@
+temu 商品编辑页 (https://agentseller.temu.com/goods/edit?from=productList&productId=...) DOM 基线
+抓取：productId=1667074147（SKC 86776977660，单品）
+
+===== 关键发现：SKU 信息框预览图 =====
+- 区块标题文本是「SKU 信息」（SKU 与 信息 之间【有空格】）；
+  /SKU信息/（无空格）匹配不到，必须 normText 去空格后比对。
+- 页面短标签（含 SKU/信息/预览/图片/轮播 的）：
+  商品轮播图 / 预览 / *商品包装信息 / 外包装图片 / SKU / SKU 信息 / SKU分类 / SKU货号 /
+  预览AI 制图 / 页面预览 / 图片标题售价 / 图片 ...
+
+- 预览图组件 class = preview-image_img__LvHNP（300x300 缩略图）。
+  注意：页面顶部「商品轮播图」也用这个 class，所以【不能】直接取页面第一张，
+  必须限定在「SKU 信息」框内取，否则会拿到 SPU 轮播首图而非该 SKU 的预览图。
+
+- SKU 信息框（从「SKU 信息」label 向上找到首个含 preview-image 的祖先，
+  boxCls 形如 "Grid_row_5-120-1 ... Form_item_5-120-1"）内有 2 张 img：
+    [0] sku-bar-code-title_tagImg__T5bkl  168x40   条码标题图（排除）
+    [1] preview-image_img__LvHNP          300x300  ← 预览图
+        src = https://img.kwcdn.com/product/fancy/55284270-01d1-4393-b5e0-323cb1885e64.jpg?imageMogr2/thumbnail/300x
+
+- 该 SKU 预览图 base = 55284270...，与 SPU 主图/列表行缩略图 09cf1939... 不同
+  → 印证「必须按 SKU 框取，不能假设等于主图」。
+
+===== 取值策略（CPO_GRAB_PREVIEW 实现） =====
+1. waitForEl('img.preview-image_img__LvHNP')  等渲染
+2. 找 label：children<=1 且 normText(textContent)==='SKU信息'
+3. 从 label 向上最多 12 层，取首个含 img.preview-image_img__LvHNP 的祖先 = box
+4. box.querySelector('img.preview-image_img__LvHNP') 的 src（条码图不带此 class，自动排除）
+5. 若 src 带 '?imageMogr2...' → 去掉 query 取原图（全分辨率）；带 sign 等其它参数原样保留
+
+===== 待确认 / 限制 =====
+- 去 imageMogr2 参数取原图：对 img.kwcdn.com/product/ 安全（纯 CDN 缩放指令），
+  端到端实测确认原图 URL 可被店小秘正常抓取（若 404 则改回保留缩略图 URL）。
+- 多 SKU 商品：编辑页 SKU 信息可能多行多预览图，当前取框内首张。
+  Phase 1 面向单 SKU；多 SKU 需按 SKC 匹配对应行的预览图（后续扩展）。

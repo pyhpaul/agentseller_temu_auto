@@ -125,7 +125,27 @@
       return { ok: true };
     },
 
-    CPO_GRAB_PREVIEW: async () => ({ ok: false, error: 'not_implemented: CPO_GRAB_PREVIEW' }),
+    CPO_GRAB_PREVIEW: async () => {
+      // 等编辑页渲染出预览图组件
+      try { await U.waitForEl('img.preview-image_img__LvHNP', document, 10000); } catch {}
+      // 定位「SKU 信息」框（标题中间有空格，用 normText 忽略空格匹配）
+      const label = Array.from(document.querySelectorAll('*'))
+        .find(el => el.children.length <= 1 && U.normText(el.textContent) === 'SKU信息');
+      let box = label;
+      for (let i = 0; box && i < 12 && box.parentElement; i++) {
+        box = box.parentElement;
+        if (box.querySelector('img.preview-image_img__LvHNP')) break;
+      }
+      // SKU 框内预览图（class preview-image_img；条码图 sku-bar-code-title_tagImg 自动排除）
+      // 必须限定在 SKU 框内：页面顶部「商品轮播图」也是 preview-image_img，但那不是该 SKU 的图
+      const img = box?.querySelector('img.preview-image_img__LvHNP');
+      const raw = img?.currentSrc || img?.src || '';
+      if (!raw) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
+      // 去掉 kwcdn imageMogr2 缩放参数取原图；带 sign 等其它参数原样保留
+      const qIdx = raw.indexOf('?');
+      const previewUrl = (qIdx >= 0 && raw.slice(qIdx + 1).startsWith('imageMogr2')) ? raw.slice(0, qIdx) : raw;
+      return { ok: true, previewUrl };
+    },
     CPO_DXM_OPEN_ADD: async () => ({ ok: false, error: 'not_implemented: CPO_DXM_OPEN_ADD' }),
     CPO_FILL_DXM: async (_data) => ({ ok: false, error: 'not_implemented: CPO_FILL_DXM' }),
   };
