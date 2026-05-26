@@ -111,16 +111,19 @@
       if (location.pathname.includes('/punish') || location.search.includes('x5secdata')) {
         return { ok: false, error: '1688 触发风控/验证页，请先在浏览器完成验证' };
       }
-      // og:title 优先（动态渲染下最稳），退 h1/标题容器，再退 document.title
+      // 实测：1688 详情页 og:title 常缺失、h1 是【店铺名】不可用；
+      // 商品标题最稳来源是 document.title 去掉「 - 阿里巴巴 / 1688.com」后缀（取全标题，不缩短）。
+      const strip = t => (t || '').replace(/\s*[-_|]\s*(阿里巴巴|1688).*$/i, '').trim();
+      let title = '';
+      for (let i = 0; i < 20; i++) {                 // 等 title 稳定，避开加载中占位
+        title = strip(document.title);
+        if (title && title !== '阿里巴巴' && title.length > 3) break;
+        await U.sleep(200);
+      }
+      if (title && title !== '阿里巴巴') return { ok: true, title };
+      // 退路：og:title（个别页面有）
       const og = document.querySelector('meta[property="og:title"]')?.content?.trim();
       if (og) return { ok: true, title: og };
-      let h;
-      try { h = await U.waitForEl('h1, [class*="offer-title"], [class*="title"]', document, 8000); }
-      catch { h = null; }
-      const fromEl = h?.textContent?.trim();
-      if (fromEl) return { ok: true, title: fromEl };
-      const fromDoc = (document.title || '').replace(/[-_|].*$/, '').trim();
-      if (fromDoc) return { ok: true, title: fromDoc };
       return { ok: false, error: '1688标题读取失败（可能未登录/页面未渲染）' };
     },
 
