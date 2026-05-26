@@ -33,8 +33,7 @@
 | type | data | 成功响应 | 失败响应 |
 |------|------|----------|----------|
 | `CPO_READ_1688_TITLE` | — | `{ok:true, title}` | `{ok:false, error}` |
-| `CPO_READ_SKU_NO` | `{skc}` | `{ok:true, skuNo}`（skuNo 可为 `''`） | `{ok:false, error}` |
-| `CPO_CLICK_EDIT` | `{skc}` | `{ok:true}` | `{ok:false, error}` |
+| `CPO_READ_SKU_NO` | `{skc}` | `{ok:true, skuNo, spuId}`（skuNo 可为 `''`；spuId 用于构造编辑页 URL） | `{ok:false, error}` |
 | `CPO_GRAB_PREVIEW` | — | `{ok:true, previewUrl}` | `{ok:false, error}` |
 | `CPO_FILL_DXM` | `{collected}` | `{ok:true, filled:true}` | `{ok:false, error}` |
 

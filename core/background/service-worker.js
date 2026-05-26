@@ -280,19 +280,6 @@ function cpoWaitTabComplete(tabId, timeout = 30000) {
   });
 }
 
-// 等某个 tab 的 URL 满足 predicate（处理「点击后同 tab 跳转或新开 tab」两种）→ 返回 tabId
-function cpoWaitForUrl(predicate, timeout = 30000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error('未等到目标页面')); }, timeout);
-    function onUpdated(tabId, info, tab) {
-      const url = info.url || tab.url || '';
-      if (url && predicate(url) && tab.status === 'complete') { cleanup(); resolve(tabId); }
-    }
-    function cleanup() { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(onUpdated); }
-    chrome.tabs.onUpdated.addListener(onUpdated);
-  });
-}
-
 // 向 tab 发命令，content 未就绪（Receiving end does not exist）时重试
 async function cpoSendCommand(tabId, type, data) {
   let lastErr;
@@ -352,15 +339,21 @@ async function cpoRun(originTabId, { skc, url1688 }) {
     collected.skuNo = r2.skuNo.trim();
     await cpoSetState({ step: 3, collectedData: collected });
 
-    // 步骤3：点编辑（新开 edit tab）→ 抓预览图 → 关
+    // 步骤3：用 SPU ID 直接构造编辑页 URL 后台打开 → 抓预览图 → 关
+    // 不点「编辑」链接：那是 _blank/window.open，content 程序化点击会被浏览器弹窗拦截
+    if (!r2.spuId) {
+      cpoNotify(originTabId, 'CPO_ERROR', { step: 2, message: '未读到 SPU ID（无法定位编辑页）', kind: 'read' });
+      await cpoSetState({ status: 'error', step: 2 });
+      return;
+    }
     cpoNotify(originTabId, 'CPO_PROGRESS', { step: 3, label: '进入编辑页、读取预览图' });
-    const editTabP = cpoWaitForUrl(u => u.includes('/goods/edit'));
-    await cpoSendCommand(originTabId, 'CPO_CLICK_EDIT', { skc });
-    const editTabId = await editTabP;
-    tmpTabs.push(editTabId);
-    const r3 = await cpoSendCommand(editTabId, 'CPO_GRAB_PREVIEW');
+    const editUrl = `https://agentseller.temu.com/goods/edit?from=productList&productId=${r2.spuId}`;
+    const tEdit = await chrome.tabs.create({ url: editUrl, active: false });
+    tmpTabs.push(tEdit.id);
+    await cpoWaitTabComplete(tEdit.id);
+    const r3 = await cpoSendCommand(tEdit.id, 'CPO_GRAB_PREVIEW');
     collected.previewUrl = r3.previewUrl;
-    await chrome.tabs.remove(editTabId); tmpTabs.splice(tmpTabs.indexOf(editTabId), 1);
+    await chrome.tabs.remove(tEdit.id); tmpTabs.splice(tmpTabs.indexOf(tEdit.id), 1);
     await cpoSetState({ step: 4, collectedData: collected });
 
     // 步骤4：直接开店小秘「添加单个SKU」页（URL 参数固定）→ 填表（停在保存前）

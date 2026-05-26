@@ -104,6 +104,12 @@
     return (txt === '-' || txt === '') ? '' : txt;
   }
 
+  // 读行内 SPU ID（= 编辑页 productId，用于 bg 直接构造编辑页 URL）
+  function cpoReadSpuIdFromRow(row) {
+    const m = row.textContent.replace(/\s/g, '').match(/SPUID[:：]?(\d+)/);
+    return m ? m[1] : '';
+  }
+
   // ── 店小秘 add 页辅助（据 samples/dxm_add_form.txt 真实 DOM；店小秘用 Ant Design） ──
 
   function cpoSetById(id, val) {
@@ -184,21 +190,12 @@
       return { ok: false, error: '1688标题读取失败（可能未登录/页面未渲染）' };
     },
 
-    // 用户已手动查询好该 SKC，列表已显示结果；这里只定位行 + 读 SKU货号（不做查询动作）
+    // 用户已手动查询好该 SKC，列表已显示结果；定位行 + 读 SKU货号 + SPU ID
+    //（SPU ID = 编辑页 productId；bg 据此直接构造编辑页 URL，避开「编辑」链接的弹窗拦截）
     CPO_READ_SKU_NO: async ({ skc }) => {
       const row = await cpoFindSkcRow(skc);
       if (!row) return { ok: false, error: `未找到 SKC 对应商品行（${skc}），请先在列表查询该 SKC` };
-      return { ok: true, skuNo: cpoReadSkuNoFromRow(row) };   // 空串交 bg 判「需先维护货号」
-    },
-
-    CPO_CLICK_EDIT: async ({ skc }) => {
-      const row = await cpoFindSkcRow(skc);
-      if (!row) return { ok: false, error: `点编辑时未找到 SKC 行（${skc}）` };
-      const links = row.querySelectorAll('a[data-testid="beast-core-button-link"], a, button');
-      const edit = Array.from(links).find(el => U.normText(el.textContent) === '编辑');
-      if (!edit) return { ok: false, error: '未找到行内「编辑」按钮' };
-      edit.click();   // temu 自动新开 edit tab，由 bg 的 cpoWaitForUrl 捕获
-      return { ok: true };
+      return { ok: true, skuNo: cpoReadSkuNoFromRow(row), spuId: cpoReadSpuIdFromRow(row) };
     },
 
     CPO_GRAB_PREVIEW: async () => {
