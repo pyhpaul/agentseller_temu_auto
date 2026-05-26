@@ -26,10 +26,8 @@ temu 商品编辑页 (https://agentseller.temu.com/goods/edit?from=productList&p
 2. 找 label：children<=1 且 normText(textContent)==='SKU信息'
 3. 从 label 向上最多 12 层，取首个含 img.preview-image_img__LvHNP 的祖先 = box
 4. box.querySelector('img.preview-image_img__LvHNP') 的 src（条码图不带此 class，自动排除）
-5. 若 src 带 '?imageMogr2...' → 去掉 query 取原图（全分辨率）；带 sign 等其它参数原样保留
+5. 原样返回 src（含 ?imageMogr2/thumbnail/300x）—— 用户要 300x 缩略图，不去参数
 
-===== 待确认 / 限制 =====
-- 去 imageMogr2 参数取原图：对 img.kwcdn.com/product/ 安全（纯 CDN 缩放指令），
-  端到端实测确认原图 URL 可被店小秘正常抓取（若 404 则改回保留缩略图 URL）。
+===== 限制 =====
 - 多 SKU 商品：编辑页 SKU 信息可能多行多预览图，当前取框内首张。
   Phase 1 面向单 SKU；多 SKU 需按 SKC 匹配对应行的预览图（后续扩展）。

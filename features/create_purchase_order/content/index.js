@@ -106,7 +106,23 @@
 
   // ── bg → content 命令处理器（6 个；temu 列表两个已实现，其余 Task 5-7 填） ──
   const handlers = {
-    CPO_READ_1688_TITLE: async () => ({ ok: false, error: 'not_implemented: CPO_READ_1688_TITLE' }),
+    CPO_READ_1688_TITLE: async () => {
+      // 风控/验证页早退（参考 image_search_1688 injector）
+      if (location.pathname.includes('/punish') || location.search.includes('x5secdata')) {
+        return { ok: false, error: '1688 触发风控/验证页，请先在浏览器完成验证' };
+      }
+      // og:title 优先（动态渲染下最稳），退 h1/标题容器，再退 document.title
+      const og = document.querySelector('meta[property="og:title"]')?.content?.trim();
+      if (og) return { ok: true, title: og };
+      let h;
+      try { h = await U.waitForEl('h1, [class*="offer-title"], [class*="title"]', document, 8000); }
+      catch { h = null; }
+      const fromEl = h?.textContent?.trim();
+      if (fromEl) return { ok: true, title: fromEl };
+      const fromDoc = (document.title || '').replace(/[-_|].*$/, '').trim();
+      if (fromDoc) return { ok: true, title: fromDoc };
+      return { ok: false, error: '1688标题读取失败（可能未登录/页面未渲染）' };
+    },
 
     // 用户已手动查询好该 SKC，列表已显示结果；这里只定位行 + 读 SKU货号（不做查询动作）
     CPO_READ_SKU_NO: async ({ skc }) => {
@@ -139,12 +155,9 @@
       // SKU 框内预览图（class preview-image_img；条码图 sku-bar-code-title_tagImg 自动排除）
       // 必须限定在 SKU 框内：页面顶部「商品轮播图」也是 preview-image_img，但那不是该 SKU 的图
       const img = box?.querySelector('img.preview-image_img__LvHNP');
-      const raw = img?.currentSrc || img?.src || '';
-      if (!raw) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
-      // 去掉 kwcdn imageMogr2 缩放参数取原图；带 sign 等其它参数原样保留
-      const qIdx = raw.indexOf('?');
-      const previewUrl = (qIdx >= 0 && raw.slice(qIdx + 1).startsWith('imageMogr2')) ? raw.slice(0, qIdx) : raw;
-      return { ok: true, previewUrl };
+      const previewUrl = img?.currentSrc || img?.src || '';
+      if (!previewUrl) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
+      return { ok: true, previewUrl };   // 原样返回 src（含 imageMogr2 缩略参数，用户要 300x）
     },
     CPO_DXM_OPEN_ADD: async () => ({ ok: false, error: 'not_implemented: CPO_DXM_OPEN_ADD' }),
     CPO_FILL_DXM: async (_data) => ({ ok: false, error: 'not_implemented: CPO_FILL_DXM' }),
