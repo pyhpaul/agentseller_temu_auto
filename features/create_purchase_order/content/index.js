@@ -168,11 +168,14 @@
   async function cpoAddNetworkImage(url) {
     const choose = U.findByText('button,.ant-btn,a', '选择图片');
     if (!choose) return { ok: false, error: '未找到「选择图片」按钮' };
-    choose.click();
+    // 「选择图片」是 hover 触发的 ant-dropdown（实测 click 打不开），用鼠标悬停事件展开
+    const trigger = choose.closest('.ant-dropdown-trigger') || choose;
+    ['pointerover', 'mouseover', 'mouseenter'].forEach(n =>
+      trigger.dispatchEvent(new MouseEvent(n, { bubbles: true, view: window })));
     try { await U.waitForEl('.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu-item, .ant-dropdown-menu-item', document, 4000); } catch {}
     const net = U.findByText('.ant-dropdown-menu-item, .ant-dropdown-menu-title-content', '网络图片');
     if (!net) return { ok: false, error: '未找到「网络图片」菜单项' };
-    net.click();
+    (net.closest('.ant-dropdown-menu-item') || net).click();
     let input;
     try { input = await U.waitForEl('.ant-modal-content input, .ant-modal input', document, 5000); }
     catch { return { ok: false, error: '网络图片弹窗未出现' }; }
