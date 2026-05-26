@@ -306,19 +306,29 @@ function cpoNotify(originTabId, type, payload) {
 }
 
 // 主编排序列
-async function cpoRun(originTabId, { skc, url1688 }) {
+async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
   const serial = url1688.match(/\/offer\/(\d+)/)?.[1] || null;
   if (!serial) {   // bg 侧二次校验（content 已校验，双保险）
     cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '1688商品url 无法提取 serial', kind: 'validate' });
     await cpoSetState({ status: 'error', step: 0 });
     return;
   }
-  const collected = { skc, url1688, serial, title: '', skuNo: '', previewUrl: '' };
+  if (!skuNo || !String(skuNo).trim()) {
+    cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '该商品需先维护货号', kind: 'validate' });
+    await cpoSetState({ status: 'error', step: 0 });
+    return;
+  }
+  if (!spuId) {
+    cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '未读到 SPU ID（无法定位编辑页）', kind: 'read' });
+    await cpoSetState({ status: 'error', step: 0 });
+    return;
+  }
+  const collected = { skc, url1688, serial, title: '', skuNo: String(skuNo).trim(), previewUrl: '' };
   const tmpTabs = [];   // 临时 tab，出错时统一回收
   try {
     await cpoSetState({ status: 'running', step: 1, collectedData: collected });
 
-    // 步骤1：后台开 1688 → 抓标题 → 关
+    // 步骤1：后台开 1688 → 抓标题 → 关（仅取 document.title，不需渲染，后台即可）
     cpoNotify(originTabId, 'CPO_PROGRESS', { step: 1, label: '读取 1688 标题' });
     const t1688 = await chrome.tabs.create({ url: url1688, active: false });
     tmpTabs.push(t1688.id);
@@ -328,41 +338,25 @@ async function cpoRun(originTabId, { skc, url1688 }) {
     await chrome.tabs.remove(t1688.id); tmpTabs.splice(tmpTabs.indexOf(t1688.id), 1);
     await cpoSetState({ step: 2, collectedData: collected });
 
-    // 步骤2：起点 temu 列表读货号（用户已手动查询好该 SKC）
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 2, label: '读取 SKU货号' });
-    const r2 = await cpoSendCommand(originTabId, 'CPO_READ_SKU_NO', { skc });
-    if (!r2.skuNo || !String(r2.skuNo).trim()) {
-      cpoNotify(originTabId, 'CPO_ERROR', { step: 2, message: '该商品需先维护货号', kind: 'validate' });
-      await cpoSetState({ status: 'error', step: 2 });
-      return;
-    }
-    collected.skuNo = r2.skuNo.trim();
-    await cpoSetState({ step: 3, collectedData: collected });
-
-    // 步骤3：用 SPU ID 直接构造编辑页 URL 后台打开 → 抓预览图 → 关
-    // 不点「编辑」链接：那是 _blank/window.open，content 程序化点击会被浏览器弹窗拦截
-    if (!r2.spuId) {
-      cpoNotify(originTabId, 'CPO_ERROR', { step: 2, message: '未读到 SPU ID（无法定位编辑页）', kind: 'read' });
-      await cpoSetState({ status: 'error', step: 2 });
-      return;
-    }
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 3, label: '进入编辑页、读取预览图' });
-    const editUrl = `https://agentseller.temu.com/goods/edit?from=productList&productId=${r2.spuId}`;
-    const tEdit = await chrome.tabs.create({ url: editUrl, active: false });
+    // 步骤2：用 SPU ID 构造编辑页 URL【前台 active】打开 → 抓预览图 → 关
+    // 前台原因：编辑页 SKU 信息框/预览图在后台 tab 不渲染（实测）；且让用户看到运行过程
+    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 2, label: '打开编辑页、读取预览图' });
+    const editUrl = `https://agentseller.temu.com/goods/edit?from=productList&productId=${spuId}`;
+    const tEdit = await chrome.tabs.create({ url: editUrl, active: true });
     tmpTabs.push(tEdit.id);
     await cpoWaitTabComplete(tEdit.id);
-    const r3 = await cpoSendCommand(tEdit.id, 'CPO_GRAB_PREVIEW');
-    collected.previewUrl = r3.previewUrl;
+    const r2 = await cpoSendCommand(tEdit.id, 'CPO_GRAB_PREVIEW');
+    collected.previewUrl = r2.previewUrl;
     await chrome.tabs.remove(tEdit.id); tmpTabs.splice(tmpTabs.indexOf(tEdit.id), 1);
-    await cpoSetState({ step: 4, collectedData: collected });
+    await cpoSetState({ step: 3, collectedData: collected });
 
-    // 步骤4：直接开店小秘「添加单个SKU」页（URL 参数固定）→ 填表（停在保存前）
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 4, label: '店小秘填表' });
+    // 步骤3：开店小秘「添加单个SKU」页（前台）→ 填表（停在保存前）
+    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 3, label: '店小秘填表' });
     const tDxm = await chrome.tabs.create({ url: CPO_DXM_ADD_URL, active: true });
     await cpoWaitTabComplete(tDxm.id);
     await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
 
-    await cpoSetState({ status: 'awaiting_save', step: 4, collectedData: collected });
+    await cpoSetState({ status: 'awaiting_save', step: 3, collectedData: collected });
     cpoNotify(originTabId, 'CPO_DONE', {});
   } catch (e) {
     // 回收所有未关闭的临时 tab

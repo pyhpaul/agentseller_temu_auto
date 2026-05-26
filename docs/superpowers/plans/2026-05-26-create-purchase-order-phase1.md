@@ -18,7 +18,7 @@
 
 | type | data | bg 响应 |
 |------|------|---------|
-| `CPO_START` | `{skc, url1688}` | `{ok:true}` 立即 ack（编排异步跑），或 `{ok:false, error}`（输入校验失败） |
+| `CPO_START` | `{url1688, skc, skuNo, spuId}` | `{ok:true}` 立即 ack（编排异步跑），或 `{ok:false, error}`。skc/skuNo/spuId 由 content 从用户**点选的商品行**读出（不再手输 SKC、不再 bg 端读货号）|
 
 **bg → 起点 temu tab**（进度推送，`chrome.tabs.sendMessage(originTabId, …)`，content 侧只读不回）：
 
@@ -33,7 +33,6 @@
 | type | data | 成功响应 | 失败响应 |
 |------|------|----------|----------|
 | `CPO_READ_1688_TITLE` | — | `{ok:true, title}` | `{ok:false, error}` |
-| `CPO_READ_SKU_NO` | `{skc}` | `{ok:true, skuNo, spuId}`（skuNo 可为 `''`；spuId 用于构造编辑页 URL） | `{ok:false, error}` |
 | `CPO_GRAB_PREVIEW` | — | `{ok:true, previewUrl}` | `{ok:false, error}` |
 | `CPO_FILL_DXM` | `{collected}` | `{ok:true, filled:true}` | `{ok:false, error}` |
 

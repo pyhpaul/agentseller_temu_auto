@@ -15,6 +15,25 @@
     progressEl.style.color = kind === 'error' ? '#ff4d4f' : kind === 'done' ? '#52c41a' : '#666';
   }
 
+  // ── 商品选择状态（temu 列表页点选行，替代手输 SKC） ──
+  let selectedSkc = '';
+  let startBtnRef = null;
+
+  function isListPage() { return location.href.includes('agentseller.temu.com/goods/list'); }
+
+  function highlightRow(row) {
+    document.querySelectorAll('.cpo-selected-row').forEach(r => {
+      r.classList.remove('cpo-selected-row');
+      r.style.outline = '';
+      r.style.outlineOffset = '';
+    });
+    if (row) {
+      row.classList.add('cpo-selected-row');
+      row.style.outline = '2px solid #1677ff';
+      row.style.outlineOffset = '-2px';
+    }
+  }
+
   // ── feature 注册 + Hub 输入 UI ──
   window.AgentSeller.registerFeature({
     id: FID,
@@ -22,38 +41,60 @@
     label: '创建采购单',
     locked: false,
     order: 5,
-    init() {},
+    init() {
+      // temu 列表页委托点击：点商品整行 → 高亮 + 记录 SKC + 启用「开始」
+      document.addEventListener('click', (e) => {
+        if (!isListPage()) return;
+        const row = e.target.closest('[data-testid="beast-core-table-body-tr"]');
+        if (!row) return;
+        if (e.target.closest('a,button,input,[data-testid="beast-core-checkbox"]')) return;  // 不抢行内原有交互
+        const m = row.textContent.replace(/\s/g, '').match(/SKCID[:：]?(\d+)/);
+        if (!m) return;
+        selectedSkc = m[1];
+        highlightRow(row);
+        if (startBtnRef) startBtnRef.disabled = false;
+        setProgress('已选中 SKC ' + selectedSkc);
+      }, true);
+    },
     render(viewEl) {
       viewEl.innerHTML = '';
       const wrap = document.createElement('div');
       wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
 
-      const skcInput = document.createElement('input');
-      skcInput.placeholder = 'SKC编码';
-      skcInput.className = 'tal-input';
-      skcInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+      const hintSel = document.createElement('div');
+      hintSel.style.cssText = 'font-size:12px;color:#666;line-height:1.4;';
+      hintSel.textContent = '在列表中点选要建采购单的商品（整行高亮），再填 1688 链接点开始';
 
       const urlInput = document.createElement('input');
       urlInput.placeholder = '1688商品url';
       urlInput.className = 'tal-input';
-      urlInput.style.cssText = skcInput.style.cssText;
+      urlInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
 
       const btn = document.createElement('button');
       btn.className = 'tal-action-btn';
       btn.textContent = '开始';
+      btn.disabled = !selectedSkc;          // 未选商品禁用
+      startBtnRef = btn;
 
       progressEl = document.createElement('div');
       progressEl.style.cssText = 'font-size:12px;color:#666;line-height:1.5;min-height:18px;';
+      if (selectedSkc) setProgress('已选中 SKC ' + selectedSkc);
 
       btn.addEventListener('click', async () => {
-        const skc = skcInput.value.trim();
+        if (!selectedSkc) { setProgress('请先在列表点选一个商品', 'error'); return; }
         const url1688 = urlInput.value.trim();
-        const v = L.validateInputs({ skc, url1688 });   // 本地先校验，避免无谓启动
+        const v = L.validateInputs({ skc: selectedSkc, url1688 });   // 校验 url 能提取 serial
         if (!v.ok) { setProgress(v.error, 'error'); return; }
+        const row = await cpoFindSkcRow(selectedSkc);
+        if (!row) { setProgress('选中的商品行已消失，请重新点选', 'error'); return; }
+        const skuNo = cpoReadSkuNoFromRow(row);
+        const spuId = cpoReadSpuIdFromRow(row);
+        if (!skuNo) { setProgress('该商品需先维护货号', 'error'); return; }
+        if (!spuId) { setProgress('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
         btn.disabled = true;
         setProgress('启动中…');
         try {
-          const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { skc, url1688 } });
+          const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { url1688, skc: selectedSkc, skuNo, spuId } });
           if (!resp?.ok) { setProgress(resp?.error || '启动失败', 'error'); btn.disabled = false; }
         } catch (e) {
           setProgress('启动失败：' + e.message, 'error');
@@ -61,7 +102,7 @@
         }
       });
 
-      wrap.append(skcInput, urlInput, btn, progressEl);
+      wrap.append(hintSel, urlInput, btn, progressEl);
       viewEl.appendChild(wrap);
     },
   });
@@ -188,14 +229,6 @@
       const og = document.querySelector('meta[property="og:title"]')?.content?.trim();
       if (og) return { ok: true, title: og };
       return { ok: false, error: '1688标题读取失败（可能未登录/页面未渲染）' };
-    },
-
-    // 用户已手动查询好该 SKC，列表已显示结果；定位行 + 读 SKU货号 + SPU ID
-    //（SPU ID = 编辑页 productId；bg 据此直接构造编辑页 URL，避开「编辑」链接的弹窗拦截）
-    CPO_READ_SKU_NO: async ({ skc }) => {
-      const row = await cpoFindSkcRow(skc);
-      if (!row) return { ok: false, error: `未找到 SKC 对应商品行（${skc}），请先在列表查询该 SKC` };
-      return { ok: true, skuNo: cpoReadSkuNoFromRow(row), spuId: cpoReadSpuIdFromRow(row) };
     },
 
     CPO_GRAB_PREVIEW: async () => {
