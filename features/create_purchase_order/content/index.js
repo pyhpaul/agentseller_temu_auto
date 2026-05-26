@@ -66,11 +66,86 @@
     },
   });
 
-  // ── bg → content 命令处理器（6 个，Task 4-7 填实现，这里先占位返回 not_implemented） ──
+  // ── temu 列表页辅助（据 samples/temu_goods_list.txt 真实 DOM） ──
+
+  // 等结果行渲染，定位 SKC ID 含 skc 的数据行；优先在 SKC ID 单元格精确匹配
+  async function cpoFindSkcRow(skc) {
+    try { await U.waitForEl('[data-testid="beast-core-table-body-tr"], tbody tr', document, 8000); }
+    catch { return null; }
+    await U.sleep(300);   // 给 React 渲染留余量
+    const rows = document.querySelectorAll('[data-testid="beast-core-table-body-tr"], tbody tr');
+    return Array.from(rows).find(r => {
+      const idEls = r.querySelectorAll('.product-info_idContent__iDukx, [class*="idContent"]');
+      const inSkcCell = Array.from(idEls).some(e => /SKC\s*ID/.test(e.textContent) && e.textContent.includes(skc));
+      return inSkcCell || r.textContent.includes(skc);
+    }) || null;
+  }
+
+  // 按表头文本动态算「SKU货号」列的 leaf 列索引（表头有 rowspan/colspan，硬数列号会错）
+  function cpoLeafColIndex(headerText) {
+    const tr = document.querySelector('thead tr');
+    if (!tr) return -1;
+    let idx = 0;
+    for (const th of tr.children) {
+      const colspan = parseInt(th.getAttribute('colspan') || '1', 10);
+      if (U.normText(th.textContent).includes(U.normText(headerText))) return idx;
+      idx += colspan;
+    }
+    return -1;
+  }
+
+  // 读行内「SKU货号」列值；"-" 或空 → 返回 ''（视为未维护货号，交 bg 判 abort）
+  function cpoReadSkuNoFromRow(row) {
+    const idx = cpoLeafColIndex('SKU货号');
+    if (idx < 0) return '';
+    const cell = row.querySelectorAll(':scope > td')[idx];
+    if (!cell) return '';
+    const txt = cell.textContent.replace(/\s/g, '');
+    return (txt === '-' || txt === '') ? '' : txt;
+  }
+
+  // ── bg → content 命令处理器（6 个；temu 列表两个已实现，其余 Task 5-7 填） ──
   const handlers = {
     CPO_READ_1688_TITLE: async () => ({ ok: false, error: 'not_implemented: CPO_READ_1688_TITLE' }),
-    CPO_QUERY_SKC_GET_NO: async (_data) => ({ ok: false, error: 'not_implemented: CPO_QUERY_SKC_GET_NO' }),
-    CPO_CLICK_EDIT: async (_data) => ({ ok: false, error: 'not_implemented: CPO_CLICK_EDIT' }),
+
+    CPO_QUERY_SKC_GET_NO: async ({ skc }) => {
+      const fieldRow = document.querySelector('[class*="row_field"]');
+      if (!fieldRow) return { ok: false, error: '未找到查询条件区' };
+      // a) 确保字段下拉 = SKC（默认通常已是 SKC，仅在不是时切换）
+      const selInput = fieldRow.querySelector('input[data-testid="beast-core-select-htmlInput"]');
+      if (selInput && U.normText(selInput.value) !== 'SKC') {
+        fieldRow.querySelector('[data-testid="beast-core-select-header"]')?.click();
+        await U.sleep(300);
+        const opt = U.findByText('[data-testid*="option"],[role="option"],[class*="option"],li', 'SKC');
+        if (opt) { opt.click(); await U.sleep(300); }
+      }
+      // b) 填 SKC 值输入框
+      const input = fieldRow.querySelector('input[data-testid="beast-core-input-htmlInput"]');
+      if (!input) return { ok: false, error: '未找到 SKC 输入框' };
+      U.setInputValue(input, skc);
+      await U.sleep(150);
+      // c) 触发查询：点「查询」按钮，找不到则回车
+      const queryBtn = U.findByText('[data-testid="beast-core-button"],button,[data-testid="beast-core-button-link"],a', '查询')
+                    || U.findByText('[data-testid="beast-core-button"],button', '搜索');
+      if (queryBtn) queryBtn.click();
+      else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      // d) 等结果行 → 定位 → 读 SKU货号 列
+      await U.sleep(1000);
+      const row = await cpoFindSkcRow(skc);
+      if (!row) return { ok: false, error: `未找到 SKC 对应商品行（${skc}）` };
+      return { ok: true, skuNo: cpoReadSkuNoFromRow(row) };   // 空串交 bg 判「需先维护货号」
+    },
+
+    CPO_CLICK_EDIT: async ({ skc }) => {
+      const row = await cpoFindSkcRow(skc);
+      if (!row) return { ok: false, error: `点编辑时未找到 SKC 行（${skc}）` };
+      const links = row.querySelectorAll('a[data-testid="beast-core-button-link"], a, button');
+      const edit = Array.from(links).find(el => U.normText(el.textContent) === '编辑');
+      if (!edit) return { ok: false, error: '未找到行内「编辑」按钮' };
+      edit.click();   // temu 自动新开 edit tab，由 bg 的 cpoWaitForUrl 捕获
+      return { ok: true };
+    },
+
     CPO_GRAB_PREVIEW: async () => ({ ok: false, error: 'not_implemented: CPO_GRAB_PREVIEW' }),
     CPO_DXM_OPEN_ADD: async () => ({ ok: false, error: 'not_implemented: CPO_DXM_OPEN_ADD' }),
     CPO_FILL_DXM: async (_data) => ({ ok: false, error: 'not_implemented: CPO_FILL_DXM' }),

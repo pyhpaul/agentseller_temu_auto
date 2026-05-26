@@ -1,0 +1,56 @@
+temu 商品列表页 (https://agentseller.temu.com/goods/list) DOM 基线
+抓取：按「商品ID查询=SKC」查询 SKC=86776977660 出结果
+（SVG path 已省略以保持可读；选择器策略见末尾 summary）
+
+===== 查询区（商品ID查询 字段下拉 + SKC 输入框） =====
+<div class="index-module__row_field___3rYFG">
+  <div data-testid="beast-core-input" class="IPT_outerWrapper...">
+    <div class="IPT_reunitBlock...">
+      <!-- 字段下拉：当前 value="SKC" -->
+      <div data-testid="beast-core-select" class="ST_outerWrapper..." style="width:100px">
+        <div data-testid="beast-core-select-header" class="ST_head...">
+          <input readonly type="text" data-testid="beast-core-select-htmlInput" value="SKC">
+          <div class="IPT_mirror...">SKC</div>
+          ... 下拉箭头 svg ...
+        </div>
+      </div>
+      <!-- SKC 值输入框 -->
+      <div class="IPT_inputWrapper...">
+        <input placeholder="多个查询请空格或逗号依次输入" type="text"
+               data-testid="beast-core-input-htmlInput" value="86776977660">
+      </div>
+    </div>
+  </div>
+</div>
+注：「查询」按钮不在 row_field 内（在过滤面板别处，本次未抓到）。
+
+===== 表头（thead，两行，含 rowspan/colspan） =====
+表头第 1 行 th（顺序，标注 leaf 占位）：
+  checkbox(rowspan2,1) | 商品信息(rowspan2,1) | 商品属性(1) | 尺码表(1)
+  | 说明书信息(colspan2→电子版/纸质版,2) | SKU ID(1) | 商品规格(1) | 库存(1)
+  | 是否展示库存标(1) | 商品编码(1) | 体积重量信息(colspan2→卖家测量/平台测量参考,2)
+  | 敏感属性信息(1) | SKU分类(1) | **SKU货号(rowspan2,1)** ← leaf 索引 15(0-based)
+  | 申报价格(CNY)(1) | 销售信息(colspan3,3) | 创建时间(1) | 商品优化事项(1) | 操作(1)
+th 通用：data-testid="beast-core-table-th"，文本在 <span> 内。
+
+===== 数据行（tr[data-testid="beast-core-table-body-tr"]） =====
+- 行内 SKC ID：<div class="product-info_idContent__iDukx">SKC ID：<span>86776977660</span></div>
+  （同结构另有 SPU ID：1667074147）
+- 商品信息 cell 内还有 <div>货号：<span>-</span></div>（这是 SPU/SKC 级货号，非 SKU货号 列，勿混）
+- SKU货号 列（第 16 个 <td>，leaf 索引 15）：<td ...><div><div>-</div></div></td>  ← "-" = 未维护
+- 操作 cell（最后一个 td，TB_rightmostTd）：
+    <a data-testid="beast-core-button-link"><span>编辑</span></a>
+    <a data-testid="beast-core-button-link"><span>维护货号</span></a>
+    <a data-testid="beast-core-button-link"><span>删除</span></a>
+  （未维护货号时出现"维护货号"链接）
+
+===== 选择器 summary（handler 据此实现） =====
+查询区容器:    [class*="row_field"]
+字段下拉值:    input[data-testid="beast-core-select-htmlInput"]  (value 应为 "SKC")
+字段下拉头:    [data-testid="beast-core-select-header"]  (需切换时 click 它再选项)
+SKC 输入框:    input[data-testid="beast-core-input-htmlInput"]  (在 row_field 内)
+查询按钮:      宽匹配 文本"查询"/"搜索"（button/beast-core-button/-link/a），兜底回车
+数据行:        [data-testid="beast-core-table-body-tr"]
+行内 SKC ID:   .product-info_idContent__iDukx 含 "SKC ID" 且文本含 skc
+SKU货号 列:    按表头文本"SKU货号"动态算 leaf 列索引 → row 的第 idx 个 :scope>td；"-"或空=未维护
+编辑按钮:      行内 a[data-testid="beast-core-button-link"] 文本精确 "编辑"
