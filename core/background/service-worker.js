@@ -305,6 +305,23 @@ function cpoNotify(originTabId, type, payload) {
   chrome.tabs.sendMessage(originTabId, { type, ...payload }).catch(() => {});
 }
 
+// 关 tab 前往 MAIN world 注入抑制 beforeunload（编辑页有「未保存」守卫，
+// 直接 remove 会弹「退出后修改取消」确认框阻塞流程）。capture 阶段 stopImmediatePropagation
+// 让页面自身的 beforeunload 监听器不执行 → 不弹框。
+async function cpoCloseTab(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        window.onbeforeunload = null;
+        window.addEventListener('beforeunload', e => { e.stopImmediatePropagation(); delete e.returnValue; }, true);
+      },
+    });
+  } catch (_) { /* 注入失败也继续尝试关 */ }
+  await chrome.tabs.remove(tabId);
+}
+
 // 主编排序列
 async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
   const serial = url1688.match(/\/offer\/(\d+)/)?.[1] || null;
@@ -335,7 +352,7 @@ async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
     await cpoWaitTabComplete(t1688.id);
     const r1 = await cpoSendCommand(t1688.id, 'CPO_READ_1688_TITLE');
     collected.title = r1.title;
-    await chrome.tabs.remove(t1688.id); tmpTabs.splice(tmpTabs.indexOf(t1688.id), 1);
+    await cpoCloseTab(t1688.id); tmpTabs.splice(tmpTabs.indexOf(t1688.id), 1);
     await cpoSetState({ step: 2, collectedData: collected });
 
     // 步骤2：用 SPU ID 构造编辑页 URL【前台 active】打开 → 抓预览图 → 关
@@ -347,7 +364,7 @@ async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
     await cpoWaitTabComplete(tEdit.id);
     const r2 = await cpoSendCommand(tEdit.id, 'CPO_GRAB_PREVIEW');
     collected.previewUrl = r2.previewUrl;
-    await chrome.tabs.remove(tEdit.id); tmpTabs.splice(tmpTabs.indexOf(tEdit.id), 1);
+    await cpoCloseTab(tEdit.id); tmpTabs.splice(tmpTabs.indexOf(tEdit.id), 1);
     await cpoSetState({ step: 3, collectedData: collected });
 
     // 步骤3：开店小秘「添加单个SKU」页（前台）→ 填表（停在保存前）

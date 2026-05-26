@@ -15,7 +15,7 @@
     "https://detail.1688.com/*",
     "https://www.dianxiaomi.com/*"
   ],
-  "permissions": ["tabs", "storage"],
+  "permissions": ["tabs", "storage", "scripting"],
   "extra_content_scripts": [
     {
       "js": ["cpo-logic.js"],

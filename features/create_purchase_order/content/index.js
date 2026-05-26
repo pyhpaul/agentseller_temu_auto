@@ -22,15 +22,15 @@
   function isListPage() { return location.href.includes('agentseller.temu.com/goods/list'); }
 
   function highlightRow(row) {
-    document.querySelectorAll('.cpo-selected-row').forEach(r => {
+    // 整行高亮：给每个 td 上背景色（!important 盖过 Temu sticky 单元格白底；
+    // 仅 outline 会被 sticky 列白底遮住，只剩上下边）
+    document.querySelectorAll('tr.cpo-selected-row').forEach(r => {
       r.classList.remove('cpo-selected-row');
-      r.style.outline = '';
-      r.style.outlineOffset = '';
+      r.querySelectorAll(':scope > td').forEach(td => td.style.removeProperty('background-color'));
     });
     if (row) {
       row.classList.add('cpo-selected-row');
-      row.style.outline = '2px solid #1677ff';
-      row.style.outlineOffset = '-2px';
+      row.querySelectorAll(':scope > td').forEach(td => td.style.setProperty('background-color', '#e6f4ff', 'important'));
     }
   }
 
