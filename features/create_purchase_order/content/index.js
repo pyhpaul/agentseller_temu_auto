@@ -104,7 +104,64 @@
     return (txt === '-' || txt === '') ? '' : txt;
   }
 
-  // ── bg → content 命令处理器（6 个；temu 列表两个已实现，其余 Task 5-7 填） ──
+  // ── 店小秘 add 页辅助（据 samples/dxm_add_form.txt 真实 DOM；店小秘用 Ant Design） ──
+
+  function cpoSetById(id, val) {
+    const el = document.getElementById(id);
+    if (el) U.setInputValue(el, val);
+    return !!el;
+  }
+  function cpoSetByPh(phSub, val) {
+    const el = document.querySelector(`input[placeholder*="${phSub}"]`);
+    if (el) U.setInputValue(el, val);
+    return !!el;
+  }
+
+  // 图片信息：「选择图片」(ant-dropdown) → 「网络图片」→ 弹窗填 url → 「确定」
+  async function cpoAddNetworkImage(url) {
+    const choose = U.findByText('button,.ant-btn,a', '选择图片');
+    if (!choose) return { ok: false, error: '未找到「选择图片」按钮' };
+    choose.click();
+    try { await U.waitForEl('.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu-item, .ant-dropdown-menu-item', document, 4000); } catch {}
+    const net = U.findByText('.ant-dropdown-menu-item, .ant-dropdown-menu-title-content', '网络图片');
+    if (!net) return { ok: false, error: '未找到「网络图片」菜单项' };
+    net.click();
+    let input;
+    try { input = await U.waitForEl('.ant-modal-content input, .ant-modal input', document, 5000); }
+    catch { return { ok: false, error: '网络图片弹窗未出现' }; }
+    U.setInputValue(input, url);
+    await U.sleep(150);
+    const okBtn = U.findByText('.ant-modal-footer .ant-btn-primary, .ant-modal-footer button', '确定')
+               || document.querySelector('.ant-modal-footer .ant-btn-primary');
+    if (!okBtn) return { ok: false, error: '网络图片弹窗未找到「确定」' };
+    okBtn.click();
+    await U.sleep(400);
+    return { ok: true };
+  }
+
+  // 人员信息卡：卡内所有 ant-select 选当前店铺 user-name
+  // 安全约束：必须限定在「人员信息」卡内；卡找不到则【不填】（绝不全表填，避免写错仓库/分类下拉）
+  async function cpoFillPersonnel() {
+    const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
+    if (!userName) return { filled: 0, reason: 'no-username' };
+    const card = Array.from(document.querySelectorAll('div,section,fieldset'))
+      .filter(e => /人员信息/.test(e.textContent) && e.querySelectorAll('.ant-select').length > 0)
+      .sort((a, b) => a.textContent.length - b.textContent.length)[0];
+    if (!card) return { filled: 0, reason: 'no-person-card' };
+    const selects = Array.from(card.querySelectorAll('.ant-select'));
+    let filled = 0;
+    for (const sel of selects) {
+      (sel.querySelector('.ant-select-selector') || sel).click();
+      await U.sleep(250);
+      const opt = U.findByText('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option', userName)
+               || U.findByText('.ant-select-item-option', userName);
+      if (opt) { opt.click(); filled++; }
+      await U.sleep(150);
+    }
+    return { filled, total: selects.length };
+  }
+
+  // ── bg → content 命令处理器（temu 列表/编辑 + 1688 + 店小秘 填表） ──
   const handlers = {
     CPO_READ_1688_TITLE: async () => {
       // 风控/验证页早退（参考 image_search_1688 injector）
@@ -162,8 +219,29 @@
       if (!previewUrl) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
       return { ok: true, previewUrl };   // 原样返回 src（含 imageMogr2 缩略参数，用户要 300x）
     },
-    CPO_DXM_OPEN_ADD: async () => ({ ok: false, error: 'not_implemented: CPO_DXM_OPEN_ADD' }),
-    CPO_FILL_DXM: async (_data) => ({ ok: false, error: 'not_implemented: CPO_FILL_DXM' }),
+    CPO_FILL_DXM: async ({ collected }) => {
+      const f = L.mapDxmFields(collected);
+      // 等表单渲染（#proSku 是基础信息第一个文本框）
+      try { await U.waitForEl('#proSku', document, 12000); }
+      catch { return { ok: false, error: '店小秘添加表单未渲染（#proSku 未出现）' }; }
+
+      // 文本字段（id/placeholder 据真实 DOM 确认）
+      cpoSetById('proSku', f.spuSku);            // 商品SKU
+      cpoSetById('proNameEn', f.enName);         // 英文名称
+      cpoSetByPh('平台销售SKU', f.platformSku);   // 平台SKU（无 id，按 placeholder）
+      cpoSetById('proName', f.cnName);           // 中文名称 = 1688 标题
+      cpoSetById('proSbm', f.idCode);            // 识别码 = serial-skuNo
+      cpoSetById('SOURCE_URL', f.sourceUrl);     // 来源URL
+
+      // 图片信息：选择图片 → 网络图片 → 弹窗填 url → 确定
+      const pic = await cpoAddNetworkImage(f.imageUrl);
+      if (!pic.ok) return pic;
+
+      // 人员信息：卡内所有下拉选 user-name（卡找不到则跳过，交用户保存前手动补）
+      const person = await cpoFillPersonnel();
+
+      return { ok: true, filled: true, person };
+    },
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

@@ -255,7 +255,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ── create_purchase_order ── Phase 1 跨 tab 编排 ───────────────────────────────
-const CPO_DXM_INDEX_URL = 'https://www.dianxiaomi.com/web/dxmCommodityProduct/index';
+const CPO_DXM_ADD_URL = 'https://www.dianxiaomi.com/web/dxmCommodityProduct/openAddModal?type=0&editOrCopy=0';
 const CPO_CMD_TIMEOUT   = 20000;   // 单条命令往返超时
 const CPO_READY_RETRIES = 25;      // 等 content 就绪重试次数（每次 200ms ≈ 5s）
 
@@ -363,14 +363,11 @@ async function cpoRun(originTabId, { skc, url1688 }) {
     await chrome.tabs.remove(editTabId); tmpTabs.splice(tmpTabs.indexOf(editTabId), 1);
     await cpoSetState({ step: 4, collectedData: collected });
 
-    // 步骤4：开店小秘 index → 进添加单个SKU → 填表（停在保存前）
+    // 步骤4：直接开店小秘「添加单个SKU」页（URL 参数固定）→ 填表（停在保存前）
     cpoNotify(originTabId, 'CPO_PROGRESS', { step: 4, label: '店小秘填表' });
-    const tDxm = await chrome.tabs.create({ url: CPO_DXM_INDEX_URL, active: true });
+    const tDxm = await chrome.tabs.create({ url: CPO_DXM_ADD_URL, active: true });
     await cpoWaitTabComplete(tDxm.id);
-    const addTabP = cpoWaitForUrl(u => u.includes('openAddModal'));
-    await cpoSendCommand(tDxm.id, 'CPO_DXM_OPEN_ADD');
-    const addTabId = await addTabP;       // 同 tab 跳转或新开 tab 都覆盖
-    await cpoSendCommand(addTabId, 'CPO_FILL_DXM', { collected });
+    await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
 
     await cpoSetState({ status: 'awaiting_save', step: 4, collectedData: collected });
     cpoNotify(originTabId, 'CPO_DONE', {});

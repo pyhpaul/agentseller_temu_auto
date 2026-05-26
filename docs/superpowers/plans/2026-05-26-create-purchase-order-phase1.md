@@ -36,8 +36,9 @@
 | `CPO_READ_SKU_NO` | `{skc}` | `{ok:true, skuNo}`（skuNo 可为 `''`） | `{ok:false, error}` |
 | `CPO_CLICK_EDIT` | `{skc}` | `{ok:true}` | `{ok:false, error}` |
 | `CPO_GRAB_PREVIEW` | — | `{ok:true, previewUrl}` | `{ok:false, error}` |
-| `CPO_DXM_OPEN_ADD` | — | `{ok:true}` | `{ok:false, error}` |
 | `CPO_FILL_DXM` | `{collected}` | `{ok:true, filled:true}` | `{ok:false, error}` |
+
+> 执行期简化：原计划「开店小秘 index → CPO_DXM_OPEN_ADD 点击进入 add 页」已废弃。add 页 URL 参数固定（`openAddModal?type=0&editOrCopy=0`），bg 直接导航，省掉一个命令 + click-through。
 
 **bg 内部状态** `collectedData = { skc, url1688, serial, title, skuNo, previewUrl }`，每步更新后镜像 `chrome.storage.local['cpo_state'] = { status, step, collectedData }`，`status` ∈ `idle|running|awaiting_save|error`。
 
