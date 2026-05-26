@@ -33,13 +33,15 @@
 | type | data | 成功响应 | 失败响应 |
 |------|------|----------|----------|
 | `CPO_READ_1688_TITLE` | — | `{ok:true, title}` | `{ok:false, error}` |
-| `CPO_QUERY_SKC_GET_NO` | `{skc}` | `{ok:true, skuNo}`（skuNo 可为 `''`） | `{ok:false, error}` |
+| `CPO_READ_SKU_NO` | `{skc}` | `{ok:true, skuNo}`（skuNo 可为 `''`） | `{ok:false, error}` |
 | `CPO_CLICK_EDIT` | `{skc}` | `{ok:true}` | `{ok:false, error}` |
 | `CPO_GRAB_PREVIEW` | — | `{ok:true, previewUrl}` | `{ok:false, error}` |
 | `CPO_DXM_OPEN_ADD` | — | `{ok:true}` | `{ok:false, error}` |
 | `CPO_FILL_DXM` | `{collected}` | `{ok:true, filled:true}` | `{ok:false, error}` |
 
 **bg 内部状态** `collectedData = { skc, url1688, serial, title, skuNo, previewUrl }`，每步更新后镜像 `chrome.storage.local['cpo_state'] = { status, step, collectedData }`，`status` ∈ `idle|running|awaiting_save|error`。
+
+**起点前置条件（执行期澄清）**：用户在 temu 列表页**先手动查询好该 SKC**（列表已显示结果），再开 Hub 输入点开始。故 `CPO_READ_SKU_NO` 只定位行 + 读货号，**不做查询动作**（省掉字段下拉/输入/查询按钮的脆弱自动化）。
 
 **关键 URL 常量**（bg + content 共用，硬编码）：
 - temu 列表：`https://agentseller.temu.com/goods/list`

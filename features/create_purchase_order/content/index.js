@@ -108,31 +108,10 @@
   const handlers = {
     CPO_READ_1688_TITLE: async () => ({ ok: false, error: 'not_implemented: CPO_READ_1688_TITLE' }),
 
-    CPO_QUERY_SKC_GET_NO: async ({ skc }) => {
-      const fieldRow = document.querySelector('[class*="row_field"]');
-      if (!fieldRow) return { ok: false, error: '未找到查询条件区' };
-      // a) 确保字段下拉 = SKC（默认通常已是 SKC，仅在不是时切换）
-      const selInput = fieldRow.querySelector('input[data-testid="beast-core-select-htmlInput"]');
-      if (selInput && U.normText(selInput.value) !== 'SKC') {
-        fieldRow.querySelector('[data-testid="beast-core-select-header"]')?.click();
-        await U.sleep(300);
-        const opt = U.findByText('[data-testid*="option"],[role="option"],[class*="option"],li', 'SKC');
-        if (opt) { opt.click(); await U.sleep(300); }
-      }
-      // b) 填 SKC 值输入框
-      const input = fieldRow.querySelector('input[data-testid="beast-core-input-htmlInput"]');
-      if (!input) return { ok: false, error: '未找到 SKC 输入框' };
-      U.setInputValue(input, skc);
-      await U.sleep(150);
-      // c) 触发查询：点「查询」按钮，找不到则回车
-      const queryBtn = U.findByText('[data-testid="beast-core-button"],button,[data-testid="beast-core-button-link"],a', '查询')
-                    || U.findByText('[data-testid="beast-core-button"],button', '搜索');
-      if (queryBtn) queryBtn.click();
-      else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      // d) 等结果行 → 定位 → 读 SKU货号 列
-      await U.sleep(1000);
+    // 用户已手动查询好该 SKC，列表已显示结果；这里只定位行 + 读 SKU货号（不做查询动作）
+    CPO_READ_SKU_NO: async ({ skc }) => {
       const row = await cpoFindSkcRow(skc);
-      if (!row) return { ok: false, error: `未找到 SKC 对应商品行（${skc}）` };
+      if (!row) return { ok: false, error: `未找到 SKC 对应商品行（${skc}），请先在列表查询该 SKC` };
       return { ok: true, skuNo: cpoReadSkuNoFromRow(row) };   // 空串交 bg 判「需先维护货号」
     },
 

@@ -341,9 +341,9 @@ async function cpoRun(originTabId, { skc, url1688 }) {
     await chrome.tabs.remove(t1688.id); tmpTabs.splice(tmpTabs.indexOf(t1688.id), 1);
     await cpoSetState({ step: 2, collectedData: collected });
 
-    // 步骤2：起点 temu 列表查 SKC 读货号
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 2, label: '查询 SKC、读取 SKU货号' });
-    const r2 = await cpoSendCommand(originTabId, 'CPO_QUERY_SKC_GET_NO', { skc });
+    // 步骤2：起点 temu 列表读货号（用户已手动查询好该 SKC）
+    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 2, label: '读取 SKU货号' });
+    const r2 = await cpoSendCommand(originTabId, 'CPO_READ_SKU_NO', { skc });
     if (!r2.skuNo || !String(r2.skuNo).trim()) {
       cpoNotify(originTabId, 'CPO_ERROR', { step: 2, message: '该商品需先维护货号', kind: 'validate' });
       await cpoSetState({ status: 'error', step: 2 });
