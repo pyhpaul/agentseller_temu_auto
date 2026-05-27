@@ -198,8 +198,8 @@
 
       // 清除按钮（两 phase 未全部完成时弹确认，避免误清）
       const clearBtn = document.createElement('button');
-      clearBtn.textContent = '清除当前流程';
-      clearBtn.style.cssText = 'margin-top:8px;font-size:11px;color:#999;background:none;border:none;cursor:pointer;text-decoration:underline;align-self:flex-start;padding:0;';
+      clearBtn.textContent = '🗑 清除当前流程';
+      clearBtn.style.cssText = 'margin-top:10px;padding:6px 12px;font-size:12px;color:#ff4d4f;background:#fff;border:1px solid #ff4d4f;border-radius:4px;cursor:pointer;align-self:stretch;';
       clearBtn.addEventListener('click', onClear);
       wrap.append(clearBtn);
 

@@ -256,6 +256,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ── create_purchase_order ── Phase 1 跨 tab 编排 ───────────────────────────────
 const CPO_DXM_ADD_URL = 'https://www.dianxiaomi.com/web/dxmCommodityProduct/openAddModal?type=0&editOrCopy=0';
+const CPO_DXM_INDEX_URL = 'https://www.dianxiaomi.com/web/dxmCommodityProduct/index';
 const CPO_CMD_TIMEOUT   = 20000;   // 单条命令往返超时
 const CPO_READY_RETRIES = 25;      // 等 content 就绪重试次数（每次 200ms ≈ 5s）
 
@@ -359,6 +360,20 @@ async function cpoRun({ url1688, skc, skuNo, spuId }) {
     const tDxm = await chrome.tabs.create({ url: CPO_DXM_ADD_URL, active: true });
     await cpoWaitTabComplete(tDxm.id);
     await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
+
+    // 保存后导航到 index 列表页看新增 SKU。等保存处理完（店小秘清表/跳转）；
+    // 若它没自己跳（仍在 openAddModal）才由我们导航——此时表单已被处理完，导航不会打断保存。
+    await new Promise(r => setTimeout(r, 2500));
+    const cur = await chrome.tabs.get(tDxm.id).catch(() => null);
+    if (cur && /openAddModal/.test(cur.url || '')) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tDxm.id }, world: 'MAIN',
+          func: () => { window.onbeforeunload = null; window.addEventListener('beforeunload', e => { e.stopImmediatePropagation(); delete e.returnValue; }, true); },
+        });
+      } catch (_) { /* 注入失败也继续导航 */ }
+      await chrome.tabs.update(tDxm.id, { url: CPO_DXM_INDEX_URL });
+    }
 
     await cpoSetPhase1({ status: 'done', step: 3, label: '已自动填写并提交保存', collected });
   } catch (e) {
