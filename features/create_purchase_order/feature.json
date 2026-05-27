@@ -1,0 +1,30 @@
+{
+  "id": "create_purchase_order",
+  "icon": "🛒",
+  "label": "创建采购单",
+  "locked": false,
+  "order": 5,
+  "content_script": "content/index.js",
+  "content_matches": [
+    "https://agentseller.temu.com/*",
+    "https://detail.1688.com/*",
+    "https://www.dianxiaomi.com/*"
+  ],
+  "host_permissions": [
+    "https://agentseller.temu.com/*",
+    "https://detail.1688.com/*",
+    "https://www.dianxiaomi.com/*"
+  ],
+  "permissions": ["tabs", "storage", "scripting"],
+  "extra_content_scripts": [
+    {
+      "js": ["cpo-logic.js"],
+      "matches": [
+        "https://agentseller.temu.com/*",
+        "https://detail.1688.com/*",
+        "https://www.dianxiaomi.com/*"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

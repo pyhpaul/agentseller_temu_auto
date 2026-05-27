@@ -1,0 +1,44 @@
+店小秘「添加单个SKU」表单 (openAddModal) DOM 基线
+URL: https://www.dianxiaomi.com/web/dxmCommodityProduct/openAddModal?type=0&editOrCopy=0
+（type=0 新增 / editOrCopy=0 非复制，参数固定 → bg 可直接导航，无需点「添加商品→添加单个SKU」）
+框架：Ant Design（ant-input / ant-select / ant-btn / ant-modal / css-1oz1bg8）
+当前店铺 user-name = ZQCHAO1（document.querySelector('.user-name')）
+
+===== 字段映射（实测 id + label 确认）=====
+| 店小秘字段 | 定位 | label 确认 | 填值 |
+|-----------|------|-----------|------|
+| 商品SKU   | #proSku                              | "商品SKU"   | skuNo |
+| 英文名称  | #proNameEn                           | "英文名称"  | skuNo |
+| 平台SKU   | input[placeholder*="平台销售SKU"]     | ph         | skuNo |
+| 中文名称  | #proName                             | "中文名称"  | title(1688标题) |
+| 识别码    | #proSbm                              | "识别码"    | serial-skuNo |
+| 来源URL   | #SOURCE_URL (name=sourceUrl, ph https://) | —      | url1688 |
+| 保存      | 文本"保存" .ant-btn ...btn-orang...   | —          | 【不点，停核对】|
+
+⚠️ 陷阱：#nameCn / #nameEn 是【报关中文名/报关英文名】（紧挨 cusMaterial/cusPurpose/cusHgbm
+报关字段），不是商品中英文名称——中文名称务必用 #proName，别用 #nameCn。
+
+===== 图片信息（Ant Dropdown + Modal，交互后才出现）=====
+- 「选择图片」按钮 class 含 ant-dropdown（btn 文本"选择图片"）
+- 点开后 ant-dropdown 菜单，含「网络图片」项（.ant-dropdown-menu-item）
+- 选网络图片 → 弹 .ant-modal，内有 url 输入框 → 填 previewUrl → footer .ant-btn-primary「确定」
+（以上用 Ant 标准 class + 文本匹配实现，端到端实测确认；店小秘确为标准 Ant）
+
+===== 人员信息（Ant Select）=====
+- 卡内有多个 .ant-select；点 .ant-select-selector 开 .ant-select-dropdown，
+  选 .ant-select-item-option 文本 = user-name(ZQCHAO1)
+- 安全约束：只填「人员信息」卡内的 select；卡找不到则【不填】，绝不全表 fill
+  （表单里还有仓库/装箱 form_item_packs_0_packId/分类等 ant-select，误填会写错数据）
+- 注：本次结构化 dump 的 personSelects 段被截断未取全；卡定位按文本"人员信息"，
+  端到端实测确认（若卡未命中，handler 返回 person.filled=0，用户保存前手动补）
+
+===== 字段清单摘录（51 个 input 里的关键项）=====
+#proSku  ph"支持字母 数字和英文符号"
+#proName / #proNameEn  （商品中/英文名称）
+input[placeholder*="可填写平台销售SKU、FNSKU等"]  （平台SKU，无 id）
+#proSbm  ph"...识别码是自定义码,包括ISBN/IMEI/SN..."
+#SOURCE_URL name=sourceUrl ph"https://"
+input[type=file] label"选择图片 (0/20)"
+#nameCn / #nameEn  （报关中/英文名 —— 勿填）
+#cusMaterial / #cusPurpose / #cusHgbm  （报关材质/用途/海关编码）
+rc_select_0/1/2  ant-select-selection-search-input（疑似人员，按卡定位为准）
