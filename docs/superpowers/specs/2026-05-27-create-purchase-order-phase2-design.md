@@ -55,6 +55,8 @@ Phase 2 全程在店小秘域（`www.dianxiaomi.com`）内，**不跨 Temu / 168
 | `edit → waitArrival` | 固定 URL | bg 构造 URL 开 tab |
 
 > ⚠️ **dump 阶段必须先验证的风险点**：content 在 draft 页 `.click()`「创建现有订单」时已脱离原始用户手势，若它是 `_blank`/`window.open`，可能被 Chrome 弹窗拦截（Phase 1 点「编辑」链接踩过同类坑）。dump 时确认其真实跳转机制；若被拦，需在实现阶段调整（如读 href 构造 URL，或退回让用户在该步手动点）。
+>
+> ⚠️ **tab 捕获监听的注册时序**：bg 监听新弹 tab（`chrome.tabs.onCreated`）必须在**发出触发点击的命令之前**注册，否则点击瞬间弹出的 tab 会漏捕获（同项目其它 feature「捕获监听必须 click 前注册」经验）。`add→edit` 的导航/新 tab 监听同理，须在发 `CPO_P2_ADD_FETCH` 前挂好。
 
 ## 4. 编排序列
 
@@ -64,7 +66,7 @@ Phase 2 全程在店小秘域（`www.dianxiaomi.com`）内，**不跨 Temu / 168
 |---|---|---|---|
 | 1 | draft | 开 draft tab → `CPO_P2_DRAFT_CREATE`（点下拉→创建现有订单）→ 捕获 add tab | 捕获不到 add tab → error |
 | 2 | add | `CPO_P2_ADD_FETCH{orderNo1688}`（选 1688账号第一项 + 填 1688订单号 + 点「获取1688订单」） | — |
-| 3 | add | **弹窗分流**：content 轮询「已存在弹窗出现」vs「已跳转 edit」，返回 `scene` | `scene==='exists'`（已入库）→ **error**：关 add tab（天然回触发 tab）→ ②区红字「当前输入的1688订单号已入库」 |
+| 3 | add | **弹窗分流（bg 主导）**：bg `Promise.race` [`CPO_P2_ADD_FETCH` 返回「已存在弹窗」, bg 监听 add tab 跳转 `/order/edit`]。content 只检测已存在弹窗、不判断跳转（跳转会销毁 content script） | 已存在弹窗先到 → **error**：关 add tab（天然回触发 tab）→ ②区红字「当前输入的1688订单号已入库」 |
 | 4 | edit | `CPO_P2_EDIT_FILL{skuNo}`（采购人员选 user_name、收货仓库选「中正科技仓」、配对商品弹窗：搜索类型=商品SKU→填 SKU货号→搜索→唯一行点「选中」→「修改所有xxx」→「确认」） | 配对搜不到商品 → error |
 | 5 | edit | `CPO_P2_EDIT_SAVE`（点「保存，并通过审核」→ 抓成功弹窗文本 → 正则提 `poNo`） | 无成功弹窗 / 未提到 poNo → error，**不误标 done** |
 | 6 | waitArrival | 跳 waitArrival → `CPO_P2_WAIT_SEARCH{skuNo}`（搜索类型=商品SKU、搜索内容=SKU货号、点搜索，定位商品行） | 搜不到只 warn，不阻断 done |
@@ -81,12 +83,12 @@ Phase 2 全程在店小秘域（`www.dianxiaomi.com`）内，**不跨 Temu / 168
 |---|---|---|---|---|
 | content→bg | `CPO_START_PHASE2` | `{orderNo1688}` | `{ok}` | 立即 ack，bg 异步跑 `cpoRun2`；skuNo bg 自取 |
 | bg→tab | `CPO_P2_DRAFT_CREATE` | — | `{ok}` | draft 点「创建采购单」下拉→「创建现有订单」 |
-| bg→tab | `CPO_P2_ADD_FETCH` | `{orderNo1688}` | `{ok, scene:'exists'\|'ok', message?}` | add 页选账号 + 填订单号 + 点获取；轮询分流场景 |
+| bg→tab | `CPO_P2_ADD_FETCH` | `{orderNo1688}` | `{ok, exists:bool, message?}` | add 页选账号 + 填订单号 + 点获取后，轮询是否出现「已存在」弹窗；`exists=true` 即已入库。页面跳转 edit 会销毁本命令通道，由 bg 监听捕获，不视作错误 |
 | bg→tab | `CPO_P2_EDIT_FILL` | `{skuNo}` | `{ok}` | edit 填采购人员/收货仓库 + 配对商品全流程 |
 | bg→tab | `CPO_P2_EDIT_SAVE` | — | `{ok, poNo}` | 点「保存，并通过审核」+ 抓成功弹窗 + 提 poNo |
 | bg→tab | `CPO_P2_WAIT_SEARCH` | `{skuNo}` | `{ok, found}` | waitArrival 搜索定位商品行 |
 
-> 弹窗分流（step 3）由 `CPO_P2_ADD_FETCH` 返回的 `scene` 承担，不单独设命令：content 在 add 页点「获取1688订单」后轮询，要么出现「已存在/不能重复添加」弹窗（`scene='exists'`），要么页面跳转 edit（`scene='ok'`），谁先到返回谁。
+> 弹窗分流（step 3）**bg 主导**，不让 content 判断跳转——「跳转 edit」会导致 add 页 content script 随页面销毁、无法回传。bg `Promise.race` 两路：(a) `CPO_P2_ADD_FETCH` 返回 `exists=true`（检测到「已存在/不能重复添加」弹窗）→ 中断；(b) bg 监听 add tab 导航到 `/order/edit`（或捕获新弹 edit tab）→ 接管。content 通道因导航中断时 bg 走 (b)，不视作错误。监听须在发 `CPO_P2_ADD_FETCH` 前挂好（见 §3 注册时序）。
 
 ## 6. 数据模型
 
