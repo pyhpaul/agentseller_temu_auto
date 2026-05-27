@@ -86,26 +86,34 @@
   }, true);
 
   // 发起 Phase 1（仅 temu 列表页）：从选中行读 skc/货号/SPU ID → CPO_START
+  let cpoStarting = false;   // 重入守卫：防止 await 校验期间双击触发两条并行编排
   async function onStartPhase1() {
+    if (cpoStarting) return;
     if (!selectedSkc) { setLocalMsg('请先在列表点选一个商品', 'error'); return; }
-    // 先校验商品本身（货号 → SPU ID），再校验 1688 url —— 货号缺失是更根本的拦截，应先提示
-    const row = await cpoFindSkcRow(selectedSkc);
-    if (!row) { setLocalMsg('选中的商品行已消失，请重新点选', 'error'); return; }
-    const skuNo = cpoReadSkuNoFromRow(row);
-    const spuId = cpoReadSpuIdFromRow(row);
-    if (!skuNo) { setLocalMsg('该商品需先维护货号', 'error'); return; }
-    if (!spuId) { setLocalMsg('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
-    const url1688 = (ui.urlInput && ui.urlInput.value || '').trim();
-    const v = L.validateInputs({ skc: selectedSkc, url1688 });
-    if (!v.ok) { setLocalMsg(v.error, 'error'); return; }
-    if (ui.startBtn) ui.startBtn.disabled = true;
-    setLocalMsg('启动中…');
+    cpoStarting = true;
+    if (ui.startBtn) ui.startBtn.disabled = true;   // 同步禁用，先于下面的 async 校验
+    let started = false;
     try {
+      // 先校验商品本身（货号 → SPU ID），再校验 1688 url —— 货号缺失是更根本的拦截，应先提示
+      const row = await cpoFindSkcRow(selectedSkc);
+      if (!row) { setLocalMsg('选中的商品行已消失，请重新点选', 'error'); return; }
+      const skuNo = cpoReadSkuNoFromRow(row);
+      const spuId = cpoReadSpuIdFromRow(row);
+      if (!skuNo) { setLocalMsg('该商品需先维护货号', 'error'); return; }
+      if (!spuId) { setLocalMsg('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
+      const url1688 = (ui.urlInput && ui.urlInput.value || '').trim();
+      const v = L.validateInputs({ skc: selectedSkc, url1688 });
+      if (!v.ok) { setLocalMsg(v.error, 'error'); return; }
+      setLocalMsg('启动中…');
       const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { url1688, skc: selectedSkc, skuNo, spuId } });
-      if (!resp?.ok) { setLocalMsg(resp?.error || '启动失败', 'error'); if (ui.startBtn) ui.startBtn.disabled = false; }
+      if (!resp?.ok) setLocalMsg(resp?.error || '启动失败', 'error');
+      else started = true;
     } catch (e) {
       setLocalMsg('启动失败：' + e.message, 'error');
-      if (ui.startBtn) ui.startBtn.disabled = false;
+    } finally {
+      cpoStarting = false;
+      // 成功启动后保持禁用（流程在跑，避免误触并行重跑）；未启动则恢复供重试
+      if (!started && ui.startBtn) ui.startBtn.disabled = false;
     }
   }
 
@@ -392,6 +400,9 @@
 
       // 人员信息：卡内所有下拉选 user-name（卡找不到则跳过）
       const person = await cpoFillPersonnel();
+      if (person && person.total && person.filled < person.total) {
+        U.showToast('部分人员下拉未自动选中，请在店小秘核对', 'error');
+      }
 
       // 取消勾选「保存成功，继续创建下一条」→ 保存后跳回 index 列表页看到新 SKU
       // （勾选状态下保存会停留在 add 页清空重填）。两处复选框联动，checked 守卫避免反复 toggle
@@ -407,7 +418,7 @@
         || U.findByText('.ant-btn, button', '保存');
       if (!saveBtn) {
         U.showToast('未找到保存按钮，请手动保存', 'error');
-        return { ok: true, filled: true, person, saved: false };
+        return { ok: false, error: '未找到保存按钮，请手动保存' };   // 让 bg 标 error，不误标已保存
       }
       saveBtn.click();
       U.showToast('创建采购单：已提交保存', 'ok');

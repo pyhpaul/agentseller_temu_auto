@@ -384,6 +384,7 @@ async function cpoRun({ url1688, skc, skuNo, spuId }) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type !== 'CPO_START') return;            // 只接管 CPO_START；其余命令是 bg→content
+  if (!msg.data) { sendResponse({ ok: false, error: '缺少启动参数' }); return; }
   cpoRun(msg.data);                                // 异步跑，进度写 storage；不阻塞 ack
   sendResponse({ ok: true });
 });
