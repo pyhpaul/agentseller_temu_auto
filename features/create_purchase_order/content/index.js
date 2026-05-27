@@ -88,15 +88,16 @@
   // 发起 Phase 1（仅 temu 列表页）：从选中行读 skc/货号/SPU ID → CPO_START
   async function onStartPhase1() {
     if (!selectedSkc) { setLocalMsg('请先在列表点选一个商品', 'error'); return; }
-    const url1688 = (ui.urlInput && ui.urlInput.value || '').trim();
-    const v = L.validateInputs({ skc: selectedSkc, url1688 });
-    if (!v.ok) { setLocalMsg(v.error, 'error'); return; }
+    // 先校验商品本身（货号 → SPU ID），再校验 1688 url —— 货号缺失是更根本的拦截，应先提示
     const row = await cpoFindSkcRow(selectedSkc);
     if (!row) { setLocalMsg('选中的商品行已消失，请重新点选', 'error'); return; }
     const skuNo = cpoReadSkuNoFromRow(row);
     const spuId = cpoReadSpuIdFromRow(row);
     if (!skuNo) { setLocalMsg('该商品需先维护货号', 'error'); return; }
     if (!spuId) { setLocalMsg('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
+    const url1688 = (ui.urlInput && ui.urlInput.value || '').trim();
+    const v = L.validateInputs({ skc: selectedSkc, url1688 });
+    if (!v.ok) { setLocalMsg(v.error, 'error'); return; }
     if (ui.startBtn) ui.startBtn.disabled = true;
     setLocalMsg('启动中…');
     try {
@@ -362,6 +363,12 @@
 
       // 人员信息：卡内所有下拉选 user-name（卡找不到则跳过）
       const person = await cpoFillPersonnel();
+
+      // 取消勾选「保存成功，继续创建下一条」→ 保存后跳回 index 列表页看到新 SKU
+      // （勾选状态下保存会停留在 add 页清空重填）。两处复选框联动，checked 守卫避免反复 toggle
+      Array.from(document.querySelectorAll('.ant-checkbox-wrapper, label'))
+        .filter(w => /继续创建/.test(w.textContent))
+        .forEach(w => { const cb = w.querySelector('input[type="checkbox"]'); if (cb && cb.checked) w.click(); });
 
       // 自动点保存（用户已确认改全自动）。保存按钮是橙色 btn-orange 的「保存」
       U.showToast('信息已填好，正在保存…', 'info');

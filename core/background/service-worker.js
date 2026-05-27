@@ -330,7 +330,10 @@ async function cpoRun({ url1688, skc, skuNo, spuId }) {
   const collected = { skc, url1688, serial, title: '', skuNo: String(skuNo).trim(), previewUrl: '', spuId };
   const tmpTabs = [];   // 临时 tab，出错时统一回收
   try {
-    await cpoSetPhase1({ status: 'running', step: 1, label: '读取 1688 标题', collected });
+    // 新 workflow：整体重置 cpo_state（phase1 running + phase2 归零）——这就是「上次状态」的清理时机
+    await chrome.storage.local.set({
+      cpo_state: { phase1: { status: 'running', step: 1, label: '读取 1688 标题', collected }, phase2: { status: 'idle' }, updatedAt: Date.now() },
+    });
 
     // 步骤1：后台开 1688 → 抓标题 → 关（仅取 document.title，不需渲染，后台即可）
     const t1688 = await chrome.tabs.create({ url: url1688, active: false });
