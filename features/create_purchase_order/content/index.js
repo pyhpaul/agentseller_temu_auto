@@ -409,25 +409,6 @@
     return item ? item.querySelector('.ant-select') : null;
   }
 
-  // 打开 ant-select 下拉、选第一个可见非空选项（用于唯一项的账号下拉）→ 成功 true
-  async function cpoSelectFirstOption(sel) {
-    const combo = sel.querySelector('input');
-    (sel.querySelector('.ant-select-selector') || sel).click();
-    const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
-    for (let i = 0; i < 30; i++) {
-      await U.sleep(100);
-      const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
-      const scopes = scoped ? [scoped]
-        : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
-      for (const s of scopes) {
-        const opt = Array.from(s.querySelectorAll('[role="option"], .ant-select-item-option'))
-          .find(o => U.normText(o.textContent));   // 第一个有文本的选项
-        if (opt) { opt.click(); return true; }
-      }
-    }
-    return false;
-  }
-
   // 选 ant-select 中 textContent 精确等于 want 的选项（采购人员/收货仓库/搜索类型用）→ 成功 true
   async function cpoSelectOptionByText(sel, want) {
     const combo = sel.querySelector('input');
