@@ -448,6 +448,75 @@
     return false;
   }
 
+  // 配对商品弹窗：点「配对商品」/「更换配对」→ 填货号搜索 → 点「选择」→ 处理可能的确认弹窗
+  async function cpoPairProduct(skuNo) {
+    const normSku = U.normText(skuNo);
+    // 找「配对商品」或「更换配对」（span.link，不是 button）
+    const pairBtn = Array.from(document.querySelectorAll('span.link'))
+      .find(el => ['配对商品', '更换配对'].includes(el.textContent.trim()));
+    if (!pairBtn) return { ok: false, error: '未找到「配对商品」按钮（确保采购单行已展开）' };
+    pairBtn.click();
+    // 等 product-ref-modal 的 ant-modal-body 出现
+    let modalBody = null;
+    for (let i = 0; i < 30 && !modalBody; i++) {
+      await U.sleep(200);
+      const el = document.querySelector('.product-ref-modal .ant-modal-body');
+      if (el && el.getBoundingClientRect().height > 0) modalBody = el;
+    }
+    if (!modalBody) return { ok: false, error: '配对弹窗未出现' };
+    // 搜索类型「商品SKU」tag 默认 active，无需切换
+    // 填搜索内容（input[name="tableSearchInput"]）
+    const kwInput = modalBody.querySelector('input[name="tableSearchInput"]');
+    if (!kwInput) return { ok: false, error: '配对弹窗：未找到搜索输入框（name=tableSearchInput）' };
+    U.setInputValue(kwInput, skuNo);
+    await U.sleep(150);
+    // 点搜索（button[type="submit"]）
+    const searchBtn = modalBody.querySelector('button[type="submit"]');
+    if (!searchBtn) return { ok: false, error: '配对弹窗：未找到搜索按钮' };
+    searchBtn.click();
+    // 等结果行，找 SKU 匹配项的「选择」按钮
+    // 表格两列布局：每行 4 td（info1, 选择1, info2, 选择2）；SKU 在 .no-new-line2:not(.gray-c)
+    let selBtn = null;
+    for (let i = 0; i < 30 && !selBtn; i++) {
+      await U.sleep(200);
+      for (const row of modalBody.querySelectorAll('table.in-table tbody tr.content')) {
+        const cells = row.querySelectorAll('td');
+        for (let k = 0; k < cells.length - 1; k += 2) {
+          const skuEl = cells[k]?.querySelector('.no-new-line2:not(.gray-c)');
+          if (skuEl && U.normText(skuEl.textContent) === normSku) {
+            selBtn = cells[k + 1]?.querySelector('span.link');
+            break;
+          }
+        }
+        if (selBtn) break;
+      }
+    }
+    if (!selBtn) return { ok: false, error: `配对弹窗：未找到 SKU「${skuNo}」的配对结果（请确认货号已建档）` };
+    selBtn.click();
+    // 等可能的「确认要更换配对关系」弹窗（已有配对时出现）
+    await U.sleep(500);
+    const confirmModal = Array.from(document.querySelectorAll('.ant-modal-content'))
+      .find(m => m.getBoundingClientRect().height > 0 && m.textContent.includes('确认要更换配对关系'));
+    if (confirmModal) {
+      // 选「修改所有草稿箱」选项（value=1）
+      const allOpt = Array.from(confirmModal.querySelectorAll('label.ant-radio-wrapper'))
+        .find(l => l.textContent.includes('修改所有'));
+      allOpt?.click();
+      await U.sleep(150);
+      const confirmBtn = Array.from(confirmModal.querySelectorAll('button'))
+        .find(b => b.textContent.trim() === '确认');
+      if (!confirmBtn) return { ok: false, error: '配对：确认弹窗未找到「确认」按钮' };
+      confirmBtn.click();
+    }
+    // 等 product-ref-modal 关闭
+    for (let i = 0; i < 20; i++) {
+      await U.sleep(150);
+      const m = document.querySelector('.product-ref-modal');
+      if (!m || m.getBoundingClientRect().height === 0) break;
+    }
+    return { ok: true };
+  }
+
   // ── bg → content 命令处理器（temu 列表/编辑 + 1688 + 店小秘 填表） ──
   const handlers = {
     CPO_READ_1688_TITLE: async () => {
@@ -584,6 +653,47 @@
         }
       }
       return { ok: true, exists: false };
+    },
+
+    CPO_P2_EDIT_FILL: async ({ skuNo }) => {
+      U.showToast('创建采购单：填写采购信息…', 'info');
+      // a) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）
+      const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
+      const buyerSel = cpoFindSelectByLabel('采购人员');
+      if (buyerSel && userName) await cpoSelectOptionByText(buyerSel, userName);
+      await U.sleep(200);
+      // b) 收货仓库选「中正科技仓」（d-selector 包装的 .ant-select.in-selector）
+      const whSel = cpoFindSelectByLabel('收货仓库');
+      if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
+      if (!(await cpoSelectOptionByText(whSel, '中正科技仓')))
+        return { ok: false, error: '业务拦截：收货仓库下拉无「中正科技仓」选项' };
+      await U.sleep(200);
+      // c) 配对商品（span.link，配对弹窗搜索类型=商品SKU，填货号，选匹配结果，处理确认弹窗）
+      const pair = await cpoPairProduct(skuNo);
+      if (!pair.ok) return pair;
+      return { ok: true };
+    },
+
+    CPO_P2_EDIT_SAVE: async () => {
+      // 点「保存，并通过审核」（注意文案含逗号）
+      const saveBtn = U.findByText('button, .ant-btn', '保存，并通过审核')
+        || U.findByText('button, .ant-btn', '保存并通过审核');
+      if (!saveBtn) return { ok: false, error: '读取失败：未找到「保存，并通过审核」按钮' };
+      U.showToast('创建采购单：正在保存并通过审核…', 'info');
+      saveBtn.click();
+      // 等成功弹窗（含「操作成功」或「采购单」关键字）
+      let text = '';
+      for (let i = 0; i < 30; i++) {                   // ~6s
+        await U.sleep(200);
+        const dlg = Array.from(document.querySelectorAll(
+          '.ant-modal, .ant-modal-confirm, .ant-message, .ant-notification, .modal'))
+          .find(d => d.getBoundingClientRect().height > 0 && /操作成功|采购单/.test(d.textContent));
+        if (dlg) { text = dlg.textContent || ''; break; }
+      }
+      if (!text) return { ok: false, error: '业务拦截：未捕获到审核成功弹窗（保存可能被必填项拦截）' };
+      const poNo = L.extractPoNo(text);
+      if (!poNo) return { ok: false, error: '数据校验：审核成功弹窗未解析出采购单号（请核查 extractPoNo 正则）' };
+      return { ok: true, poNo };
     },
 
     CPO_P2_WAIT_SEARCH: async ({ skuNo }) => {

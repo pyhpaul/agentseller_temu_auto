@@ -1,0 +1,113 @@
+# dxm_purchase_edit — 店小秘采购单 edit 页 DOM 基线
+# URL: https://www.dianxiaomi.com/web/purchasing/order/edit?pageType=4&id=<id>
+# 抓取时间：2026-05-27
+
+## 关键发现
+
+### 1. 采购人员（d-selector 包装）
+<div class="d-selector w200">
+  <div class="ant-select ant-select-in-form-item in-selector w200 ant-select-single ant-select-show-arrow" style="width:200px;">
+    <div class="ant-select-selector">
+      <span class="ant-select-selection-item" title="18666218498">18666218498</span>
+    </div>
+  </div>
+</div>
+# label: <label class="ant-form-item-required" title="采购人员">采购人员</label>
+# 下拉选项格式：["","1889018","1924487","请选择","18666218498","zhongzhekeji1","ZCxiduo1","WUYANQION1","CYXXC1","DEFUSM1","YMkeji1","CDWei1","cangku-HXX","ZQCHAO1","ZQCHAO2"]
+# 选项包含 .user-name 文本（如 "ZQCHAO1"）→ cpoSelectOptionByText(sel, userName) 可命中
+
+### 2. 收货仓库（同 d-selector 包装）
+<div class="d-selector w200">
+  <div class="ant-select in-selector w200 ...">
+    <span class="ant-select-selection-item" title="中正科技仓">中正科技仓</span>
+  </div>
+</div>
+# label: <label class="ant-form-item-required" title="收货仓库">收货仓库</label>
+# 默认已选「中正科技仓」（从 add 页带来）；程序化 cpoSelectOptionByText(sel, '中正科技仓') 仍需设置
+
+### 3. 配对商品 / 更换配对按钮
+# 操作列（非 <button>，是 <span class="link block">）：
+<td style="min-width: 110px; text-align: center;">
+  <span class="link block">配对商品</span>     ← 未配对时
+  <!-- 或 -->
+  <span class="link block">更换配对</span>     ← 已配对时
+  <span class="link block mt-5">解除配对</span>
+</td>
+
+### 4. 保存按钮区（底部 flex bar）
+<button class="ant-btn ant-btn-default">保存</button>
+<button class="ant-btn ant-btn-primary">保存，并提交审核</button>
+<button class="ant-btn ant-btn-primary">保存，并通过审核</button>
+# 注意：文案含逗号「保存，并通过审核」
+
+---
+
+## 配对弹窗（product-ref-modal）
+
+### 弹窗整体结构
+<div class="ant-modal-wrap full-modal__dxm" role="dialog">
+  <div class="ant-modal product-ref-modal">
+    <div class="ant-modal-content">
+      <div class="ant-modal-header"><div class="title-content">更换配对</div></div>
+      <div class="ant-modal-body">
+        <!-- 搜索类型：d-tag-group -->
+        <div class="d-tag-group-wrapper">
+          <div class="d-tag-group-item active"><span>商品SKU</span></div>
+          <div class="d-tag-group-item"><span>商品名称</span></div>
+        </div>
+        <!-- 搜索输入 -->
+        <input type="text" name="tableSearchInput" style="width:200px;">
+        <!-- 搜索按钮 -->
+        <button type="submit" class="ant-btn ant-btn-primary">搜索</button>
+        <!-- 结果表：两列布局，每行 4 td (info1, 选择1, info2, 选择2) -->
+        <table class="in-table">
+          <tbody>
+            <tr class="content">
+              <td style="width:320px;">
+                <div class="gray-c no-new-line2 break-all">金属电镀书签夹</div>  ← 商品名
+                <div class="no-new-line2 break-all">CLI245-30pcs</div>            ← SKU（无 gray-c）
+              </td>
+              <td class="border-l w-50"><span class="link">选择</span></td>
+              <td style="width:320px;"><!-- product 2 --></td>
+              <td class="border-l w-50"><span class="link">选择</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+---
+
+## 「确认要更换配对关系」二次确认弹窗（已有配对时点「选择」后出现）
+
+<div class="ant-modal-body">
+  <div class="py-10 text-16">确认要更换配对关系吗？</div>
+  <div class="ant-radio-group ant-radio-group-outline ml-20 css-1oz1bg8">
+    <label class="ant-radio-wrapper ant-radio-wrapper-checked block mb-10 css-1oz1bg8">
+      <span class="ant-radio ant-radio-checked">
+        <input type="radio" class="ant-radio-input" checked="" value="0">
+      </span>
+      <span>仅对此采购单生效</span>
+    </label>
+    <label class="ant-radio-wrapper block css-1oz1bg8">
+      <span class="ant-radio">
+        <input type="radio" class="ant-radio-input" value="1">
+      </span>
+      <span>修改所有「草稿箱」采购单，并更换配对关系</span>
+    </label>
+  </div>
+</div>
+# 确认按钮：<button>确认</button>（在 .ant-modal-footer 或 modal 底部）
+# → 选 label 含「修改所有」 → click；再 click 「确认」button
+
+---
+
+## 单测命令（SW 控制台）
+
+# 测试 CPO_P2_EDIT_FILL（在 edit tab）：
+chrome.tabs.sendMessage(<editTabId>, {type:'CPO_P2_EDIT_FILL', data:{skuNo:'CLI245-30pcs'}}).then(console.log)
+
+# 测试 CPO_P2_EDIT_SAVE（fill 成功后）：
+chrome.tabs.sendMessage(<editTabId>, {type:'CPO_P2_EDIT_SAVE'}).then(console.log)
