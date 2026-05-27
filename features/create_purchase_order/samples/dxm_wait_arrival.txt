@@ -1,0 +1,142 @@
+## 页面信息
+URL: https://www.dianxiaomi.com/web/purchasing/order/waitArrival
+页面名称: 待到货
+
+## 搜索区域 DOM 结构
+
+### 搜索类型 —— d-tag-group（非 ant-select 下拉！）
+```html
+<label title="搜索类型">搜索类型</label>
+<div class="d-tag-group-wrapper">
+  <div class="d-tag-group-item active">
+    <div class="d-tag-group-item__inner"><span>采购单号</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>供货商</span></div>
+  </div>
+  <div class="d-tag-group-item active">
+    <!-- 默认 active 的项，通常是「商品SKU」 -->
+    <div class="d-tag-group-item__inner"><span>商品SKU</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>商品编码</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>商品名称</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>1688订单号</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>运单号</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>关联订单号</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>采购单备注</span></div>
+  </div>
+  <div class="d-tag-group-item">
+    <div class="d-tag-group-item__inner"><span>商品备注</span></div>
+  </div>
+</div>
+```
+
+**关键点**：选中项带 `active` class（直接在 `.d-tag-group-item` 上），不是 ant-select，
+不需要展开下拉，直接 `.click()` 即可切换。「商品SKU」默认通常已 active，
+CPO_P2_WAIT_SEARCH 做防御性检查：若未 active 则点一次再 sleep 150ms。
+
+### 搜索内容输入框
+```html
+<div class="search-container-main">
+  <div class="searchContainer">
+    <input
+      type="text"
+      name="tableSearchInput"
+      id="searchValue"
+      placeholder="多个商品SKU间用逗号隔开，最多支持200个，模糊匹配最多支持30个"
+    />
+    <!-- 匹配方式 ant-select（默认「精确匹配」，本 handler 不动）-->
+    <div class="ant-select ...">...</div>
+    <!-- 搜索按钮 -->
+    <button type="submit" class="ant-btn ant-btn-primary m-left10 b-rd-4">
+      <span>搜索</span>
+    </button>
+  </div>
+</div>
+```
+
+**定位**：优先 `#searchValue`，fallback `input[name="tableSearchInput"]`。
+
+### 搜索按钮定位策略
+⚠️ 页面有「高级搜索」展开区，里面也有「搜索」按钮。
+**必须限定在 kwInput 所在的 `.search-container-main` / `.searchContainer` 容器内**
+取 `button[type="submit"]`，不能全局 `document.querySelector('button[type="submit"]')`。
+
+```js
+const scope = kwInput.closest('.search-container-main, .searchContainer') || document;
+const searchBtn = scope.querySelector('button[type="submit"]')
+  || U.findByText('button, .ant-btn', '搜索', scope);
+```
+
+## 结果表格 —— vxe-table（非 ant-table！）
+
+```html
+<!-- 数据行：每条记录含 header-row + content-row 两行，都是 .vxe-body--row -->
+<div class="vxe-table--body-wrapper">
+  <table>
+    <tbody>
+      <tr class="vxe-body--row row--hover">
+        <!-- 采购单号列（含可点击按钮） -->
+        <td>
+          <button><span>PO1SLPT027932</span></button>
+        </td>
+        <!-- 物流列 -->
+        <td>
+          <span>1688：greenworld_绿城-<订单号></span>
+        </td>
+        <!-- 操作列 .col_259 -->
+        <td class="col_259">
+          <button><span>申请付款</span></button>
+          <button><span>确认收货</span></button>
+          <!-- 其他操作按钮 -->
+        </td>
+      </tr>
+      <tr class="vxe-body--row">
+        <!-- content-row：同一条记录的第二行 -->
+      </tr>
+    </tbody>
+  </table>
+</div>
+```
+
+### 空态 DOM（暂无数据）
+```html
+<div class="vxe-table--empty-block">
+  <div class="empty-container">
+    <span>暂无数据</span>
+  </div>
+</div>
+```
+
+## 关键设计决策：found 判断方式
+
+⚠️ **表格行文本不直接包含 SKU 货号**（货号要点「货品详情」才展示）。
+因此 found **不能**用 `行.textContent.includes(skuNo)` 判断，
+而是用**「有数据行 + 无可见暂无数据空态」**组合判断：
+
+```js
+const rows = document.querySelectorAll('.vxe-body--row');
+const emptyShown = Array.from(document.querySelectorAll('.vxe-table--empty-block, .empty-container'))
+  .some(e => e.getBoundingClientRect().height > 0 && /暂无数据/.test(e.textContent));
+if (rows.length > 0 && !emptyShown) { found = true; break; }
+```
+
+用 `getBoundingClientRect().height > 0` 判断空态可见（而非只看 DOM 存在），
+避免"空态节点存在但不显示"的假阳性。
+
+## 非阻断语义
+
+搜不到商品行只发 warn toast + `return { ok: true, found: false }`，
+**不 return `{ ok: false }`**，因为采购单号已在审核弹窗阶段取得（Phase 2 核心目标已达成）。
+用户可手动在待到货页查找。
