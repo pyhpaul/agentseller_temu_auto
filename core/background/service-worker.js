@@ -361,23 +361,18 @@ async function cpoRun({ url1688, skc, skuNo, spuId }) {
     await cpoWaitTabComplete(tDxm.id);
     await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
 
-    // 保存后落到 index 列表页看新增 SKU：轮询最多 ~8s 等店小秘自己处理完跳走；
-    // 超时仍在 openAddModal 才由 bg 导航（消除固定等待与店小秘保存速度的赛跑）
-    let leftAddPage = false;
+    // 保存后确保落到 index 看新增 SKU：先轮询 ~8s 等店小秘处理完（自己离开 add 页）；
+    // 然后若 tab 不在 index，就【强制关掉 add tab + 新开 index tab】——比 in-page 导航稳，
+    // 绕开未保存守卫与店小秘自身路由的竞争。
     for (let i = 0; i < 40; i++) {                 // 40 × 200ms = 8s
       await new Promise(r => setTimeout(r, 200));
       const t = await chrome.tabs.get(tDxm.id).catch(() => null);
-      if (!t) { leftAddPage = true; break; }                        // tab 没了
-      if (!/openAddModal/.test(t.url || '')) { leftAddPage = true; break; }  // 店小秘自己跳走了
+      if (!t || !/openAddModal/.test(t.url || '')) break;   // tab 没了 / 店小秘自己跳走
     }
-    if (!leftAddPage) {                            // 仍赖在 add 页 → 由 bg 导航
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tDxm.id }, world: 'MAIN',
-          func: () => { window.onbeforeunload = null; window.addEventListener('beforeunload', e => { e.stopImmediatePropagation(); delete e.returnValue; }, true); },
-        });
-      } catch (_) { /* 注入失败也继续导航 */ }
-      await chrome.tabs.update(tDxm.id, { url: CPO_DXM_INDEX_URL });
+    const fin = await chrome.tabs.get(tDxm.id).catch(() => null);
+    if (!fin || !/dxmCommodityProduct\/index/.test(fin.url || '')) {
+      if (fin) await cpoCloseTab(tDxm.id);         // 抑制 beforeunload 后关掉 add tab
+      await chrome.tabs.create({ url: CPO_DXM_INDEX_URL, active: true });
     }
 
     await cpoSetPhase1({ status: 'done', step: 3, label: '已自动填写并提交保存', collected });
