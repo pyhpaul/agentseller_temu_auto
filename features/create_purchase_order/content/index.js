@@ -252,6 +252,7 @@
     },
 
     CPO_GRAB_PREVIEW: async () => {
+      U.showToast('创建采购单：正在读取预览图…', 'info');
       // 等编辑页渲染出预览图组件
       try { await U.waitForEl('img.preview-image_img__LvHNP', document, 10000); } catch {}
       // 定位「SKU 信息」框（标题中间有空格，用 normText 忽略空格匹配）
@@ -271,6 +272,7 @@
     },
     CPO_FILL_DXM: async ({ collected }) => {
       const f = L.mapDxmFields(collected);
+      U.showToast('创建采购单：正在填写商品信息…', 'info');
       // 等表单渲染（#proSku 是基础信息第一个文本框）
       try { await U.waitForEl('#proSku', document, 12000); }
       catch { return { ok: false, error: '店小秘添加表单未渲染（#proSku 未出现）' }; }
@@ -287,17 +289,29 @@
       const pic = await cpoAddNetworkImage(f.imageUrl);
       if (!pic.ok) return pic;
 
-      // 人员信息：卡内所有下拉选 user-name（卡找不到则跳过，交用户保存前手动补）
+      // 人员信息：卡内所有下拉选 user-name（卡找不到则跳过）
       const person = await cpoFillPersonnel();
 
-      return { ok: true, filled: true, person };
+      // 自动点保存（用户已确认改全自动）。保存按钮是橙色 btn-orange 的「保存」
+      U.showToast('信息已填好，正在保存…', 'info');
+      await U.sleep(300);
+      const saveBtn = Array.from(document.querySelectorAll('.ant-btn, button'))
+        .find(b => b.textContent.trim() === '保存' && /orang/.test(b.className))
+        || U.findByText('.ant-btn, button', '保存');
+      if (!saveBtn) {
+        U.showToast('未找到保存按钮，请手动保存', 'error');
+        return { ok: true, filled: true, person, saved: false };
+      }
+      saveBtn.click();
+      U.showToast('创建采购单：已提交保存', 'ok');
+      return { ok: true, filled: true, person, saved: true };
     },
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // 进度推送（起点 tab 接收，无需回 response）
     if (msg.type === 'CPO_PROGRESS') { setProgress(`步骤${msg.step}：${msg.label}`); return; }
-    if (msg.type === 'CPO_DONE')     { setProgress('已填好，请在店小秘页核对后保存', 'done'); return; }
+    if (msg.type === 'CPO_DONE')     { setProgress('已自动填写并提交保存', 'done'); return; }
     if (msg.type === 'CPO_ERROR')    { setProgress(`步骤${msg.step}失败：${msg.message}`, 'error'); return; }
 
     const h = handlers[msg.type];

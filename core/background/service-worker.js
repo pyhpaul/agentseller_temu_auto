@@ -373,7 +373,7 @@ async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
     await cpoWaitTabComplete(tDxm.id);
     await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
 
-    await cpoSetState({ status: 'awaiting_save', step: 3, collectedData: collected });
+    await cpoSetState({ status: 'done', step: 3, collectedData: collected });
     cpoNotify(originTabId, 'CPO_DONE', {});
   } catch (e) {
     // 回收所有未关闭的临时 tab
