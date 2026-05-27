@@ -259,10 +259,12 @@ const CPO_DXM_ADD_URL = 'https://www.dianxiaomi.com/web/dxmCommodityProduct/open
 const CPO_CMD_TIMEOUT   = 20000;   // 单条命令往返超时
 const CPO_READY_RETRIES = 25;      // 等 content 就绪重试次数（每次 200ms ≈ 5s）
 
-function cpoSetState(patch) {
+// 写 cpo_state.phase1（单一状态源；content 各 tab 靠 storage.onChanged 同步显示）
+function cpoSetPhase1(patch) {
   return chrome.storage.local.get('cpo_state').then(({ cpo_state }) => {
-    const next = { status: 'idle', step: 0, collectedData: {}, ...(cpo_state || {}), ...patch };
-    return chrome.storage.local.set({ cpo_state: next });
+    const cur = cpo_state || {};
+    const p1 = { status: 'idle', step: 0, label: '', collected: {}, ...(cur.phase1 || {}), ...patch };
+    return chrome.storage.local.set({ cpo_state: { ...cur, phase1: p1, updatedAt: Date.now() } });
   });
 }
 
@@ -301,10 +303,6 @@ async function cpoSendCommand(tabId, type, data) {
   throw lastErr || new Error('命令无法送达: ' + type);
 }
 
-function cpoNotify(originTabId, type, payload) {
-  chrome.tabs.sendMessage(originTabId, { type, ...payload }).catch(() => {});
-}
-
 // 关 tab 前往 MAIN world 注入抑制 beforeunload（编辑页有「未保存」守卫，
 // 直接 remove 会弹「退出后修改取消」确认框阻塞流程）。capture 阶段 stopImmediatePropagation
 // 让页面自身的 beforeunload 监听器不执行 → 不弹框。
@@ -322,42 +320,29 @@ async function cpoCloseTab(tabId) {
   await chrome.tabs.remove(tabId);
 }
 
-// 主编排序列
-async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
+// 主编排序列（Phase 1）。进度全部写 cpo_state.phase1，各 tab 面板靠 storage.onChanged 同步
+async function cpoRun({ url1688, skc, skuNo, spuId }) {
   const serial = url1688.match(/\/offer\/(\d+)/)?.[1] || null;
-  if (!serial) {   // bg 侧二次校验（content 已校验，双保险）
-    cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '1688商品url 无法提取 serial', kind: 'validate' });
-    await cpoSetState({ status: 'error', step: 0 });
-    return;
-  }
-  if (!skuNo || !String(skuNo).trim()) {
-    cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '该商品需先维护货号', kind: 'validate' });
-    await cpoSetState({ status: 'error', step: 0 });
-    return;
-  }
-  if (!spuId) {
-    cpoNotify(originTabId, 'CPO_ERROR', { step: 0, message: '未读到 SPU ID（无法定位编辑页）', kind: 'read' });
-    await cpoSetState({ status: 'error', step: 0 });
-    return;
-  }
-  const collected = { skc, url1688, serial, title: '', skuNo: String(skuNo).trim(), previewUrl: '' };
+  if (!serial) { await cpoSetPhase1({ status: 'error', label: '1688商品url 无法提取 serial' }); return; }
+  if (!skuNo || !String(skuNo).trim()) { await cpoSetPhase1({ status: 'error', label: '该商品需先维护货号' }); return; }
+  if (!spuId) { await cpoSetPhase1({ status: 'error', label: '未读到 SPU ID（无法定位编辑页）' }); return; }
+
+  const collected = { skc, url1688, serial, title: '', skuNo: String(skuNo).trim(), previewUrl: '', spuId };
   const tmpTabs = [];   // 临时 tab，出错时统一回收
   try {
-    await cpoSetState({ status: 'running', step: 1, collectedData: collected });
+    await cpoSetPhase1({ status: 'running', step: 1, label: '读取 1688 标题', collected });
 
     // 步骤1：后台开 1688 → 抓标题 → 关（仅取 document.title，不需渲染，后台即可）
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 1, label: '读取 1688 标题' });
     const t1688 = await chrome.tabs.create({ url: url1688, active: false });
     tmpTabs.push(t1688.id);
     await cpoWaitTabComplete(t1688.id);
     const r1 = await cpoSendCommand(t1688.id, 'CPO_READ_1688_TITLE');
     collected.title = r1.title;
     await cpoCloseTab(t1688.id); tmpTabs.splice(tmpTabs.indexOf(t1688.id), 1);
-    await cpoSetState({ step: 2, collectedData: collected });
+    await cpoSetPhase1({ step: 2, label: '打开编辑页、读取预览图', collected });
 
     // 步骤2：用 SPU ID 构造编辑页 URL【前台 active】打开 → 抓预览图 → 关
     // 前台原因：编辑页 SKU 信息框/预览图在后台 tab 不渲染（实测）；且让用户看到运行过程
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 2, label: '打开编辑页、读取预览图' });
     const editUrl = `https://agentseller.temu.com/goods/edit?from=productList&productId=${spuId}`;
     const tEdit = await chrome.tabs.create({ url: editUrl, active: true });
     tmpTabs.push(tEdit.id);
@@ -365,29 +350,23 @@ async function cpoRun(originTabId, { url1688, skc, skuNo, spuId }) {
     const r2 = await cpoSendCommand(tEdit.id, 'CPO_GRAB_PREVIEW');
     collected.previewUrl = r2.previewUrl;
     await cpoCloseTab(tEdit.id); tmpTabs.splice(tmpTabs.indexOf(tEdit.id), 1);
-    await cpoSetState({ step: 3, collectedData: collected });
+    await cpoSetPhase1({ step: 3, label: '店小秘填表并保存', collected });
 
-    // 步骤3：开店小秘「添加单个SKU」页（前台）→ 填表（停在保存前）
-    cpoNotify(originTabId, 'CPO_PROGRESS', { step: 3, label: '店小秘填表' });
+    // 步骤3：开店小秘「添加单个SKU」页（前台）→ 填表 → 自动保存
     const tDxm = await chrome.tabs.create({ url: CPO_DXM_ADD_URL, active: true });
     await cpoWaitTabComplete(tDxm.id);
     await cpoSendCommand(tDxm.id, 'CPO_FILL_DXM', { collected });
 
-    await cpoSetState({ status: 'done', step: 3, collectedData: collected });
-    cpoNotify(originTabId, 'CPO_DONE', {});
+    await cpoSetPhase1({ status: 'done', step: 3, label: '已自动填写并提交保存', collected });
   } catch (e) {
-    // 回收所有未关闭的临时 tab
     for (const id of tmpTabs) { chrome.tabs.remove(id).catch(() => {}); }
-    cpoNotify(originTabId, 'CPO_ERROR', { step: '?', message: String(e?.message || e), kind: 'read' });
-    await cpoSetState({ status: 'error' });
+    await cpoSetPhase1({ status: 'error', label: String(e?.message || e) });
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== 'CPO_START') return;            // 只接管 CPO_START；其余命令是 bg→content，不在此
-  const originTabId = sender.tab?.id;
-  if (!originTabId) { sendResponse({ ok: false, error: '无起点 tab' }); return; }
-  cpoRun(originTabId, msg.data);                   // 异步跑，不阻塞 ack
-  sendResponse({ ok: true });                      // 立即 ack
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== 'CPO_START') return;            // 只接管 CPO_START；其余命令是 bg→content
+  cpoRun(msg.data);                                // 异步跑，进度写 storage；不阻塞 ack
+  sendResponse({ ok: true });
 });
 // ── end create_purchase_order ────────────────────────────────────────────────

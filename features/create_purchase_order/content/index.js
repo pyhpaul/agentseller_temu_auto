@@ -7,19 +7,14 @@
   const U = window.AgentSeller.utils;          // sleep/waitForEl/findByText/setInputValue
   const FID = 'create_purchase_order';
 
-  // ── 进度面板状态（只在起点 temu tab 有意义，其它域不渲染进度） ──
-  let progressEl = null;
-  function setProgress(text, kind = 'info') {
-    if (!progressEl) return;
-    progressEl.textContent = text;
-    progressEl.style.color = kind === 'error' ? '#ff4d4f' : kind === 'done' ? '#52c41a' : '#666';
-  }
+  const STATE_KEY = 'cpo_state';
 
-  // ── 商品选择状态（temu 列表页点选行，替代手输 SKC） ──
-  let selectedSkc = '';
-  let startBtnRef = null;
-
+  // ── 页面判定 ──
   function isListPage() { return location.href.includes('agentseller.temu.com/goods/list'); }
+  function isDxmPage() { return location.href.includes('dianxiaomi.com'); }
+
+  // ── 商品选择状态（temu 列表页点选行） ──
+  let selectedSkc = '';
 
   function highlightRow(row) {
     // 整行高亮：给每个 td 上背景色（!important 盖过 Temu sticky 单元格白底；
@@ -34,76 +29,152 @@
     }
   }
 
-  // ── feature 注册 + Hub 输入 UI ──
+  // ── 面板引用（render 填入；refreshFromStorage / storage.onChanged 更新） ──
+  const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null, p2Status: null, p2Btn: null };
+
+  function setLocalMsg(text, kind = 'info') {
+    if (!ui.localMsg) return;
+    ui.localMsg.textContent = text || '';
+    ui.localMsg.style.color = kind === 'error' ? '#ff4d4f' : '#666';
+  }
+
+  function statusText(p) {
+    if (!p || !p.status || p.status === 'idle') return '未开始';
+    if (p.status === 'running') return '进行中（' + (p.label || ('步骤' + (p.step || ''))) + '）';
+    if (p.status === 'done') return '✅ ' + (p.label || '已完成');
+    if (p.status === 'error') return '❌ ' + (p.label || '失败');
+    return p.status;
+  }
+
+  // 从 cpo_state 渲染两个 phase 的状态（跨 tab 共享：任何页面打开面板都能看到）
+  function renderState(state) {
+    const p1 = (state && state.phase1) || {};
+    const p2 = (state && state.phase2) || {};
+    if (ui.p1Status) ui.p1Status.textContent = '状态：' + statusText(p1);
+    if (ui.p1Data) {
+      const c = p1.collected || {};
+      ui.p1Data.textContent = (c.skuNo || c.title)
+        ? '货号 ' + (c.skuNo || '-') + ' ｜ 标题 ' + (c.title || '-').slice(0, 16) + ' ｜ 识别码 ' + (c.serial ? c.serial + '-' + c.skuNo : '-')
+        : '';
+    }
+    if (ui.p2Status) ui.p2Status.textContent = '状态：' + statusText(p2);
+    // Phase 2 按钮：Phase 1 完成 + 当前在店小秘页 才可点（动作待开发）
+    if (ui.p2Btn) ui.p2Btn.disabled = !(p1.status === 'done' && isDxmPage());
+  }
+
+  function refreshFromStorage() {
+    chrome.storage.local.get(STATE_KEY).then(o => renderState(o[STATE_KEY]));
+  }
+
+  // 跨 tab 订阅：任何 tab 改了 cpo_state，已打开的面板实时刷新
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[STATE_KEY]) renderState(changes[STATE_KEY].newValue);
+  });
+
+  // temu 列表页委托点击：点商品整行 → 高亮 + 记录 SKC + 启用「开始」
+  document.addEventListener('click', (e) => {
+    if (!isListPage()) return;
+    const row = e.target.closest('[data-testid="beast-core-table-body-tr"]');
+    if (!row) return;
+    if (e.target.closest('a,button,input,[data-testid="beast-core-checkbox"]')) return;  // 不抢行内原有交互
+    const m = row.textContent.replace(/\s/g, '').match(/SKCID[:：]?(\d+)/);
+    if (!m) return;
+    selectedSkc = m[1];
+    highlightRow(row);
+    if (ui.startBtn) ui.startBtn.disabled = false;
+    setLocalMsg('已选中 SKC ' + selectedSkc);
+  }, true);
+
+  // 发起 Phase 1（仅 temu 列表页）：从选中行读 skc/货号/SPU ID → CPO_START
+  async function onStartPhase1() {
+    if (!selectedSkc) { setLocalMsg('请先在列表点选一个商品', 'error'); return; }
+    const url1688 = (ui.urlInput && ui.urlInput.value || '').trim();
+    const v = L.validateInputs({ skc: selectedSkc, url1688 });
+    if (!v.ok) { setLocalMsg(v.error, 'error'); return; }
+    const row = await cpoFindSkcRow(selectedSkc);
+    if (!row) { setLocalMsg('选中的商品行已消失，请重新点选', 'error'); return; }
+    const skuNo = cpoReadSkuNoFromRow(row);
+    const spuId = cpoReadSpuIdFromRow(row);
+    if (!skuNo) { setLocalMsg('该商品需先维护货号', 'error'); return; }
+    if (!spuId) { setLocalMsg('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
+    if (ui.startBtn) ui.startBtn.disabled = true;
+    setLocalMsg('启动中…');
+    try {
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { url1688, skc: selectedSkc, skuNo, spuId } });
+      if (!resp?.ok) { setLocalMsg(resp?.error || '启动失败', 'error'); if (ui.startBtn) ui.startBtn.disabled = false; }
+    } catch (e) {
+      setLocalMsg('启动失败：' + e.message, 'error');
+      if (ui.startBtn) ui.startBtn.disabled = false;
+    }
+  }
+
+  // ── feature 注册 + Hub UI（两区：① 添加SKU / ② 创建采购单） ──
   window.AgentSeller.registerFeature({
     id: FID,
     icon: '🛒',
     label: '创建采购单',
     locked: false,
     order: 5,
-    init() {
-      // temu 列表页委托点击：点商品整行 → 高亮 + 记录 SKC + 启用「开始」
-      document.addEventListener('click', (e) => {
-        if (!isListPage()) return;
-        const row = e.target.closest('[data-testid="beast-core-table-body-tr"]');
-        if (!row) return;
-        if (e.target.closest('a,button,input,[data-testid="beast-core-checkbox"]')) return;  // 不抢行内原有交互
-        const m = row.textContent.replace(/\s/g, '').match(/SKCID[:：]?(\d+)/);
-        if (!m) return;
-        selectedSkc = m[1];
-        highlightRow(row);
-        if (startBtnRef) startBtnRef.disabled = false;
-        setProgress('已选中 SKC ' + selectedSkc);
-      }, true);
-    },
+    init() {},
     render(viewEl) {
       viewEl.innerHTML = '';
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;font-size:12px;';
 
-      const hintSel = document.createElement('div');
-      hintSel.style.cssText = 'font-size:12px;color:#666;line-height:1.4;';
-      hintSel.textContent = '在列表中点选要建采购单的商品（整行高亮），再填 1688 链接点开始';
+      // ===== ① 添加SKU（Temu 发起） =====
+      const h1 = document.createElement('div');
+      h1.style.cssText = 'font-weight:600;color:#1677ff;';
+      h1.textContent = '① 添加SKU';
+      ui.p1Status = document.createElement('div');
+      ui.p1Status.style.cssText = 'color:#666;';
+      ui.p1Data = document.createElement('div');
+      ui.p1Data.style.cssText = 'color:#888;font-size:11px;line-height:1.4;';
+      wrap.append(h1, ui.p1Status, ui.p1Data);
 
-      const urlInput = document.createElement('input');
-      urlInput.placeholder = '1688商品url';
-      urlInput.className = 'tal-input';
-      urlInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+      if (isListPage()) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'color:#666;line-height:1.4;';
+        hint.textContent = '点选商品（整行高亮），填 1688 链接后开始';
+        ui.urlInput = document.createElement('input');
+        ui.urlInput.placeholder = '1688商品url';
+        ui.urlInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+        ui.startBtn = document.createElement('button');
+        ui.startBtn.className = 'tal-action-btn';
+        ui.startBtn.textContent = '开始添加SKU';
+        ui.startBtn.disabled = !selectedSkc;
+        ui.startBtn.addEventListener('click', onStartPhase1);
+        ui.localMsg = document.createElement('div');
+        ui.localMsg.style.cssText = 'font-size:11px;color:#666;min-height:16px;';
+        wrap.append(hint, ui.urlInput, ui.startBtn, ui.localMsg);
+      } else {
+        const note = document.createElement('div');
+        note.style.cssText = 'color:#999;font-size:11px;';
+        note.textContent = '（在 Temu 商家中心商品列表发起）';
+        wrap.append(note);
+      }
 
-      const btn = document.createElement('button');
-      btn.className = 'tal-action-btn';
-      btn.textContent = '开始';
-      btn.disabled = !selectedSkc;          // 未选商品禁用
-      startBtnRef = btn;
+      const hr = document.createElement('div');
+      hr.style.cssText = 'border-top:1px dashed #ddd;margin:4px 0;';
+      wrap.append(hr);
 
-      progressEl = document.createElement('div');
-      progressEl.style.cssText = 'font-size:12px;color:#666;line-height:1.5;min-height:18px;';
-      if (selectedSkc) setProgress('已选中 SKC ' + selectedSkc);
+      // ===== ② 创建采购单（店小秘发起，需 Phase 1 完成） =====
+      const h2 = document.createElement('div');
+      h2.style.cssText = 'font-weight:600;color:#1677ff;';
+      h2.textContent = '② 创建采购单';
+      ui.p2Status = document.createElement('div');
+      ui.p2Status.style.cssText = 'color:#666;';
+      const note2 = document.createElement('div');
+      note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
+      note2.textContent = 'Phase 1 成功后在店小秘发起（功能开发中）';
+      ui.p2Btn = document.createElement('button');
+      ui.p2Btn.className = 'tal-action-btn';
+      ui.p2Btn.textContent = '创建采购单';
+      ui.p2Btn.disabled = true;
+      ui.p2Btn.addEventListener('click', () => U.showToast('Phase 2（创建采购单）开发中', 'info'));
+      wrap.append(h2, ui.p2Status, note2, ui.p2Btn);
 
-      btn.addEventListener('click', async () => {
-        if (!selectedSkc) { setProgress('请先在列表点选一个商品', 'error'); return; }
-        const url1688 = urlInput.value.trim();
-        const v = L.validateInputs({ skc: selectedSkc, url1688 });   // 校验 url 能提取 serial
-        if (!v.ok) { setProgress(v.error, 'error'); return; }
-        const row = await cpoFindSkcRow(selectedSkc);
-        if (!row) { setProgress('选中的商品行已消失，请重新点选', 'error'); return; }
-        const skuNo = cpoReadSkuNoFromRow(row);
-        const spuId = cpoReadSpuIdFromRow(row);
-        if (!skuNo) { setProgress('该商品需先维护货号', 'error'); return; }
-        if (!spuId) { setProgress('未读到 SPU ID（无法定位编辑页）', 'error'); return; }
-        btn.disabled = true;
-        setProgress('启动中…');
-        try {
-          const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { url1688, skc: selectedSkc, skuNo, spuId } });
-          if (!resp?.ok) { setProgress(resp?.error || '启动失败', 'error'); btn.disabled = false; }
-        } catch (e) {
-          setProgress('启动失败：' + e.message, 'error');
-          btn.disabled = false;
-        }
-      });
-
-      wrap.append(hintSel, urlInput, btn, progressEl);
       viewEl.appendChild(wrap);
+      refreshFromStorage();
     },
   });
 
@@ -308,12 +379,8 @@
     },
   };
 
+  // bg → content 命令分发（进度改由 chrome.storage.onChanged 驱动，不再走消息）
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    // 进度推送（起点 tab 接收，无需回 response）
-    if (msg.type === 'CPO_PROGRESS') { setProgress(`步骤${msg.step}：${msg.label}`); return; }
-    if (msg.type === 'CPO_DONE')     { setProgress('已自动填写并提交保存', 'done'); return; }
-    if (msg.type === 'CPO_ERROR')    { setProgress(`步骤${msg.step}失败：${msg.message}`, 'error'); return; }
-
     const h = handlers[msg.type];
     if (!h) return;                                  // 非本 feature 命令，放行
     h(msg.data).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
