@@ -30,12 +30,19 @@
   }
 
   // ── 面板引用（render 填入；refreshFromStorage / storage.onChanged 更新） ──
-  const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null, p2Status: null, p2Btn: null };
+  const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
+               p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
     ui.localMsg.textContent = text || '';
     ui.localMsg.style.color = kind === 'error' ? '#ff4d4f' : '#666';
+  }
+
+  function setP2Msg(text, kind = 'info') {
+    if (!ui.p2Msg) return;
+    ui.p2Msg.textContent = text || '';
+    ui.p2Msg.style.color = kind === 'error' ? '#ff4d4f' : '#666';
   }
 
   function statusText(p) {
@@ -58,8 +65,14 @@
         : '';
     }
     if (ui.p2Status) ui.p2Status.textContent = '状态：' + statusText(p2);
-    // Phase 2 按钮：Phase 1 完成 + 当前在店小秘页 才可点（动作待开发）
-    if (ui.p2Btn) ui.p2Btn.disabled = !(p1.status === 'done' && isDxmPage());
+    if (ui.p2Data) {
+      const c2 = p2.collected2 || {};
+      ui.p2Data.textContent = (p2.status === 'done' && c2.poNo)
+        ? '当前订单信息：' + c2.poNo + '（' + (c2.orderNo1688 || '-') + '）'
+        : '';
+    }
+    lastP1Done = (p1.status === 'done');
+    recomputeP2Btn();
   }
 
   function refreshFromStorage() {
@@ -114,6 +127,39 @@
       cpoStarting = false;
       // 成功启动后保持禁用（流程在跑，避免误触并行重跑）；未启动则恢复供重试
       if (!started && ui.startBtn) ui.startBtn.disabled = false;
+    }
+  }
+
+  // ②区按钮启用：phase1 done + 在店小秘页 + 输入框有值。lastP1Done 由 renderState 更新
+  let lastP1Done = false;
+  function recomputeP2Btn() {
+    if (!ui.p2Btn) return;
+    const orderVal = (ui.orderInput && ui.orderInput.value || '').trim();
+    ui.p2Btn.disabled = !(lastP1Done && isDxmPage() && orderVal);
+  }
+
+  // 发起 Phase 2（仅店小秘页）：校验 → CPO_START_PHASE2
+  let cpoStarting2 = false;   // 重入守卫
+  async function onStartPhase2() {
+    if (cpoStarting2) return;
+    cpoStarting2 = true;                              // 提前置位，覆盖 await 校验窗口（对齐①区）
+    if (ui.p2Btn) ui.p2Btn.disabled = true;          // 同步禁用，先于下面的 async 校验
+    let started = false;
+    try {
+      const orderNo1688 = (ui.orderInput && ui.orderInput.value || '').trim();
+      const o = await chrome.storage.local.get(STATE_KEY);
+      const p1Done = !!(o[STATE_KEY] && o[STATE_KEY].phase1 && o[STATE_KEY].phase1.status === 'done');
+      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done });
+      if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
+      setP2Msg('启动中…');
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688 } });
+      if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
+      else started = true;
+    } catch (e) {
+      setP2Msg('启动失败：' + e.message, 'error');
+    } finally {
+      cpoStarting2 = false;
+      if (!started) recomputeP2Btn();                // 启动成功则保持禁用（流程在跑）
     }
   }
 
@@ -194,15 +240,32 @@
       h2.textContent = '② 创建采购单';
       ui.p2Status = document.createElement('div');
       ui.p2Status.style.cssText = 'color:#666;';
-      const note2 = document.createElement('div');
-      note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
-      note2.textContent = 'Phase 1 成功后在店小秘发起（功能开发中）';
-      ui.p2Btn = document.createElement('button');
-      ui.p2Btn.className = 'tal-action-btn';
-      ui.p2Btn.textContent = '创建采购单';
-      ui.p2Btn.disabled = true;
-      ui.p2Btn.addEventListener('click', () => U.showToast('Phase 2（创建采购单）开发中', 'info'));
-      wrap.append(h2, ui.p2Status, note2, ui.p2Btn);
+      ui.p2Data = document.createElement('div');
+      ui.p2Data.style.cssText = 'color:#888;font-size:11px;line-height:1.4;';
+      wrap.append(h2, ui.p2Status, ui.p2Data);
+
+      if (isDxmPage()) {
+        const hint2 = document.createElement('div');
+        hint2.style.cssText = 'color:#666;line-height:1.4;';
+        hint2.textContent = '需先完成①添加SKU；填 1688订单号后开始';
+        ui.orderInput = document.createElement('input');
+        ui.orderInput.placeholder = '1688订单号';
+        ui.orderInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+        ui.orderInput.addEventListener('input', recomputeP2Btn);
+        ui.p2Btn = document.createElement('button');
+        ui.p2Btn.className = 'tal-action-btn';
+        ui.p2Btn.textContent = '开始创建采购单';
+        ui.p2Btn.disabled = true;
+        ui.p2Btn.addEventListener('click', onStartPhase2);
+        ui.p2Msg = document.createElement('div');
+        ui.p2Msg.style.cssText = 'font-size:11px;color:#666;min-height:16px;';
+        wrap.append(hint2, ui.orderInput, ui.p2Btn, ui.p2Msg);
+      } else {
+        const note2 = document.createElement('div');
+        note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
+        note2.textContent = '（在店小秘页发起；需先完成①添加SKU）';
+        wrap.append(note2);
+      }
 
       // 清除按钮（两 phase 未全部完成时弹确认，避免误清）
       const clearBtn = document.createElement('button');
