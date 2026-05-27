@@ -388,4 +388,140 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   cpoRun(msg.data);                                // 异步跑，进度写 storage；不阻塞 ack
   sendResponse({ ok: true });
 });
+
+// ── Phase 2：创建现有订单跨 tab 编排 ──
+const CPO_DXM_DRAFT_URL = 'https://www.dianxiaomi.com/web/purchasing/order/draft/aliPurchasing';
+const CPO_DXM_WAIT_URL  = 'https://www.dianxiaomi.com/web/purchasing/order/waitArrival';
+
+// 写 cpo_state.phase2（单一状态源；各 tab 面板靠 storage.onChanged 同步）
+function cpoSetPhase2(patch) {
+  return chrome.storage.local.get('cpo_state').then(({ cpo_state }) => {
+    const cur = cpo_state || {};
+    const p2 = { status: 'idle', step: 0, label: '', collected2: {}, ...(cur.phase2 || {}), ...patch };
+    return chrome.storage.local.set({ cpo_state: { ...cur, phase2: p2, updatedAt: Date.now() } });
+  });
+}
+
+// 捕获 openerTabId 点击弹出的子 tab，等 URL 命中 predicate 且加载完成 → tabId
+// 注册时序：必须在发出触发点击命令【之前】调用，否则点击瞬间弹出的 tab 会漏捕获
+function cpoCaptureChildTab(openerTabId, urlPredicate, timeout = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error('未捕获到目标子 tab')); }, timeout);
+    let childId = null;
+    function hit(id, tab) {
+      const url = (tab && tab.url) || '';
+      if (url && urlPredicate(url) && tab.status === 'complete') { cleanup(); resolve(id); }
+    }
+    function onCreated(tab) {
+      if (childId == null && tab.openerTabId === openerTabId) { childId = tab.id; hit(tab.id, tab); }
+    }
+    function onUpdated(id, _info, tab) { if (id === childId) hit(id, tab); }
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.tabs.onCreated.removeListener(onCreated);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    }
+    chrome.tabs.onCreated.addListener(onCreated);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+// add→edit：「获取1688订单」成功后店小秘跳 edit（同 tab 导航或新弹 tab 都覆盖）→ edit tabId
+function cpoWaitEditTab(addTabId, timeout = 30000) {
+  const pred = u => /\/purchasing\/order\/edit/.test(u);
+  let cleanup = () => {};
+  const promise = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error('获取1688订单后未跳转到采购单编辑页')); }, timeout);
+    function onUpdated(id, info, tab) {
+      const url = (tab && tab.url) || info.url || '';
+      if (url && pred(url) && tab.status === 'complete' && (id === addTabId || tab.openerTabId === addTabId)) {
+        cleanup(); resolve(id);
+      }
+    }
+    cleanup = () => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(onUpdated); };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+  return { promise, cancel: () => cleanup() };
+}
+
+// Phase 2 主编排：创建现有订单 → 通过审核 → 待到货定位 → 停在申请付款前
+async function cpoRun2({ orderNo1688 }) {
+  const { cpo_state } = await chrome.storage.local.get('cpo_state');
+  const p1 = (cpo_state && cpo_state.phase1) || {};
+  const skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
+  if (p1.status !== 'done') { await cpoSetPhase2({ status: 'error', label: '请先完成 Phase 1 添加SKU' }); return; }
+  if (!skuNo) { await cpoSetPhase2({ status: 'error', label: 'Phase 1 未采集到 SKU货号' }); return; }
+  if (!orderNo1688 || !orderNo1688.trim()) { await cpoSetPhase2({ status: 'error', label: '1688订单号不能为空' }); return; }
+  const order = orderNo1688.trim();
+
+  const collected2 = { poNo: '', orderNo1688: order };
+  const tmpTabs = [];   // 临时 tab，出错统一回收（待到货页除外）
+  try {
+    await cpoSetPhase2({ status: 'running', step: 1, label: '打开草稿页、点创建现有订单', collected2 });
+
+    // step1：开 draft → 先挂 add tab 捕获监听（注册时序）→ 点创建现有订单 → 捕获 add tab
+    const tDraft = await chrome.tabs.create({ url: CPO_DXM_DRAFT_URL, active: true });
+    tmpTabs.push(tDraft.id);
+    await cpoWaitTabComplete(tDraft.id);
+    const addTabP = cpoCaptureChildTab(tDraft.id, u => /\/purchasing\/order\/add/.test(u));
+    await cpoSendCommand(tDraft.id, 'CPO_P2_DRAFT_CREATE');
+    const addTabId = await addTabP;
+    tmpTabs.push(addTabId);
+
+    // step2-3：add 选账号+填单号+获取；弹窗分流（bg 主导）
+    await cpoSetPhase2({ step: 2, label: '填写1688账号与订单号、获取订单', collected2 });
+    await cpoWaitTabComplete(addTabId);
+    const editWaiter = cpoWaitEditTab(addTabId);            // 先挂 edit 监听（注册时序）
+    const editTabP = editWaiter.promise.catch(() => null);  // 超时返回 null
+    let exists = false;
+    try {
+      const r = await cpoSendCommand(addTabId, 'CPO_P2_ADD_FETCH', { orderNo1688: order });
+      exists = !!(r && r.exists);
+    } catch (_) { /* 跳转 edit 销毁 content 通道，靠 editTabP 接管 */ }
+    if (exists) {
+      editWaiter.cancel();          // 已入库不跳 edit，主动清理 edit 监听（避免 30s 孤儿监听）
+      await cpoCloseTab(addTabId);
+      await cpoSetPhase2({ status: 'error', label: '当前输入的1688订单号已入库', collected2 });
+      return;
+    }
+
+    // step3→4：接管 edit tab
+    await cpoSetPhase2({ step: 3, label: '进入采购单编辑页', collected2 });
+    const editTabId = await editTabP;
+    if (!editTabId) throw new Error('获取1688订单后未跳转到采购单编辑页');
+    tmpTabs.push(editTabId);
+    await cpoWaitTabComplete(editTabId);
+
+    // step4：edit 填采购人员/收货仓库 + 配对商品
+    await cpoSetPhase2({ step: 4, label: '填采购人员/收货仓库、配对商品', collected2 });
+    await cpoSendCommand(editTabId, 'CPO_P2_EDIT_FILL', { skuNo });
+
+    // step5：保存并通过审核 → 抓成功弹窗提采购单号
+    await cpoSetPhase2({ step: 5, label: '保存并通过审核', collected2 });
+    const rSave = await cpoSendCommand(editTabId, 'CPO_P2_EDIT_SAVE');
+    collected2.poNo = rSave.poNo;
+    await cpoSetPhase2({ step: 5, label: '已通过审核，采购单 ' + rSave.poNo, collected2 }); // 同 step 二次更新：显示审核结果（故意，非笔误）
+
+    // step6：开待到货页搜索定位（新开 tab + 关 edit tab，避免 edit 未保存守卫阻塞 update + 残留）
+    await cpoSetPhase2({ step: 6, label: '打开待到货页、搜索定位商品', collected2 });
+    await cpoCloseTab(editTabId); tmpTabs.splice(tmpTabs.indexOf(editTabId), 1);
+    const tWait = await chrome.tabs.create({ url: CPO_DXM_WAIT_URL, active: true });
+    await cpoWaitTabComplete(tWait.id);
+    await cpoSendCommand(tWait.id, 'CPO_P2_WAIT_SEARCH', { skuNo });
+    // tWait 待到货页保留给用户点申请付款，不加入 tmpTabs、不回收
+
+    // step7：done，提醒手动申请付款
+    await cpoSetPhase2({ status: 'done', step: 7, label: '已定位商品，请手动点「申请付款」完成', collected2 });
+  } catch (e) {
+    for (const id of tmpTabs) { chrome.tabs.remove(id).catch(() => {}); }
+    await cpoSetPhase2({ status: 'error', label: String(e?.message || e), collected2 });
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== 'CPO_START_PHASE2') return;     // 只接管 CPO_START_PHASE2
+  if (!msg.data) { sendResponse({ ok: false, error: '缺少启动参数' }); return; }
+  cpoRun2(msg.data);                               // 异步跑，进度写 storage；不阻塞 ack
+  sendResponse({ ok: true });
+});
 // ── end create_purchase_order ────────────────────────────────────────────────
