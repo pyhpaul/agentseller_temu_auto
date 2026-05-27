@@ -442,6 +442,24 @@
       if (!previewUrl) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
       return { ok: true, previewUrl };   // 原样返回 src（含 imageMogr2 缩略参数，用户要 300x）
     },
+    CPO_P2_DRAFT_CREATE: async () => {
+      // 触发器：ant-btn + ant-dropdown-trigger，文字 span「创建采购单」+ icon_down
+      const trigger = U.findByText('button.ant-dropdown-trigger, button.ant-btn', '创建采购单');
+      if (!trigger) return { ok: false, error: '未找到「创建采购单」按钮' };
+      trigger.click();
+      // 下拉预渲染（初始隐藏），轮询等「创建现有订单」项【可见】再点
+      // （固定 sleep 不可靠且会命中隐藏预渲染项；用可见性过滤，同 Phase 1 cpoFillPersonnel）
+      let item = null;
+      for (let i = 0; i < 20 && !item; i++) {   // ~2s
+        await U.sleep(100);
+        item = Array.from(document.querySelectorAll('.ant-dropdown-menu-item'))
+          .find(el => U.normText(el.textContent) === '创建现有订单' && el.getBoundingClientRect().height > 0);
+      }
+      if (!item) return { ok: false, error: '「创建采购单」下拉未展开或无「创建现有订单」项' };
+      item.click();   // 店小秘新开 add tab（手动实测为新标签、未拦截），bg cpoCaptureChildTab 捕获
+      return { ok: true };
+    },
+
     CPO_FILL_DXM: async ({ collected }) => {
       const f = L.mapDxmFields(collected);
       U.showToast('创建采购单：正在填写商品信息…', 'info');
