@@ -559,24 +559,6 @@
       if (!previewUrl) return { ok: false, error: '预览图url 读取失败（SKU信息框未找到预览图）' };
       return { ok: true, previewUrl };   // 原样返回 src（含 imageMogr2 缩略参数，用户要 300x）
     },
-    CPO_P2_DRAFT_CREATE: async () => {
-      // 触发器：ant-btn + ant-dropdown-trigger，文字 span「创建采购单」+ icon_down
-      const trigger = U.findByText('button.ant-dropdown-trigger, button.ant-btn', '创建采购单');
-      if (!trigger) return { ok: false, error: '未找到「创建采购单」按钮' };
-      trigger.click();
-      // 下拉预渲染（初始隐藏），轮询等「创建现有订单」项【可见】再点
-      // （固定 sleep 不可靠且会命中隐藏预渲染项；用可见性过滤，同 Phase 1 cpoFillPersonnel）
-      let item = null;
-      for (let i = 0; i < 20 && !item; i++) {   // ~2s
-        await U.sleep(100);
-        item = Array.from(document.querySelectorAll('.ant-dropdown-menu-item'))
-          .find(el => U.normText(el.textContent) === '创建现有订单' && el.getBoundingClientRect().height > 0);
-      }
-      if (!item) return { ok: false, error: '「创建采购单」下拉未展开或无「创建现有订单」项' };
-      item.click();   // 店小秘新开 add tab（手动实测为新标签、未拦截），bg cpoCaptureChildTab 捕获
-      return { ok: true };
-    },
-
     CPO_FILL_DXM: async ({ collected }) => {
       const f = L.mapDxmFields(collected);
       U.showToast('创建采购单：正在填写商品信息…', 'info');
@@ -624,17 +606,16 @@
     },
 
     CPO_P2_ADD_FETCH: async ({ orderNo1688 }) => {
-      // a) 1688账号下拉选第一项（唯一、与账号绑定 greenworld_绿城）
-      const acctSel = cpoFindSelectByLabel('1688账号');
-      if (!acctSel) return { ok: false, error: '未找到「1688账号」下拉' };
-      if (!(await cpoSelectFirstOption(acctSel))) return { ok: false, error: '「1688账号」下拉无可选项' };
-      await U.sleep(200);
-      // b) 填 1688订单号 —— 真实 DOM 是 textarea（非 input！）placeholder「填写1688订单号，多订单号请用回车键分隔」
+      // isPaste=1 模式：无「1688账号」下拉，直接填订单号 + 点获取
+      // 等 Vue 表单渲染（tab.status=complete 后组件仍需额外时间挂载）
+      try { await U.waitForEl('textarea[placeholder*="1688订单号"]', document, 10000); }
+      catch { return { ok: false, error: '1688订单号输入框 10s 内未渲染，表单未就绪' }; }
+      // a) 填 1688订单号 —— textarea placeholder「填写1688订单号，多订单号请用回车键分隔」
       const orderInput = document.querySelector('textarea[placeholder*="1688订单号"], textarea[placeholder*="订单号"]');
       if (!orderInput) return { ok: false, error: '未找到「1688订单」输入框' };
       U.setInputValue(orderInput, orderNo1688);
       await U.sleep(150);
-      // c) 点「获取1688订单」（warn-btn）
+      // b) 点「获取1688订单」（warn-btn）
       const fetchBtn = U.findByText('button, .ant-btn', '获取1688订单');
       if (!fetchBtn) return { ok: false, error: '未找到「获取1688订单」按钮' };
       fetchBtn.click();
@@ -657,6 +638,9 @@
 
     CPO_P2_EDIT_FILL: async ({ skuNo }) => {
       U.showToast('创建采购单：填写采购信息…', 'info');
+      // 等 edit 页 Vue 表单渲染（收货仓库 d-selector 是渲染完成的标志）
+      try { await U.waitForEl('label[title="收货仓库"], div.d-selector', document, 12000); }
+      catch { return { ok: false, error: 'edit 页收货仓库下拉 12s 内未渲染，表单未就绪' }; }
       // a) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）
       const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
       const buyerSel = cpoFindSelectByLabel('采购人员');
@@ -675,6 +659,9 @@
     },
 
     CPO_P2_EDIT_SAVE: async () => {
+      // 等保存按钮出现（防止 EDIT_FILL 与 SAVE 之间极短时序竞争）
+      try { await U.waitForEl('.ant-btn', document, 5000); }
+      catch { return { ok: false, error: '读取失败：edit 页保存按钮 5s 内未就绪' }; }
       // 点「保存，并通过审核」（注意文案含逗号）
       const saveBtn = U.findByText('button, .ant-btn', '保存，并通过审核')
         || U.findByText('button, .ant-btn', '保存并通过审核');
@@ -692,11 +679,14 @@
       }
       if (!text) return { ok: false, error: '业务拦截：未捕获到审核成功弹窗（保存可能被必填项拦截）' };
       const poNo = L.extractPoNo(text);
-      if (!poNo) return { ok: false, error: '数据校验：审核成功弹窗未解析出采购单号（请核查 extractPoNo 正则）' };
+      if (!poNo) return { ok: false, error: '数据校验：审核弹窗未解析出采购单号。原文：' + text.slice(0, 120) };
       return { ok: true, poNo };
     },
 
     CPO_P2_WAIT_SEARCH: async ({ skuNo }) => {
+      // 等待待到货页 Vue 渲染完成（tab.status=complete ≠ Vue 组件就绪）
+      try { await U.waitForEl('#searchValue, input[name="tableSearchInput"]', document, 10000); }
+      catch { return { ok: false, error: '读取失败：待到货页搜索框 10s 内未渲染，表单未就绪' }; }
       // 搜索类型是 d-tag-group（tag 切换），非 ant-select。点「商品SKU」tag（默认通常已 active）
       const typeTag = Array.from(document.querySelectorAll('.d-tag-group-item'))
         .find(t => U.normText(t.textContent) === '商品SKU');

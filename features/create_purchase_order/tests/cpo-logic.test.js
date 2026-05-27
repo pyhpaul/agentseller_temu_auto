@@ -64,6 +64,18 @@ test('extractPoNo: 无采购单号返回 null', () => {
   assert.strictEqual(extractPoNo(null), null);
 });
 
+test('extractPoNo: textContent 跨节点空白（真实弹窗 dump）', () => {
+  // 真实 textContent：DOM 跨节点拼接插入空白（「关 闭」即为证据），冒号/PO 间夹空格
+  assert.strictEqual(
+    extractPoNo('提示操作成功：1个，采购单： PO1SLPT027940 已移入「待到货」状态。关 闭'),
+    'PO1SLPT027940'
+  );
+  assert.strictEqual(
+    extractPoNo('采购单 ： PO1SLPT027940 已移入'),
+    'PO1SLPT027940'
+  );
+});
+
 test('extractPoNo: 采购单号 措辞（已存在弹窗同款）', () => {
   assert.strictEqual(
     extractPoNo('3304702093890742986采购单号：PO1SLPT027932已存在，不能重复添加'),

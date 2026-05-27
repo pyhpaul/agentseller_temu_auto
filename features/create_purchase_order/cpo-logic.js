@@ -41,9 +41,10 @@
   }
 
   // 审核成功弹窗文本 "操作成功：1个，采购单：PO1SLPT...已移入待到货状态" → "PO1SLPT..."；无则 null
+  // 先去所有空白：弹窗 textContent 跨 DOM 节点拼接会插入空白（如「采购单： PO...」「关 闭」），否则正则失配
   function extractPoNo(successText) {
-    const text = String(successText == null ? '' : successText);
-    const m = text.match(/采购单号?[:：]\s*(PO\w+)/);
+    const text = String(successText == null ? '' : successText).replace(/\s+/g, '');
+    const m = text.match(/采购单号?[:：](PO\w+)/);
     return m ? m[1] : null;
   }
 
