@@ -400,6 +400,54 @@
     return { filled, total: selects.length };
   }
 
+  // 找标签文本对应的 ant-select（同 form-item 内含 .ant-select 的最小容器）
+  function cpoFindSelectByLabel(labelText) {
+    const want = U.normText(labelText);
+    const item = Array.from(document.querySelectorAll('.ant-form-item, .form-item, .ant-row, .ant-col'))
+      .filter(el => U.normText(el.textContent).includes(want) && el.querySelector('.ant-select'))
+      .sort((a, b) => a.textContent.length - b.textContent.length)[0];
+    return item ? item.querySelector('.ant-select') : null;
+  }
+
+  // 打开 ant-select 下拉、选第一个可见非空选项（用于唯一项的账号下拉）→ 成功 true
+  async function cpoSelectFirstOption(sel) {
+    const combo = sel.querySelector('input');
+    (sel.querySelector('.ant-select-selector') || sel).click();
+    const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
+    for (let i = 0; i < 30; i++) {
+      await U.sleep(100);
+      const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
+      const scopes = scoped ? [scoped]
+        : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
+      for (const s of scopes) {
+        const opt = Array.from(s.querySelectorAll('[role="option"], .ant-select-item-option'))
+          .find(o => U.normText(o.textContent));   // 第一个有文本的选项
+        if (opt) { opt.click(); return true; }
+      }
+    }
+    return false;
+  }
+
+  // 选 ant-select 中 textContent 精确等于 want 的选项（采购人员/收货仓库/搜索类型用）→ 成功 true
+  async function cpoSelectOptionByText(sel, want) {
+    const combo = sel.querySelector('input');
+    (sel.querySelector('.ant-select-selector') || sel).click();
+    const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
+    const target = U.normText(want);
+    for (let i = 0; i < 30; i++) {
+      await U.sleep(100);
+      const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
+      const scopes = scoped ? [scoped]
+        : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
+      for (const s of scopes) {
+        const opt = Array.from(s.querySelectorAll('[role="option"], .ant-select-item-option'))
+          .find(o => U.normText(o.textContent) === target);
+        if (opt) { opt.click(); return true; }
+      }
+    }
+    return false;
+  }
+
   // ── bg → content 命令处理器（temu 列表/编辑 + 1688 + 店小秘 填表） ──
   const handlers = {
     CPO_READ_1688_TITLE: async () => {
@@ -504,6 +552,38 @@
       saveBtn.click();
       U.showToast('创建采购单：已提交保存', 'ok');
       return { ok: true, filled: true, person, saved: true };
+    },
+
+    CPO_P2_ADD_FETCH: async ({ orderNo1688 }) => {
+      // a) 1688账号下拉选第一项（唯一、与账号绑定 greenworld_绿城）
+      const acctSel = cpoFindSelectByLabel('1688账号');
+      if (!acctSel) return { ok: false, error: '未找到「1688账号」下拉' };
+      if (!(await cpoSelectFirstOption(acctSel))) return { ok: false, error: '「1688账号」下拉无可选项' };
+      await U.sleep(200);
+      // b) 填 1688订单号 —— 真实 DOM 是 textarea（非 input！）placeholder「填写1688订单号，多订单号请用回车键分隔」
+      const orderInput = document.querySelector('textarea[placeholder*="1688订单号"], textarea[placeholder*="订单号"]');
+      if (!orderInput) return { ok: false, error: '未找到「1688订单」输入框' };
+      U.setInputValue(orderInput, orderNo1688);
+      await U.sleep(150);
+      // c) 点「获取1688订单」（warn-btn）
+      const fetchBtn = U.findByText('button, .ant-btn', '获取1688订单');
+      if (!fetchBtn) return { ok: false, error: '未找到「获取1688订单」按钮' };
+      fetchBtn.click();
+      // d) 轮询「已存在」弹窗（业务拦截）；未出现则 exists:false（bg 靠 edit 跳转监听接管）
+      //    弹窗精确结构待补 dump，先用鲁棒关键词 + 可见性检测
+      for (let i = 0; i < 25; i++) {                 // ~5s
+        await U.sleep(200);
+        const dlg = Array.from(document.querySelectorAll('.ant-modal, .ant-modal-confirm, .modal'))
+          .find(d => d.getBoundingClientRect().height > 0 && /已存在|不能重复添加|已完成/.test(d.textContent));
+        if (dlg) {
+          const closeBtn = U.findByText('.ant-modal button, .modal button', '关闭')
+            || dlg.querySelector('.ant-modal-close, .ant-modal-close-x')
+            || Array.from(dlg.querySelectorAll('button, .ant-btn')).find(b => /关闭|知道了|确定/.test(b.textContent));
+          closeBtn?.click();
+          return { ok: true, exists: true };
+        }
+      }
+      return { ok: true, exists: false };
     },
   };
 
