@@ -43,7 +43,7 @@
   // 审核成功弹窗文本 "操作成功：1个，采购单：PO1SLPT...已移入待到货状态" → "PO1SLPT..."；无则 null
   function extractPoNo(successText) {
     const text = String(successText == null ? '' : successText);
-    const m = text.match(/采购单[:：]\s*(PO\w+)/);
+    const m = text.match(/采购单号?[:：]\s*(PO\w+)/);
     return m ? m[1] : null;
   }
 

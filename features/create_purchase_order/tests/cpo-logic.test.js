@@ -64,6 +64,13 @@ test('extractPoNo: 无采购单号返回 null', () => {
   assert.strictEqual(extractPoNo(null), null);
 });
 
+test('extractPoNo: 采购单号 措辞（已存在弹窗同款）', () => {
+  assert.strictEqual(
+    extractPoNo('3304702093890742986采购单号：PO1SLPT027932已存在，不能重复添加'),
+    'PO1SLPT027932'
+  );
+});
+
 test('validatePhase2: 合法', () => {
   assert.deepStrictEqual(validatePhase2({ orderNo1688: 'AB123', phase1Done: true }), { ok: true });
 });
