@@ -109,6 +109,28 @@
     }
   }
 
+  // 清除当前流程数据：两个 phase 未全部完成时先确认，避免误清未完成的工作
+  async function onClear() {
+    const o = await chrome.storage.local.get(STATE_KEY);
+    const st = o[STATE_KEY];
+    const p1 = (st && st.phase1) || {};
+    const p2 = (st && st.phase2) || {};
+    const c = p1.collected || {};
+    const hasData = (p1.status && p1.status !== 'idle') || c.skuNo || c.title;
+    if (!hasData) { U.showToast('当前无流程数据', 'info'); return; }
+    const bothDone = p1.status === 'done' && p2.status === 'done';
+    if (!bothDone && !window.confirm('当前采购单流程尚未全部完成，确认清除已采集的数据？')) return;
+    await doClear();
+  }
+
+  async function doClear() {
+    await chrome.storage.local.remove(STATE_KEY);
+    selectedSkc = '';
+    highlightRow(null);
+    if (ui.startBtn) ui.startBtn.disabled = true;
+    U.showToast('已清除当前采购单流程数据', 'ok');
+  }
+
   // ── feature 注册 + Hub UI（两区：① 添加SKU / ② 创建采购单） ──
   window.AgentSeller.registerFeature({
     id: FID,
@@ -173,6 +195,13 @@
       ui.p2Btn.disabled = true;
       ui.p2Btn.addEventListener('click', () => U.showToast('Phase 2（创建采购单）开发中', 'info'));
       wrap.append(h2, ui.p2Status, note2, ui.p2Btn);
+
+      // 清除按钮（两 phase 未全部完成时弹确认，避免误清）
+      const clearBtn = document.createElement('button');
+      clearBtn.textContent = '清除当前流程';
+      clearBtn.style.cssText = 'margin-top:8px;font-size:11px;color:#999;background:none;border:none;cursor:pointer;text-decoration:underline;align-self:flex-start;padding:0;';
+      clearBtn.addEventListener('click', onClear);
+      wrap.append(clearBtn);
 
       viewEl.appendChild(wrap);
       refreshFromStorage();
