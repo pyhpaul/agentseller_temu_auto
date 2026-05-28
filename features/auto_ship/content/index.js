@@ -90,15 +90,11 @@
     const m = U.normText(cell.textContent).match(/^([A-Za-z0-9]{6,})/);
     return m ? m[1] : '';
   }
-  // 发货仓库：td[3]「发货信息」列，「发货仓库：」label 后内层 div 第一个 span
+  // 发货仓库：td[3]「发货信息」列。整列文本正则提取「发货仓库：」到「更换/收货仓库」之间
+  // （dump 验证：DOM 结构 label.parentElement.querySelector('div span') 会误中 label 自身，故只用 regex）
   function readWarehouseName(tr) {
     const cell = rowCells(tr)[3];
     if (!cell) return '';
-    const label = Array.from(cell.querySelectorAll('span')).find((s) => U.normText(s.textContent).startsWith('发货仓库'));
-    if (label && label.parentElement) {
-      const valSpan = label.parentElement.querySelector('div span');
-      if (valSpan) return valSpan.textContent.trim();
-    }
     const m = U.normText(cell.textContent).match(/发货仓库[:：]\s*([\s\S]*?)(?:更换|收货仓库|$)/);
     return m ? m[1].trim() : '';
   }
@@ -228,9 +224,10 @@
     return (i && i.checked) || (checkbox && checkbox.getAttribute('data-checked') === 'true');
   }
   async function selectRow(row) {
-    const cb = row.checkbox;
+    const cb = row.checkbox;   // cb 是 label[data-testid="beast-core-checkbox"]
     if (!cb) throw markRead(new Error(`读取失败：发货单 ${row.orderNo} 未找到 checkbox`));
-    if (!rowChecked(cb)) { (cb.querySelector('input[type="checkbox"]') || cb).click(); await U.sleep(200); }
+    // dump 验证：input.click() 无效，label.click() 才触发 React onChange（data-checked/input.checked 同步更新）
+    if (!rowChecked(cb)) { cb.click(); await U.sleep(200); }
     if (!rowChecked(cb)) throw markData(new Error(`数据校验：发货单 ${row.orderNo} 勾选后未选中`));
   }
 
