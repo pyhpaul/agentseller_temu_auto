@@ -59,7 +59,130 @@
     if (s) s.disabled = running; if (t) t.disabled = !running;
   }
 
-  // 引擎在 Task 7/8 实现；此处占位避免引用未定义。
+  // ════════ DOM 适配层 A：tab / 扫描 / 行定位 / 读取（据 samples/table_and_tabs.txt 真实 DOM）════════
+  const SEL = {
+    bodyRow: '[data-testid="beast-core-table-body-tr"]',
+    checkbox: '[data-testid="beast-core-checkbox"]',
+    tabLabel: '[data-testid="beast-core-tab-itemLabel"]',
+    scrollContainer: '[class*="contentContainer"]',
+    btnLink: '[data-testid="beast-core-button-link"]',
+  };
+  const TAB_PENDING = '待装箱发货';
+  const TAB_RECEIVED = '待仓库收货';
+
+  // ── 错误分层标记（spec §9）──
+  function markRead(err) { err._cat = 'read'; return err; }
+  function markData(err) { err._cat = 'data'; return err; }
+  function markBiz(err) { err._cat = 'biz'; return err; }
+
+  // ── 行 / 单元格 ──
+  function bodyRows() { return Array.from(document.querySelectorAll(SEL.bodyRow)); }
+  function rowCells(tr) { return Array.from(tr.querySelectorAll(':scope > td')); }
+  function rowCheckbox(tr) { return tr.querySelector(SEL.checkbox); }
+
+  // 发货单号：td[1] 内首个无子元素纯文本 div（如 FH2605284051650）
+  function readOrderNo(tr) {
+    const cell = rowCells(tr)[1];
+    if (!cell) return '';
+    const box = cell.querySelector('[data-testid="beast-core-box"]') || cell;
+    const leaf = Array.from(box.querySelectorAll('div')).find((d) => d.children.length === 0 && /\S/.test(d.textContent));
+    if (leaf) return leaf.textContent.trim();
+    const m = U.normText(cell.textContent).match(/^([A-Za-z0-9]{6,})/);
+    return m ? m[1] : '';
+  }
+  // 发货仓库：td[3]「发货信息」列，「发货仓库：」label 后内层 div 第一个 span
+  function readWarehouseName(tr) {
+    const cell = rowCells(tr)[3];
+    if (!cell) return '';
+    const label = Array.from(cell.querySelectorAll('span')).find((s) => U.normText(s.textContent).startsWith('发货仓库'));
+    if (label && label.parentElement) {
+      const valSpan = label.parentElement.querySelector('div span');
+      if (valSpan) return valSpan.textContent.trim();
+    }
+    const m = U.normText(cell.textContent).match(/发货仓库[:：]\s*([\s\S]*?)(?:更换|收货仓库|$)/);
+    return m ? m[1].trim() : '';
+  }
+  // 包裹号：td[4]。空值=「打印打包标签后展示」→ 返回 ''；有值=PC2605285400438
+  function readPackageNo(tr) {
+    const cell = rowCells(tr)[4];
+    if (!cell) return '';
+    const t = U.normText(cell.textContent);
+    if (t.includes('打印打包标签后展示')) return '';
+    const m = t.match(/([A-Z]{2}\d{6,})/);
+    return m ? m[1] : t;
+  }
+
+  // ── 滚动容器（页面级；无滚动则 null，一次性枚举）──
+  function getScrollContainer() {
+    const el = document.querySelector(SEL.scrollContainer);
+    if (el && el.scrollHeight > el.clientHeight + 5) return el;
+    return null;
+  }
+
+  // ── 滚动扫描：枚举当前活表格所有发货单号（去重）──
+  async function scanOrderNos() {
+    const found = [];
+    const collect = () => { for (const tr of bodyRows()) { const no = readOrderNo(tr); if (no) found.push(no); } };
+    const sc = getScrollContainer();
+    if (!sc) { collect(); return L.dedupOrderNos(found); }
+    sc.scrollTop = 0; await U.sleep(300); collect();
+    let lastTop = -1, stable = 0;
+    while (stable < 2) {
+      sc.scrollTop = Math.min(sc.scrollTop + sc.clientHeight * 0.8, sc.scrollHeight);
+      await U.sleep(300); collect();
+      const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;
+      if (sc.scrollTop === lastTop || atBottom) stable += 1; else stable = 0;
+      lastTop = sc.scrollTop;
+    }
+    return L.dedupOrderNos(found);
+  }
+
+  // ── 定位发货单（一行一单；滚动到渲染为止）。返回 {orderNo, tr, checkbox} | null ──
+  function tryFindRow(orderNo) {
+    for (const tr of bodyRows()) {
+      if (readOrderNo(tr) === orderNo) return { orderNo, tr, checkbox: rowCheckbox(tr) };
+    }
+    return null;
+  }
+  async function findRow(orderNo) {
+    const sc = getScrollContainer();
+    if (!sc) return tryFindRow(orderNo);
+    sc.scrollTop = 0; await U.sleep(250);
+    let r = tryFindRow(orderNo); if (r) return r;
+    let lastTop = -1;
+    while (true) {
+      sc.scrollTop = Math.min(sc.scrollTop + sc.clientHeight * 0.8, sc.scrollHeight);
+      await U.sleep(250);
+      r = tryFindRow(orderNo); if (r) return r;
+      const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;
+      if (sc.scrollTop === lastTop || atBottom) break;
+      lastTop = sc.scrollTop;
+    }
+    return null;
+  }
+
+  // ── in-page tab ──
+  function tabLabels() { return Array.from(document.querySelectorAll(SEL.tabLabel)); }
+  function getActiveTabText() {
+    const el = tabLabels().find((t) => /active/i.test(t.className)
+      || /active/i.test((t.parentElement && t.parentElement.className) || ''));
+    return el ? U.normText(el.textContent) : '';
+  }
+  function isOnPendingTab() { return getActiveTabText().includes(TAB_PENDING); }
+  async function clickTab(text) {
+    const el = tabLabels().find((t) => U.normText(t.textContent) === text);
+    if (!el) throw markRead(new Error(`读取失败：未找到 tab「${text}」`));
+    el.click();
+    await U.waitForEl(SEL.bodyRow, 8000).catch(() => {});
+    await U.sleep(400);
+  }
+  async function ensureOnPendingTab() { if (!isOnPendingTab()) await clickTab(TAB_PENDING); }
+  async function refreshViaTabSwitch() {
+    await clickTab(TAB_RECEIVED); await U.sleep(600);
+    await clickTab(TAB_PENDING); await U.sleep(600);
+  }
+
+  // 引擎在 Task 5-8 实现；此处占位避免引用未定义。
   async function onStart() { setProgress('（引擎未实现）'); }
   function onStop() { run.stopRequested = true; }
 
