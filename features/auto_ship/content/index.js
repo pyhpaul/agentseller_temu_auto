@@ -37,7 +37,6 @@
   function renderView(viewEl) {
     viewEl.innerHTML = `
       <div class="tal-card">
-        <div class="tal-card-title">自动发货</div>
         <label class="as-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="as-auto-confirm">
           <span>自动确认发货</span>
