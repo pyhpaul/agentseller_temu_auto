@@ -22,7 +22,7 @@ test('isValidPackageNo: 真实包裹号 → true', () => {
   assert.strictEqual(isValidPackageNo('PKG12345678'), true);
 });
 test('isValidPackageNo: 空/占位 → false', () => {
-  for (const v of ['', '  ', '-', '—', '无', '待生成', '暂无', '未生成', null, undefined]) {
+  for (const v of ['', '  ', '-', '—', '无', '待生成', '暂无', '未生成', '打印打包标签后展示', null, undefined]) {
     assert.strictEqual(isValidPackageNo(v), false, '值: ' + v);
   }
 });

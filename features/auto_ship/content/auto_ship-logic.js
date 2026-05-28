@@ -5,8 +5,8 @@
   'use strict';
 
   const LOCAL_WAREHOUSE = '化州中正科技';
-  // 包裹号占位符（无有效值）。Task 1 dump 后按真实空值表现增补。
-  const PKG_PLACEHOLDERS = ['', '-', '—', '无', '待生成', '暂无', '未生成'];
+  // 包裹号占位符（无有效值）。「打印打包标签后展示」是待装箱发货 tab 真实空值文案（见 samples/table_and_tabs.txt）。
+  const PKG_PLACEHOLDERS = ['', '-', '—', '无', '待生成', '暂无', '未生成', '打印打包标签后展示'];
 
   // 仓库名（已由 DOM 层提取出的纯名字）是否本地仓。
   function isLocalWarehouse(name) {
