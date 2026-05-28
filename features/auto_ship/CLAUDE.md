@@ -48,20 +48,45 @@
 | in-page tab | `[data-testid="beast-core-tab-itemLabel"]` 文字精确匹配；激活态 class 含 active | ✓ dump 确认 |
 | 滚动容器 | `[class*="contentContainer"]`（页面级） | ✓ dump 确认 |
 
-**🔴 联调待验证（未 dump，用文字匹配初版，Task 11 现场确认/修正）：**
-- 「确认打印商品打包标签」弹窗 → 下划线「先发货后打印」(`clickFirstShipThenPrint`)
-- 「先发货后打印」后小弹窗 →「确认/确定」(`confirmSmallModal`)
-- 「批量装箱发货」页面级按钮(`clickBatchShip`，文字匹配) + 确认弹窗「去装箱发货」(`confirmBatchShipModal`)
-- **inner 编辑页**（风险最高）：「包装方式」点选「箱子和袋子」(`selectPackType`，控件类型 radio/卡片/select 待定) +
-  「发货总箱/包数」输入框(`fillBoxCount`，placeholder 待定) + 「确认发货」按钮(`clickConfirmShip`)
-- 弹窗容器 `topModal` 用宽候选(beast-core-modal-inner/DLG_/MDL_/role=dialog)，联调确认是否命中
-- 联调若失败：据现场 dump 补 samples/{print_confirm,first_ship_small,batch_ship,edit_page}.txt + 修对应函数
+### 弹层容器有三类（联调 dump 确认，关键——不能一个 topModal 通吃）
+
+Temu Beast 弹层分三种容器，各自定位（见 samples/{print_confirm,first_ship_small,batch_ship,edit_page}.txt）：
+
+| 步骤 | 容器类型 | 定位 | 动作 |
+|------|---------|------|------|
+| 确认打印商品打包标签 | **modal** (`MDL_`) | `topModal` = `[data-testid="beast-core-modal-inner"]` 取末个 | 点正文 dashed link「先发货后打印」(`clickFirstShipThenPrint`) |
+| 先发货后打印 二次确认 | **popover** (`PP_`) | `topPopover` = 可见 `[class*="popoverContent"]` | 点「确认」(`confirmSmallModal`) |
+| 批量装箱发货 确认 | **modal** | `topModal` | 点「去装箱发货」(`confirmBatchShipModal`，含「30天不再提醒」勾后不弹的容错) |
+| 装箱发货 编辑页 | **drawer** (`Drawer_`) | `topDrawer` = 可见 `[data-testid="beast-core-drawer-content"]` | 见下 |
+
+### 编辑页（drawer）字段——按 form-item id 精确定位
+
+| 字段 | form-item id | 控件 | 操作 |
+|------|-------------|------|------|
+| 包装方式 | `#packagingType` | radioGroup | 找 radio label 内 `.RD_textWrapper`=「箱子和袋子」→ 点 label(`selectPackType`，写后读 data-checked) |
+| 发货总箱/包数 | `#expressPackageNum` | inputNumber | `input[data-testid="beast-core-inputNumber-htmlInput"]` 填「1」(`fillBoxCount`，写后读 value) |
+| 确认发货 | drawer footer | button | span「确认发货」(`clickConfirmShip`)；其余字段(发货方式/重量/仓库)已预填不动 |
+
+## 踩坑清单（联调实测，后续复用）
+
+1. **checkbox/radio 程序化勾选必须点 label，不能点 input**：`input.click()` 无效(data-checked 不变)，
+   `label.click()`(即 `[data-testid="beast-core-checkbox"]`/`beast-core-radio` 元素本身) 才触发 React onChange。
+2. **本地仓识别误判**：`label.parentElement.querySelector('div span')` 会误中 label 自身文字「发货仓库：」，
+   改用整列文本 regex `发货仓库[:：]\s*([\s\S]*?)(?:更换|收货仓库|$)`。
+3. **topModal 宽候选取到空 gradient**：`[class*="MDL_"]` + `c[last]` 会落到空的 `MDL_overflowGradient`，
+   必须优先 `[data-testid="beast-core-modal-inner"]`。
+4. **三类弹层容器**(见上表)：modal/popover/drawer 各自定位，混用必失配。
+5. **批量装箱发货按所有选中行操作**：选中当前单前必须 `clearOtherSelections` 清掉上一单残留选中
+   (尤其取消未发货的单 checkbox 仍勾着)，否则两单一起被操作而失败。
+6. **包裹号空值文案**「打印打包标签后展示」(非空串/`-`)，已入 `PKG_PLACEHOLDERS`。
 
 ## 已知限制
 
 - F5 刷新会重头开始（半自动有人盯，可接受）
 - ON 全自动模式连续发真实货，需用户自行确认批次
-- 弹窗/编辑页 selector 为文字匹配初版，Temu 改版或弹窗结构特殊时需 dump 复核
+- `clearOtherSelections` 只清当前可见行选中；虚拟滚动下若残留选中行滚出视口可能漏(行少通常可见)
+- 「共 N 个」总数含本地仓单(会被「处理」即跳过)，故 X 最终能到 N；若要 N 只算待发非本地仓单需开始前全扫分类
+- Temu 改版/弹层结构变化时据 samples/ 复核 selector
 
 ## 调试
 
