@@ -191,6 +191,12 @@
     const c = document.querySelectorAll('[data-testid="beast-core-modal-innerWrapper"],[role="dialog"]');
     return c.length ? c[c.length - 1] : null;
   }
+  function isVisible(el) { return !!(el && el.getClientRects().length); }
+  // Popover/Popconfirm 容器（Beast 二次确认走 popover，非 modal——见 samples/first_ship_small_modal.txt）
+  function topPopover() {
+    const pops = Array.from(document.querySelectorAll('[class*="popoverContent"]')).filter(isVisible);
+    return pops.length ? pops[pops.length - 1] : null;
+  }
   function findClickableByText(scope, text) {
     const root = scope || document;
     const nodes = Array.from(root.querySelectorAll(
@@ -244,9 +250,21 @@
   }
   async function clickPrintPackLabel(row) { clickRowBtn(row, '打印商品打包标签'); }
 
-  // ── 弹窗②③：先发货后打印 → 小弹窗确认 ──
+  // ── 弹窗②：先发货后打印（在 PRINT_CONFIRM modal 正文，用 topModal）──
   async function clickFirstShipThenPrint() { await clickModalText('先发货后打印', 6000); }
-  async function confirmSmallModal() { await clickModalText(['确认', '确定'], 6000); }
+  // ── 弹窗③：小弹窗确认（是 Popover 非 modal，用 topPopover）──
+  async function confirmSmallModal() {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const pop = topPopover();
+      if (pop) {
+        const btn = findClickableByText(pop, '确认') || findClickableByText(pop, '确定');
+        if (btn) { btn.click(); return; }
+      }
+      await U.sleep(150);
+    }
+    throw markRead(new Error('读取失败：未找到「先发货后打印」二次确认弹窗的确认按钮'));
+  }
 
   // ── 等包裹号刷新（中途切 tab 刷新一次；超时报业务错）──
   async function waitPackageNo(orderNo, timeoutMs) {
