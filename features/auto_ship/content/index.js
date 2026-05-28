@@ -18,6 +18,7 @@
     shipped: 0,
     skippedLocal: 0,
     fails: [],
+    total: 0,             // 初始扫描的发货单总数（动态取最大，不减）
   };
 
   // ── storage 开关 ──
@@ -243,6 +244,24 @@
     const i = checkbox && checkbox.querySelector('input[type="checkbox"]');
     return (i && i.checked) || (checkbox && checkbox.getAttribute('data-checked') === 'true');
   }
+  // ── 当前操作行整行高亮（视觉反馈）──
+  function ensureHighlightStyle() {
+    if (document.getElementById('as-hl-style')) return;
+    const s = document.createElement('style');
+    s.id = 'as-hl-style';
+    s.textContent = 'tr.as-active-row, tr.as-active-row > td '
+      + '{ background-color: #fff3cd !important; box-shadow: inset 3px 0 0 0 #ff6800; }';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  function clearRowHighlight() {
+    document.querySelectorAll('tr.as-active-row').forEach((el) => el.classList.remove('as-active-row'));
+  }
+  function highlightRow(tr) {
+    ensureHighlightStyle();
+    clearRowHighlight();
+    if (tr) tr.classList.add('as-active-row');
+  }
+
   // 取消除 except 外所有已勾选行。「批量装箱发货」按所有选中行操作，选中前必须清掉
   // 上一单残留选中（尤其取消未发货的单 checkbox 仍勾着），否则两单一起被操作而失败。
   async function clearOtherSelections(except) {
@@ -409,6 +428,7 @@
   async function processOrder(orderNo) {
     let row = await findRow(orderNo);
     if (!row) throw markRead(new Error(`读取失败：未定位到发货单 ${orderNo} 的行`));
+    highlightRow(row.tr);                              // 整行高亮当前操作单
 
     // 1. 本地仓跳过
     if (L.isLocalWarehouse(readWarehouseName(row.tr))) {
@@ -427,6 +447,7 @@
     // 3. 重新定位（包裹号刷新后行可能重排）→ 选中 → 批量装箱发货 → 去装箱发货
     row = await findRow(orderNo);
     if (!row) throw markRead(new Error(`读取失败：等包裹号后未定位到发货单 ${orderNo}`));
+    highlightRow(row.tr);                              // 行重排后重新高亮
     await selectRow(row);
     await clickBatchShip(orderNo);
     await confirmBatchShipModal();
@@ -448,24 +469,26 @@
   // ════════ 主循环（spec §6）════════
   function catLabel(cat) { return cat === 'data' ? '校验' : cat === 'biz' ? '业务' : '读取'; }
 
-  // 取下一个未处理发货单号；本轮无 → 切 tab 刷新再确认一次（防刷新延迟脏数据）。
-  async function nextPick(processed) {
-    await ensureOnPendingTab();
+  // 取下一个未处理发货单号 + 更新 run.total；本轮无 → 切 tab 刷新再确认一次（防刷新延迟脏数据）。
+  async function scanForPick() {
+    await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
     let live = await scanOrderNos();
-    let pick = live.find((no) => !processed.has(no));
-    if (pick) return pick;
-    await refreshViaTabSwitch();
-    live = await scanOrderNos();
-    return live.find((no) => !processed.has(no)) || null;
+    let remaining = live.filter((no) => !run.processed.has(no));
+    if (!remaining.length) {
+      await refreshViaTabSwitch();
+      live = await scanOrderNos();
+      remaining = live.filter((no) => !run.processed.has(no));
+    }
+    run.total = Math.max(run.total, run.processed.size + remaining.length);
+    return remaining[0] || null;
   }
 
   // 处理一个发货单（切回待装箱发货 tab + 取下一个未处理 + 处理 + 记账 + 去重）。
   // 返回处理的 orderNo，或 null（已无待处理单）。单步/全自动共用。
   async function stepOnce() {
-    await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
-    const orderNo = await nextPick(run.processed);
+    const orderNo = await scanForPick();              // 内部先切回待装箱发货 tab
     if (!orderNo) return null;
-    setProgress(`处理中：${orderNo}（已处理 ${run.processed.size}）`);
+    setProgress(`正在处理第 ${run.processed.size + 1} / 共 ${run.total} 个\n当前发货单：${orderNo}`);
     try {
       const r = await processOrder(orderNo);
       if (r.kind === 'local') run.skippedLocal += 1;
@@ -480,7 +503,7 @@
     return orderNo;
   }
 
-  function resetRunStats() { run.processed = new Set(); run.shipped = 0; run.skippedLocal = 0; run.fails = []; }
+  function resetRunStats() { run.processed = new Set(); run.shipped = 0; run.skippedLocal = 0; run.fails = []; run.total = 0; }
 
   // 「开始（全部）」：从头全自动处理所有未处理发货单。
   async function onStart() {
@@ -496,7 +519,7 @@
       console.error('[auto_ship] 全自动异常:', err);
       setProgress('异常终止：' + ((err && err.message) || err));
     } finally {
-      run.active = false; setButtonsEnabled(true); showSummary();
+      run.active = false; setButtonsEnabled(true); clearRowHighlight(); showSummary();
       AS.showToast(`自动发货结束：发 ${run.shipped} / 跳过本地仓 ${run.skippedLocal} / 失败 ${run.fails.length}`,
         run.fails.length ? 'warn' : 'success');
     }
@@ -511,13 +534,13 @@
     try {
       const done = await stepOnce();
       if (!done) { setProgress('已无待处理发货单'); AS.showToast('已无待处理发货单', 'success'); }
-      else { setProgress(`已处理：${done}（累计 ${run.processed.size}）`); }
+      else { setProgress(`已处理：${done}（${run.processed.size}/${run.total}）`); }
       showSummary();
     } catch (err) {
       console.error('[auto_ship] 单步异常:', err);
       setProgress('异常：' + ((err && err.message) || err));
     } finally {
-      run.active = false; setButtonsEnabled(true);
+      run.active = false; setButtonsEnabled(true); clearRowHighlight();
     }
   }
 
