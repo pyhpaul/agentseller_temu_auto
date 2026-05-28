@@ -351,7 +351,49 @@
     });
   }
 
-  // 引擎在 Task 5/7/8 实现；此处占位避免引用未定义。
+  // ════════ 单发货单状态机（spec §5）════════
+  // 返回 { orderNo, kind, shipped }；kind ∈ local|shipped|cancelled。
+  // 失败抛带 _cat 的错误，由主循环捕获。
+  async function processOrder(orderNo) {
+    let row = await findRow(orderNo);
+    if (!row) throw markRead(new Error(`读取失败：未定位到发货单 ${orderNo} 的行`));
+
+    // 1. 本地仓跳过
+    if (L.isLocalWarehouse(readWarehouseName(row.tr))) {
+      return { orderNo, kind: 'local', shipped: false };
+    }
+
+    // 2. 包裹号：没有才走「打印打包标签 → 先发货后打印 → 小弹窗确认 → 等包裹号」
+    if (!L.isValidPackageNo(readPackageNo(row.tr))) {
+      await selectRow(row);
+      await clickPrintPackLabel(row);
+      await clickFirstShipThenPrint();
+      await confirmSmallModal();
+      await waitPackageNo(orderNo, 15000);
+    }
+
+    // 3. 重新定位（包裹号刷新后行可能重排）→ 选中 → 批量装箱发货 → 去装箱发货
+    row = await findRow(orderNo);
+    if (!row) throw markRead(new Error(`读取失败：等包裹号后未定位到发货单 ${orderNo}`));
+    await selectRow(row);
+    await clickBatchShip(orderNo);
+    await confirmBatchShipModal();
+
+    // 4. 编辑页填写（写后读校验在适配层内）
+    await fillEditPage();
+
+    // 5. 确认发货门控
+    const confirmed = run.autoConfirm ? true : await askConfirmShip(orderNo);
+    if (confirmed) {
+      await clickConfirmShip();
+      await U.sleep(800);                     // 让 SPA 切到待仓库收货
+      return { orderNo, kind: 'shipped', shipped: true };
+    }
+    await closeEditPage();
+    return { orderNo, kind: 'cancelled', shipped: false };
+  }
+
+  // 引擎在 Task 8 接入；此处占位避免引用未定义。
   async function onStart() { setProgress('（引擎未实现）'); }
   function onStop() { run.stopRequested = true; }
 
