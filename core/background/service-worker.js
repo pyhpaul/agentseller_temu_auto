@@ -440,7 +440,7 @@ function cpoFocusOrigin(originTabId) {
 
 // Phase 2 主编排：创建现有订单 → 通过审核 → 待到货定位 → 停在申请付款前
 // 新开独立 tab 跑全流程，不复用触发方 tab；originTabId 仅用于「新 tab 定位」+「error 切回」
-async function cpoRun2({ orderNo1688 }, originTabId = null) {
+async function cpoRun2({ orderNo1688, autoSave = true }, originTabId = null) {
   const { cpo_state } = await chrome.storage.local.get('cpo_state');
   const p1 = (cpo_state && cpo_state.phase1) || {};
   const skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
@@ -497,6 +497,17 @@ async function cpoRun2({ orderNo1688 }, originTabId = null) {
     await cpoSetPhase2({ step: 4, label: '填采购人员/收货仓库、配对商品', collected2 });
     await cpoSendCommand(editTabId, 'CPO_P2_EDIT_FILL', { skuNo });
 
+    // step5：半自动模式（autoSave=false）先弹可拖动确认框，等用户核对后再保存
+    // 用 chrome.tabs.sendMessage 直发（不走 cpoSendCommand：那有 20s 超时 + retry，会打断/重复弹窗）
+    if (!autoSave) {
+      await cpoSetPhase2({ step: 5, label: '请核对采购信息，在弹窗点「确认保存」', collected2 });
+      const confirm = await chrome.tabs.sendMessage(editTabId, { type: 'CPO_P2_CONFIRM_SAVE', data: {} })
+        .catch(() => ({ cancelled: true }));
+      if (confirm && confirm.cancelled) {
+        await cpoSetPhase2({ status: 'error', label: '已取消自动保存，请在采购单页手动核对并保存', collected2 });
+        return;   // 正常退出不回收 tab，edit 页留给用户接管
+      }
+    }
     // step5：保存并通过审核 → 抓成功弹窗提采购单号
     await cpoSetPhase2({ step: 5, label: '保存并通过审核', collected2 });
     const rSave = await cpoSendCommand(editTabId, 'CPO_P2_EDIT_SAVE');

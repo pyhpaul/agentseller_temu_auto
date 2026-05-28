@@ -31,7 +31,8 @@
 
   // ── 面板引用（render 填入；refreshFromStorage / storage.onChanged 更新） ──
   const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
-               p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null };
+               p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null,
+               poOutput: null, poBox: null, autoSaveChk: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
@@ -65,11 +66,32 @@
         : '';
     }
     if (ui.p2Status) ui.p2Status.textContent = '状态：' + statusText(p2);
+    const c2 = p2.collected2 || {};
+    const p2Done = p2.status === 'done' && c2.poNo;
     if (ui.p2Data) {
-      const c2 = p2.collected2 || {};
-      ui.p2Data.textContent = (p2.status === 'done' && c2.poNo)
-        ? '当前订单信息：' + c2.poNo + '（' + (c2.orderNo1688 || '-') + '）'
+      // 状态区输出采购单号（纯文本，供与下方只读框比对）
+      ui.p2Data.textContent = p2Done
+        ? '制作成功 采购单号：' + c2.poNo + ' ｜ 1688订单：' + (c2.orderNo1688 || '-')
         : '';
+    }
+    if (ui.poOutput && ui.poBox) {
+      // 只读框：成功后显示采购单号供选中复制；非完成态清空隐藏（连同「采购单号：」label 整行 poBox）
+      ui.poOutput.value = p2Done ? c2.poNo : '';
+      ui.poBox.style.display = p2Done ? 'flex' : 'none';
+    }
+    if (ui.orderInput) {
+      // phase1+phase2 都完成：回填本次 1688订单号并锁成只读，跨 tab 共享同一份；
+      // 用 readOnly 自身判断「上次是否锁定」——从锁定态解除（清除/新流程）时清空回填值、恢复可输入
+      const bothDone = p1.status === 'done' && p2.status === 'done' && c2.orderNo1688;
+      if (bothDone) {
+        ui.orderInput.value = c2.orderNo1688;
+        ui.orderInput.readOnly = true;
+        ui.orderInput.style.background = '#f7f7f7';
+      } else if (ui.orderInput.readOnly) {
+        ui.orderInput.value = '';
+        ui.orderInput.readOnly = false;
+        ui.orderInput.style.background = '';
+      }
     }
     lastP1Done = (p1.status === 'done');
     recomputeP2Btn();
@@ -135,7 +157,8 @@
   function recomputeP2Btn() {
     if (!ui.p2Btn) return;
     const orderVal = (ui.orderInput && ui.orderInput.value || '').trim();
-    ui.p2Btn.disabled = !(lastP1Done && isDxmPage() && orderVal);
+    const locked = !!(ui.orderInput && ui.orderInput.readOnly);   // 流程完成锁定态：禁用，引导先清除再开新单
+    ui.p2Btn.disabled = locked || !(lastP1Done && isDxmPage() && orderVal);
   }
 
   // 发起 Phase 2（仅店小秘页）：校验 → CPO_START_PHASE2
@@ -152,7 +175,8 @@
       const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done });
       if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
       setP2Msg('启动中…');
-      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688 } });
+      const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave } });
       if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
       else started = true;
     } catch (e) {
@@ -250,8 +274,21 @@
         hint2.textContent = '需先完成①添加SKU；填 1688订单号后开始';
         ui.orderInput = document.createElement('input');
         ui.orderInput.placeholder = '1688订单号';
-        ui.orderInput.style.cssText = 'padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+        ui.orderInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
         ui.orderInput.addEventListener('input', recomputeP2Btn);
+        const orderRow = document.createElement('div');
+        orderRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        const orderLabel = document.createElement('span');
+        orderLabel.textContent = '1688订单号：';
+        orderLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
+        orderRow.append(orderLabel, ui.orderInput);
+        // 自动保存开关：勾选=到「保存，并通过审核」自动点；不勾=弹可拖动确认框等用户核对后再点
+        const saveChkLabel = document.createElement('label');
+        saveChkLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:#666;cursor:pointer;line-height:1.4;';
+        ui.autoSaveChk = document.createElement('input');
+        ui.autoSaveChk.type = 'checkbox';
+        ui.autoSaveChk.checked = false;   // 默认不勾选：先弹确认框让用户核对，确认后再保存
+        saveChkLabel.append(ui.autoSaveChk, document.createTextNode('自动点击「保存，并通过审核」（取消勾选则弹窗等你核对确认）'));
         ui.p2Btn = document.createElement('button');
         ui.p2Btn.className = 'tal-action-btn';
         ui.p2Btn.textContent = '开始创建采购单';
@@ -259,7 +296,17 @@
         ui.p2Btn.addEventListener('click', onStartPhase2);
         ui.p2Msg = document.createElement('div');
         ui.p2Msg.style.cssText = 'font-size:11px;color:#666;min-height:16px;';
-        wrap.append(hint2, ui.orderInput, ui.p2Btn, ui.p2Msg);
+        // 采购单号只读输出框（制作成功后显示）：readOnly 防手误改动，用户自行选中复制
+        ui.poBox = document.createElement('div');
+        ui.poBox.style.cssText = 'display:none;align-items:center;gap:6px;';
+        const poLabel = document.createElement('span');
+        poLabel.textContent = '采购单号：';
+        poLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
+        ui.poOutput = document.createElement('input');
+        ui.poOutput.readOnly = true;
+        ui.poOutput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
+        ui.poBox.append(poLabel, ui.poOutput);
+        wrap.append(hint2, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
       } else {
         const note2 = document.createElement('div');
         note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
@@ -409,24 +456,49 @@
     return item ? item.querySelector('.ant-select') : null;
   }
 
-  // 选 ant-select 中 textContent 精确等于 want 的选项（采购人员/收货仓库/搜索类型用）→ 成功 true
+  // 选 ant-select 中匹配 want 的选项（采购人员/收货仓库用）→ 成功 true
+  // 关键：大列表（采购人员）是搜索型下拉，打开后可见选项 .ant-select-item-option 不渲染，
+  // 必须在 dropdown 内搜索框输入关键字才触发渲染/过滤；且匹配只能用可见项的 title——
+  // 隐藏 a11y listbox 的 [role="option"] textContent 是数字 ID（如 1966019）、用户名在 aria-label，会误判
   async function cpoSelectOptionByText(sel, want) {
     const combo = sel.querySelector('input');
     (sel.querySelector('.ant-select-selector') || sel).click();
     const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
     const target = U.normText(want);
+    let typed = false;
     for (let i = 0; i < 30; i++) {
       await U.sleep(100);
       const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
       const scopes = scoped ? [scoped]
         : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
       for (const s of scopes) {
-        const opt = Array.from(s.querySelectorAll('[role="option"], .ant-select-item-option'))
-          .find(o => U.normText(o.textContent) === target);
+        // 搜索型下拉：输入关键字触发选项渲染（仅输一次，输完等渲染）
+        const searchInput = s.querySelector('.search-input input, input[placeholder*="搜索"]');
+        if (searchInput && !typed) { U.setInputValue(searchInput, want); typed = true; await U.sleep(300); }
+        // 只匹配可见选项；title 优先（textContent 可能含尾空格 / 隐藏 listbox 是数字 ID）
+        const opt = Array.from(s.querySelectorAll('.ant-select-item-option'))
+          .find(o => U.normText(o.getAttribute('title') || o.textContent) === target);
         if (opt) { opt.click(); return true; }
       }
     }
     return false;
+  }
+
+  // 读 ant-select 当前选中文本（写后读校验用）。title 优先：文本被 CSS 截断时 textContent 带省略号、title 是完整值
+  function cpoReadSelectValue(sel) {
+    const item = sel && sel.querySelector('.ant-select-selection-item');
+    return U.normText((item && (item.getAttribute('title') || item.textContent)) || '');
+  }
+
+  // 写后读：ant-select 选 want 后回读确认实际选中 === want。失败返回带「期望/实际」的诊断错误，不静默
+  async function cpoSelectAndVerify(sel, want, fieldName) {
+    await cpoSelectOptionByText(sel, want);
+    await U.sleep(200);
+    const actual = cpoReadSelectValue(sel);
+    if (actual !== U.normText(want)) {
+      return { ok: false, error: `数据校验：${fieldName}填写后不符，期望「${want}」实际「${actual || '（空）'}」` };
+    }
+    return { ok: true };
   }
 
   // 配对商品弹窗：点「配对商品」/「更换配对」→ 填货号搜索 → 点「选择」→ 处理可能的确认弹窗
@@ -489,12 +561,14 @@
       if (!confirmBtn) return { ok: false, error: '配对：确认弹窗未找到「确认」按钮' };
       confirmBtn.click();
     }
-    // 等 product-ref-modal 关闭
+    // 填写后检查：配对弹窗在「选择」(+确认)后应自动关闭，关闭=配对已提交生效；未关=被必填/报错挡住
+    let modalClosed = false;
     for (let i = 0; i < 20; i++) {
       await U.sleep(150);
       const m = document.querySelector('.product-ref-modal');
-      if (!m || m.getBoundingClientRect().height === 0) break;
+      if (!m || m.getBoundingClientRect().height === 0) { modalClosed = true; break; }
     }
+    if (!modalClosed) return { ok: false, error: '数据校验：配对弹窗点「选择」后未关闭，配对可能未生效' };
     return { ok: true };
   }
 
@@ -622,21 +696,56 @@
       // 等 edit 页 Vue 表单渲染（收货仓库 d-selector 是渲染完成的标志）
       try { await U.waitForEl('label[title="收货仓库"], div.d-selector', document, 12000); }
       catch { return { ok: false, error: 'edit 页收货仓库下拉 12s 内未渲染，表单未就绪' }; }
-      // a) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）
-      const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
-      const buyerSel = cpoFindSelectByLabel('采购人员');
-      if (buyerSel && userName) await cpoSelectOptionByText(buyerSel, userName);
-      await U.sleep(200);
-      // b) 收货仓库选「中正科技仓」（d-selector 包装的 .ant-select.in-selector）
+      // a) 收货仓库选「中正科技仓」（d-selector 包装的 .ant-select.in-selector），填后回读校验
       const whSel = cpoFindSelectByLabel('收货仓库');
       if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
-      if (!(await cpoSelectOptionByText(whSel, '中正科技仓')))
-        return { ok: false, error: '业务拦截：收货仓库下拉无「中正科技仓」选项' };
-      await U.sleep(200);
-      // c) 配对商品（span.link，配对弹窗搜索类型=商品SKU，填货号，选匹配结果，处理确认弹窗）
+      const whR = await cpoSelectAndVerify(whSel, '中正科技仓', '收货仓库');
+      if (!whR.ok) return whR;
+      // b) 配对商品（span.link，配对弹窗搜索类型=商品SKU，填货号，选匹配结果，处理确认弹窗）
+      //    顺序关键：必须在采购人员【之前】——配对的「修改所有草稿箱」确认会重置采购人员，
+      //    若先选采购人员会被配对覆盖（实测踩坑，曾误判为「采购人员没填对」）
       const pair = await cpoPairProduct(skuNo);
       if (!pair.ok) return pair;
+      // c) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）——放最后，配对后再选，填后回读校验
+      const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
+      const buyerSel = cpoFindSelectByLabel('采购人员');
+      if (!buyerSel) return { ok: false, error: '业务拦截：未找到「采购人员」下拉' };
+      if (!userName) return { ok: false, error: '读取失败：未读到当前登录用户名（.user-name 为空）' };
+      const buyerR = await cpoSelectAndVerify(buyerSel, userName, '采购人员');
+      if (!buyerR.ok) return buyerR;
       return { ok: true };
+    },
+
+    // 半自动模式：弹可拖动确认框，等用户核对页面已填信息后点「确认保存」/「取消」
+    // 可拖动（不带遮罩）让用户能把框拖开、查看采购单页所有字段。Promise 直到用户点击才 resolve
+    CPO_P2_CONFIRM_SAVE: async () => {
+      return new Promise((resolve) => {
+        document.getElementById('cpo-confirm-box')?.remove();
+        const box = document.createElement('div');
+        box.id = 'cpo-confirm-box';
+        box.style.cssText = 'position:fixed;top:80px;right:30px;z-index:2147483647;width:300px;background:#fff;border:1px solid #1677ff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.2);font-size:13px;color:#333;';
+        const bar = document.createElement('div');
+        bar.style.cssText = 'padding:8px 12px;background:#1677ff;color:#fff;border-radius:8px 8px 0 0;cursor:move;font-weight:600;';
+        bar.textContent = '核对采购信息（可拖动）';
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:12px;line-height:1.6;';
+        body.innerHTML = '请核对采购单页的<b>采购人员 / 收货仓库 / 配对商品</b>，确认无误后点「确认保存」，将自动点击「保存，并通过审核」。';
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:8px;padding:0 12px 12px;';
+        const okBtn = document.createElement('button');
+        okBtn.textContent = '确认保存';
+        okBtn.style.cssText = 'flex:1;padding:7px;border:none;border-radius:4px;background:#1677ff;color:#fff;cursor:pointer;font-size:13px;';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '取消';
+        cancelBtn.style.cssText = 'flex:1;padding:7px;border:1px solid #ddd;border-radius:4px;background:#fff;color:#666;cursor:pointer;font-size:13px;';
+        const finish = (result) => { box.remove(); resolve(result); };
+        okBtn.addEventListener('click', () => finish({ ok: true }));
+        cancelBtn.addEventListener('click', () => finish({ ok: true, cancelled: true }));
+        btnRow.append(okBtn, cancelBtn);
+        box.append(bar, body, btnRow);
+        document.body.appendChild(box);
+        U.makeDraggable(box, bar);
+      });
     },
 
     CPO_P2_EDIT_SAVE: async () => {
