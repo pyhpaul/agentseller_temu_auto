@@ -182,7 +182,33 @@
     await clickTab(TAB_PENDING); await U.sleep(600);
   }
 
-  // 引擎在 Task 5-8 实现；此处占位避免引用未定义。
+  // ════════ OFF 模式逐单确认框（可拖动，不超时）════════
+  // 返回 Promise<boolean>：true=确认发货，false=取消（关编辑页跳过）。
+  function askConfirmShip(orderNo) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;z-index:2147483600;left:50%;top:120px;transform:translateX(-50%);'
+        + 'background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.2);'
+        + 'width:340px;font-size:14px;color:#222';
+      ov.innerHTML = `
+        <div class="as-confirm-head" style="padding:10px 14px;cursor:move;background:#f5f5f5;border-radius:8px 8px 0 0;font-weight:600">确认发货？</div>
+        <div style="padding:14px">
+          <div>发货单号：<b>${orderNo}</b></div>
+          <div style="color:#888;margin-top:6px">点「确认发货」将真实出货（不可逆）；点「取消」关闭编辑页、跳过本单。</div>
+          <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+            <button id="as-c-cancel" class="tal-btn">取消</button>
+            <button id="as-c-ok" class="tal-btn-primary">确认发货</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      try { U.makeDraggable(ov, ov.querySelector('.as-confirm-head')); } catch (_) {}
+      const done = (v) => { try { ov.remove(); } catch (_) {} resolve(v); };
+      ov.querySelector('#as-c-ok').addEventListener('click', () => done(true));
+      ov.querySelector('#as-c-cancel').addEventListener('click', () => done(false));
+    });
+  }
+
+  // 引擎在 Task 5/7/8 实现；此处占位避免引用未定义。
   async function onStart() { setProgress('（引擎未实现）'); }
   function onStop() { run.stopRequested = true; }
 
