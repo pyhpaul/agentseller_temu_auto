@@ -1,0 +1,43 @@
+===== EDIT_PAGE（装箱发货 inner 编辑页，真实 dump 2026-05-28）=====
+
+⚠️ 第三种容器：Drawer（[data-testid="beast-core-drawer"] / [data-testid="beast-core-drawer-content"]），
+   右侧抽屉，非 modal、非 popover。标题「装箱发货」。
+   —— topModal/topPopover 都定位不到，要用 topDrawer。
+
+字段（form 内，每个 form-item 有稳定 id，比 hash class 可靠）：
+
+| 字段 | form-item id | 控件 | 操作 |
+|------|-------------|------|------|
+| 发货方式 | deliverMethod | radioGroup（自送/自行委托第三方/在线物流下单） | 已默认「在线物流下单」(data-checked=true)，不动 |
+| 预估总重量* | predictTotalPackageWeight | inputNumber value=1 | 已预填，不动 |
+| 预估总体积 | predictPackageVolume | inputNumber | 选填，不动 |
+| **包装方式** | **packagingType** | **radioGroup（箱子/袋子/箱子和袋子）** | **选「箱子和袋子」** |
+| **发货总箱/包数*** | **expressPackageNum** | **inputNumber（placeholder 填写交接给快递公司的预估箱子数）** | **填 1** |
+| 发货仓库* | deliveryAddressId | select value=KEY086 | 已预填，不动 |
+| 物流公司* | expressCompanyId | select（disabled） | 不动 |
+| 预约取货时间* | expectPickUpGoodsDate/Time | datePicker/timePicker（disabled） | 不动 |
+
+包装方式 radio 结构：
+<div id="packagingType" data-testid="beast-core-form-item">
+  ...<label class="Form_itemLabelContent">包装方式</label>...
+  <div data-testid="beast-core-radioGroup">
+    <label data-testid="beast-core-radio" data-checked="false">...<div class="RD_textWrapper_5-111-0 RD_prevRadio_5-111-0">箱子</div></label>
+    <label data-testid="beast-core-radio" data-checked="false">...<div class="RD_textWrapper">袋子</div></label>
+    <label data-testid="beast-core-radio" data-checked="false">...<div class="RD_textWrapper">箱子和袋子</div></label>  ← 选这个
+  </div>
+</div>
+选中态：label data-checked="true" + class 含 RDG_active/RD_active。点 label(radio)触发(同 checkbox：label.click 有效，input.click 无效)。
+
+发货总箱/包数 input：
+<div id="expressPackageNum" data-testid="beast-core-form-item">
+  <input placeholder="填写交接给快递公司的预估箱子数" type="text" data-testid="beast-core-inputNumber-htmlInput" value="">
+
+确认发货按钮：drawer footer
+<div class="index-module__footer___3QwaI">
+  <button data-testid="beast-core-button" primary><span>确认发货</span></button>
+  <button data-testid="beast-core-button" gray><span>取消</span></button>
+</div>
+关闭：标题栏 X = [data-testid="beast-core-icon-close"]
+
+教训：Temu Beast 弹层有三类容器——modal-inner(MDL_)、popover(PP_)、drawer(Drawer_)，
+不能用一个 topModal 通吃。装箱发货编辑页走 drawer。

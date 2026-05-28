@@ -197,6 +197,17 @@
     const pops = Array.from(document.querySelectorAll('[class*="popoverContent"]')).filter(isVisible);
     return pops.length ? pops[pops.length - 1] : null;
   }
+  // Drawer 容器（装箱发货编辑页走 drawer，非 modal/popover——见 samples/edit_page.txt）
+  function topDrawer() {
+    const d = Array.from(document.querySelectorAll('[data-testid="beast-core-drawer-content"]')).filter(isVisible);
+    return d.length ? d[d.length - 1] : null;
+  }
+  function editScope() { return topDrawer() || document; }
+  async function waitEditGone(timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 5000);
+    while (Date.now() < deadline) { if (!topDrawer()) return true; await U.sleep(150); }
+    return false;
+  }
   function findClickableByText(scope, text) {
     const root = scope || document;
     const nodes = Array.from(root.querySelectorAll(
@@ -218,11 +229,6 @@
       await U.sleep(150);
     }
     throw markRead(new Error(`读取失败：弹窗内未找到「${arr.join('/')}」`));
-  }
-  async function waitModalGone(timeoutMs) {
-    const deadline = Date.now() + (timeoutMs || 5000);
-    while (Date.now() < deadline) { if (!topModal()) return true; await U.sleep(150); }
-    return false;
   }
 
   // ── 选中行 checkbox（写后读：勾选后回读 checked）──
@@ -289,29 +295,39 @@
     if (disabled) throw markBiz(new Error(`业务：发货单 ${orderNo} 选中后「批量装箱发货」不可点`));
     btn.click();
   }
-  async function confirmBatchShipModal() { await clickModalText('去装箱发货', 6000); }
-
-  // ── 编辑页填写（包装方式 + 箱数，写后读校验）── 🔴 联调验证：包装方式控件类型/箱数 input 据 EDIT_PAGE dump 落实
-  function isPackTypeSelected(scope, label) {
-    const checked = Array.from(scope.querySelectorAll('[aria-checked="true"],[class*="checked"],[class*="active"],[class*="selected"]'))
-      .find((n) => U.normText(n.textContent).includes(label));
-    if (checked) return true;
-    const selItem = scope.querySelector('[class*="selection-item"]');
-    if (selItem && U.normText(selItem.getAttribute('title') || selItem.textContent).includes(label)) return true;
-    return false;
+  // 确认窗是 modal；若已勾「30天内不再提醒」则不弹、直接出编辑页 drawer → 容错跳过
+  async function confirmBatchShipModal() {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      if (topDrawer()) return;                       // 已直接进编辑页（确认窗被跳过）
+      const modal = topModal();
+      if (modal) { const btn = findClickableByText(modal, '去装箱发货'); if (btn) { btn.click(); return; } }
+      await U.sleep(150);
+    }
+    if (topDrawer()) return;
+    throw markRead(new Error('读取失败：未出现「去装箱发货」确认或装箱发货编辑页'));
   }
+
+  // ── 编辑页（Drawer）填写：包装方式 radio + 箱数 input，按 form-item id 精确定位 + 写后读校验 ──
   async function selectPackType(label) {
-    const scope = topModal() || document;
-    const opt = findClickableByText(scope, label);
-    if (!opt) throw markRead(new Error(`读取失败：编辑页未找到包装方式「${label}」`));
-    opt.click();
+    const scope = editScope();
+    const formItem = scope.querySelector('#packagingType') || scope;
+    const radios = Array.from(formItem.querySelectorAll('[data-testid="beast-core-radio"]'));
+    const radio = radios.find((r) => {
+      const t = r.querySelector('[class*="textWrapper"]') || r;
+      return U.normText(t.textContent) === label;
+    });
+    if (!radio) throw markRead(new Error(`读取失败：编辑页未找到包装方式「${label}」`));
+    radio.click();                                   // radio 是 label，label.click 才触发（同 checkbox）
     await U.sleep(300);
-    if (!isPackTypeSelected(scope, label)) throw markData(new Error(`数据校验：包装方式填写后不符，期望「${label}」`));
+    const ok = radio.getAttribute('data-checked') === 'true' || /RD_active|RDG_active/.test(radio.className);
+    if (!ok) throw markData(new Error(`数据校验：包装方式填写后不符，期望「${label}」`));
   }
   async function fillBoxCount(want) {
-    const scope = topModal() || document;
-    const input = scope.querySelector('input[placeholder*="箱"],input[placeholder*="包数"],input[placeholder*="数量"]')
-      || scope.querySelector('input[type="text"],input:not([type])');
+    const scope = editScope();
+    const formItem = scope.querySelector('#expressPackageNum') || scope;
+    const input = formItem.querySelector('input[data-testid="beast-core-inputNumber-htmlInput"]')
+      || formItem.querySelector('input[placeholder*="箱"]') || formItem.querySelector('input');
     if (!input) throw markRead(new Error('读取失败：编辑页未找到「发货总箱/包数」输入框'));
     U.setInputValue(input, String(want));
     await U.sleep(200);
@@ -320,25 +336,30 @@
     }
   }
   async function fillEditPage() {
-    await U.waitForEl('[data-testid="beast-core-modal-inner"]', 8000).catch(() => {});
-    await U.sleep(500);
+    // 等 drawer 渲染出 packagingType（status=complete ≠ 组件渲染完）
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) { const d = topDrawer(); if (d && d.querySelector('#packagingType')) break; await U.sleep(200); }
+    await U.sleep(300);
     await selectPackType('箱子和袋子');
     await fillBoxCount('1');
   }
 
-  // ── 确认发货 / 关闭编辑页 ──
+  // ── 确认发货 / 关闭编辑页（drawer footer）──
   async function clickConfirmShip() {
-    const scope = topModal() || document;
-    const btn = findClickableByText(scope, '确认发货');
+    const scope = editScope();
+    const footer = scope.querySelector('[class*="footer"]') || scope;
+    const btn = findClickableByText(footer, '确认发货') || findClickableByText(scope, '确认发货');
     if (!btn) throw markRead(new Error('读取失败：编辑页未找到「确认发货」按钮'));
     btn.click();
   }
   async function closeEditPage() {
-    const scope = topModal() || document;
-    const btn = findClickableByText(scope, '取消')
-      || scope.querySelector('[aria-label="Close"],[data-testid*="close"],[class*="close"]');
+    const scope = editScope();
+    if (scope === document) return;                  // 没有 drawer，无需关
+    const footer = scope.querySelector('[class*="footer"]');
+    const btn = (footer && findClickableByText(footer, '取消'))
+      || scope.querySelector('[data-testid="beast-core-icon-close"]');
     if (btn) btn.click();
-    await waitModalGone(5000);
+    await waitEditGone(5000);
   }
 
   // ════════ OFF 模式逐单确认框（可拖动，不超时）════════
