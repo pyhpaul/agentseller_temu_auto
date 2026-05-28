@@ -420,6 +420,28 @@ function cpoWaitEditTab(addTabId, timeout = 30000) {
   return { promise, cancel: () => cleanup() };
 }
 
+// 半自动确认框：等用户在 edit 页点「确认保存」/「取消」。三路兜底防 cpoRun2 悬挂：
+// ① 用户点击 → sendMessage resolve；② edit tab 被关 → onRemoved 立即按 cancelled；
+// ③ 通道异常 / 5min 超时兜底（远超人工核对时长，仅防极端导航绕过守卫导致永久挂起）
+function cpoConfirmSave(editTabId) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      resolve(r);
+    };
+    const onRemoved = (id) => { if (id === editTabId) finish({ cancelled: true }); };
+    const timer = setTimeout(() => finish({ cancelled: true }), 300000);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs.sendMessage(editTabId, { type: 'CPO_P2_CONFIRM_SAVE', data: {} })
+      .then(r => finish(r || {}))
+      .catch(() => finish({ cancelled: true }));
+  });
+}
+
 // 在 originTabId 右侧新开 tab（流程 tab 紧邻触发页，不堆到标签栏末尾）
 async function cpoCreateTabNextTo(url, originTabId) {
   const opts = { url, active: true };
@@ -501,8 +523,7 @@ async function cpoRun2({ orderNo1688, autoSave = true }, originTabId = null) {
     // 用 chrome.tabs.sendMessage 直发（不走 cpoSendCommand：那有 20s 超时 + retry，会打断/重复弹窗）
     if (!autoSave) {
       await cpoSetPhase2({ step: 5, label: '请核对采购信息，在弹窗点「确认保存」', collected2 });
-      const confirm = await chrome.tabs.sendMessage(editTabId, { type: 'CPO_P2_CONFIRM_SAVE', data: {} })
-        .catch(() => ({ cancelled: true }));
+      const confirm = await cpoConfirmSave(editTabId);   // 含 tab 关闭/超时兜底，不会永久悬挂
       if (confirm && confirm.cancelled) {
         await cpoSetPhase2({ status: 'error', label: '已取消自动保存，请在采购单页手动核对并保存', collected2 });
         return;   // 正常退出不回收 tab，edit 页留给用户接管
