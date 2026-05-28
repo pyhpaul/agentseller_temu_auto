@@ -1,0 +1,79 @@
+## 店小秘 add 采购单页 DOM 基线
+## URL: https://www.dianxiaomi.com/web/purchasing/order/add?pageType=2&isAlibaba=1&isPaste=1
+
+## ── 1688账号 下拉 ──
+标准 ant-select，位于含「1688账号」label 的 form-item 内：
+<div class="ant-form-item ...">
+  <label>1688账号</label>
+  <div class="ant-select ant-select-in-form-item ... w200 ant-select-single ant-select-show-arrow">
+    <div class="ant-select-selector">
+      <span class="ant-select-selection-item">（选中后显示账号名）</span>
+    </div>
+    <input type="search" aria-controls="rc_select_N_list" aria-owns="rc_select_N_list" ...>
+    <span class="ant-select-arrow">...</span>
+  </div>
+</div>
+
+下拉展开后（portal 到 body）：
+<div class="ant-select-dropdown ...">
+  <div id="rc_select_N_list" role="listbox">
+    <div role="option" class="ant-select-item ant-select-item-option ...">greenworld_绿城</div>
+  </div>
+</div>
+
+注意：当前环境下该账号只有一个选项 greenworld_绿城，选第一项即可。
+定位方式：cpoFindSelectByLabel('1688账号') → cpoSelectFirstOption(sel)
+
+## ── 1688订单号 输入框 ──
+重要：真实 DOM 是 <textarea>，不是 <input>！
+<textarea
+  placeholder="填写1688订单号，多订单号请用回车键分隔"
+  class="ant-input ..."
+  style="..."
+></textarea>
+
+注意：无 id；用 textarea[placeholder*="1688订单号"] 或 textarea[placeholder*="订单号"] 定位。
+setInputValue 对 textarea 同样适用。
+
+## ── 获取1688订单 按钮 ──
+<button class="ant-btn ant-btn-primary ml-80 mt-10 warn-btn">
+  <span>获取1688订单</span>
+</button>
+
+定位方式：U.findByText('button, .ant-btn', '获取1688订单')
+
+## ── 其他字段（本 task 不动，使用默认值）──
+- 采购类型：ant-select，默认值即可
+- 下单方式：ant-select，默认值即可
+- 收货仓库：ant-select，默认「中正科技仓」，不修改
+
+## ── 已存在弹窗（已实机抓取）──
+当输入已入库的1688订单号并点获取时出现：
+<div class="ant-modal css-1oz1bg8 dxm-modal" role="document" style="width:650px">
+  <div class="ant-modal-content">
+    <div class="ant-modal-header">
+      <div class="ant-modal-title">提示</div>
+    </div>
+    <button class="ant-modal-close"><span class="ant-modal-close-x">...</span></button>
+    <div class="ant-modal-body">
+      <div id="commonProgressBarStatus" class="f-red">已完成!</div>
+      <div id="commonProgressBarDetail">3304702093890742986采购单号：PO1SLPT027932已存在，不能重复添加</div>
+    </div>
+    <div class="ant-modal-footer">
+      <button class="ant-btn ant-btn-default"><span>关闭</span></button>
+    </div>
+  </div>
+</div>
+
+结论：Task 5 关键词检测 /已存在|不能重复添加|已完成/ 命中「已完成!」+「已存在，不能重复添加」；
+关闭按钮文本「关闭」可达（footer 内 .ant-btn-default，或角上 .ant-modal-close X）。
+当前实现用鲁棒关键词匹配（/已存在|不能重复添加|已完成/）+ 可见性检测（height>0）。
+注意：检测容器选择器去掉了 .ant-modal-confirm-body，避免命中内层子元素导致关闭按钮 querySelector 落空。
+
+补充：弹窗正文「采购单号：PO...」措辞 ≠ 旧的「采购单：PO...」，
+cpo-logic.js extractPoNo 正则已加「号?」兼容两种（见 fix commit）。
+
+## ── 轮询逻辑说明 ──
+CPO_P2_ADD_FETCH 点击「获取1688订单」后，轮询最多 25 次（每次 200ms，共约 5s）：
+- 检测到已存在弹窗 → 点关闭 → 返回 { ok: true, exists: true }（bg 走已存在分支）
+- 超时未出现弹窗   → 返回 { ok: true, exists: false }（bg 靠跳转监听接管后续 edit 页）

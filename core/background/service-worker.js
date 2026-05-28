@@ -388,4 +388,174 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   cpoRun(msg.data);                                // 异步跑，进度写 storage；不阻塞 ack
   sendResponse({ ok: true });
 });
+
+// ── Phase 2：创建现有订单跨 tab 编排 ──
+const CPO_DXM_PO_ADD_URL = 'https://www.dianxiaomi.com/web/purchasing/order/add?pageType=2&isAlibaba=1&isPaste=1';
+const CPO_DXM_WAIT_URL  = 'https://www.dianxiaomi.com/web/purchasing/order/waitArrival';
+
+// 写 cpo_state.phase2（单一状态源；各 tab 面板靠 storage.onChanged 同步）
+function cpoSetPhase2(patch) {
+  return chrome.storage.local.get('cpo_state').then(({ cpo_state }) => {
+    const cur = cpo_state || {};
+    const p2 = { status: 'idle', step: 0, label: '', collected2: {}, ...(cur.phase2 || {}), ...patch };
+    return chrome.storage.local.set({ cpo_state: { ...cur, phase2: p2, updatedAt: Date.now() } });
+  });
+}
+
+// add→edit：「获取1688订单」成功后店小秘跳 edit（同 tab 导航或新弹 tab 都覆盖）→ edit tabId
+function cpoWaitEditTab(addTabId, timeout = 30000) {
+  const pred = u => /\/purchasing\/order\/edit/.test(u);
+  let cleanup = () => {};
+  const promise = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error('获取1688订单后未跳转到采购单编辑页')); }, timeout);
+    function onUpdated(id, info, tab) {
+      const url = (tab && tab.url) || info.url || '';
+      if (url && pred(url) && tab.status === 'complete' && (id === addTabId || tab.openerTabId === addTabId)) {
+        cleanup(); resolve(id);
+      }
+    }
+    cleanup = () => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(onUpdated); };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+  return { promise, cancel: () => cleanup() };
+}
+
+// 半自动确认框：等用户在 edit 页点「确认保存」/「取消」。三路兜底防 cpoRun2 悬挂：
+// ① 用户点击 → sendMessage resolve；② edit tab 被关 → onRemoved 立即按 cancelled；
+// ③ 通道异常 / 5min 超时兜底（远超人工核对时长，仅防极端导航绕过守卫导致永久挂起）
+function cpoConfirmSave(editTabId) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      resolve(r);
+    };
+    const onRemoved = (id) => { if (id === editTabId) finish({ cancelled: true }); };
+    const timer = setTimeout(() => finish({ cancelled: true }), 300000);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs.sendMessage(editTabId, { type: 'CPO_P2_CONFIRM_SAVE', data: {} })
+      .then(r => finish(r || {}))
+      .catch(() => finish({ cancelled: true }));
+  });
+}
+
+// 在 originTabId 右侧新开 tab（流程 tab 紧邻触发页，不堆到标签栏末尾）
+async function cpoCreateTabNextTo(url, originTabId) {
+  const opts = { url, active: true };
+  if (originTabId != null) {
+    try {
+      const o = await chrome.tabs.get(originTabId);
+      opts.index = o.index + 1;
+      opts.openerTabId = originTabId;
+    } catch (e) { /* origin tab 已关，退化为默认末尾位置 */ }
+  }
+  return chrome.tabs.create(opts);
+}
+
+// error 退出时把焦点切回触发页（点「开始」的 tab），不留用户停在残破/空白页
+function cpoFocusOrigin(originTabId) {
+  if (originTabId != null) chrome.tabs.update(originTabId, { active: true }).catch(() => {});
+}
+
+// Phase 2 主编排：创建现有订单 → 通过审核 → 待到货定位 → 停在申请付款前
+// 新开独立 tab 跑全流程，不复用触发方 tab；originTabId 仅用于「新 tab 定位」+「error 切回」
+async function cpoRun2({ orderNo1688, autoSave = true }, originTabId = null) {
+  const { cpo_state } = await chrome.storage.local.get('cpo_state');
+  const p1 = (cpo_state && cpo_state.phase1) || {};
+  const skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
+  if (p1.status !== 'done') { await cpoSetPhase2({ status: 'error', label: '请先完成 Phase 1 添加SKU' }); return; }
+  if (!skuNo) { await cpoSetPhase2({ status: 'error', label: 'Phase 1 未采集到 SKU货号' }); return; }
+  if (!orderNo1688 || !orderNo1688.trim()) { await cpoSetPhase2({ status: 'error', label: '1688订单号不能为空' }); return; }
+  const order = orderNo1688.trim();
+
+  const collected2 = { poNo: '', orderNo1688: order };
+  const tmpTabs = [];   // 临时 tab，出错统一回收（待到货页除外；当前 draft tab 也不回收）
+  try {
+    await cpoSetPhase2({ status: 'running', step: 1, label: '导航到创建采购单页', collected2 });
+
+    // step1：新开 tab 导航到 add 页（绕开 dropdown；Ant Design Vue isTrusted 检查阻止 programmatic click）
+    const addTabId = (await cpoCreateTabNextTo(CPO_DXM_PO_ADD_URL, originTabId)).id;
+    await cpoWaitTabComplete(addTabId);
+    tmpTabs.push(addTabId);
+
+    // step2-3：add 选账号+填单号+获取；弹窗分流（bg 主导）
+    await cpoSetPhase2({ step: 2, label: '填写1688账号与订单号、获取订单', collected2 });
+    await cpoWaitTabComplete(addTabId);
+    const editWaiter = cpoWaitEditTab(addTabId);            // 先挂 edit 监听（注册时序）
+    const editTabP = editWaiter.promise.catch(() => null);  // 超时返回 null
+    let exists = false;
+    try {
+      const r = await cpoSendCommand(addTabId, 'CPO_P2_ADD_FETCH', { orderNo1688: order });
+      if (r && r.ok === false) {
+        const err = new Error(r.error || 'ADD_FETCH 失败');
+        err._handlerError = true;   // 标记：是 handler 逻辑失败，不是导航通道销毁
+        throw err;
+      }
+      exists = !!(r && r.exists);
+    } catch (e) {
+      if (e._handlerError) { editWaiter.cancel(); throw e; }
+      // 其余异常 = content 通道销毁（tab 跳转到 edit 是正常路径），靠 editTabP 接管
+      // 常见措辞：receiving end / channel closed / disconnected / back/forward cache / message channel
+    }
+    if (exists) {
+      editWaiter.cancel();          // 已入库不跳 edit，主动清理 edit 监听（避免 30s 孤儿监听）
+      await cpoCloseTab(addTabId);
+      cpoFocusOrigin(originTabId);
+      await cpoSetPhase2({ status: 'error', label: '当前输入的1688订单号已入库', collected2 });
+      return;
+    }
+
+    // step3→4：接管 edit tab
+    await cpoSetPhase2({ step: 3, label: '进入采购单编辑页', collected2 });
+    const editTabId = await editTabP;
+    if (!editTabId) throw new Error('获取1688订单后未跳转到采购单编辑页');
+    tmpTabs.push(editTabId);
+    await cpoWaitTabComplete(editTabId);
+
+    // step4：edit 填采购人员/收货仓库 + 配对商品
+    await cpoSetPhase2({ step: 4, label: '填采购人员/收货仓库、配对商品', collected2 });
+    await cpoSendCommand(editTabId, 'CPO_P2_EDIT_FILL', { skuNo });
+
+    // step5：半自动模式（autoSave=false）先弹可拖动确认框，等用户核对后再保存
+    // 用 chrome.tabs.sendMessage 直发（不走 cpoSendCommand：那有 20s 超时 + retry，会打断/重复弹窗）
+    if (!autoSave) {
+      await cpoSetPhase2({ step: 5, label: '请核对采购信息，在弹窗点「确认保存」', collected2 });
+      const confirm = await cpoConfirmSave(editTabId);   // 含 tab 关闭/超时兜底，不会永久悬挂
+      if (confirm && confirm.cancelled) {
+        await cpoSetPhase2({ status: 'error', label: '已取消自动保存，请在采购单页手动核对并保存', collected2 });
+        return;   // 正常退出不回收 tab，edit 页留给用户接管
+      }
+    }
+    // step5：保存并通过审核 → 抓成功弹窗提采购单号
+    await cpoSetPhase2({ step: 5, label: '保存并通过审核', collected2 });
+    const rSave = await cpoSendCommand(editTabId, 'CPO_P2_EDIT_SAVE');
+    collected2.poNo = rSave.poNo;
+    await cpoSetPhase2({ step: 5, label: '已通过审核，采购单 ' + rSave.poNo, collected2 }); // 同 step 二次更新：显示审核结果（故意，非笔误）
+
+    // step6：开待到货页搜索定位（新开 tab + 关 edit tab，避免 edit 未保存守卫阻塞 update + 残留）
+    await cpoSetPhase2({ step: 6, label: '打开待到货页、搜索定位商品', collected2 });
+    await cpoCloseTab(editTabId); tmpTabs.splice(tmpTabs.indexOf(editTabId), 1);
+    const tWait = await cpoCreateTabNextTo(CPO_DXM_WAIT_URL, originTabId);
+    await cpoWaitTabComplete(tWait.id);
+    await cpoSendCommand(tWait.id, 'CPO_P2_WAIT_SEARCH', { skuNo });
+    // tWait 待到货页保留给用户点申请付款，不加入 tmpTabs、不回收
+
+    // step7：done，提醒手动申请付款
+    await cpoSetPhase2({ status: 'done', step: 7, label: '已定位商品，请手动点「申请付款」完成', collected2 });
+  } catch (e) {
+    for (const id of tmpTabs) { chrome.tabs.remove(id).catch(() => {}); }
+    cpoFocusOrigin(originTabId);
+    await cpoSetPhase2({ status: 'error', label: String(e?.message || e), collected2 });
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== 'CPO_START_PHASE2') return;     // 只接管 CPO_START_PHASE2
+  if (!msg.data) { sendResponse({ ok: false, error: '缺少启动参数' }); return; }
+  cpoRun2(msg.data, _sender.tab?.id ?? null);       // 新开独立 tab；传触发方 tab 仅供新 tab 定位 + error 切回
+  sendResponse({ ok: true });
+});
 // ── end create_purchase_order ────────────────────────────────────────────────

@@ -30,12 +30,20 @@
   }
 
   // ── 面板引用（render 填入；refreshFromStorage / storage.onChanged 更新） ──
-  const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null, p2Status: null, p2Btn: null };
+  const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
+               p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null,
+               poOutput: null, poBox: null, autoSaveChk: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
     ui.localMsg.textContent = text || '';
     ui.localMsg.style.color = kind === 'error' ? '#ff4d4f' : '#666';
+  }
+
+  function setP2Msg(text, kind = 'info') {
+    if (!ui.p2Msg) return;
+    ui.p2Msg.textContent = text || '';
+    ui.p2Msg.style.color = kind === 'error' ? '#ff4d4f' : '#666';
   }
 
   function statusText(p) {
@@ -58,8 +66,35 @@
         : '';
     }
     if (ui.p2Status) ui.p2Status.textContent = '状态：' + statusText(p2);
-    // Phase 2 按钮：Phase 1 完成 + 当前在店小秘页 才可点（动作待开发）
-    if (ui.p2Btn) ui.p2Btn.disabled = !(p1.status === 'done' && isDxmPage());
+    const c2 = p2.collected2 || {};
+    const p2Done = p2.status === 'done' && c2.poNo;
+    if (ui.p2Data) {
+      // 状态区输出采购单号（纯文本，供与下方只读框比对）
+      ui.p2Data.textContent = p2Done
+        ? '制作成功 采购单号：' + c2.poNo + ' ｜ 1688订单：' + (c2.orderNo1688 || '-')
+        : '';
+    }
+    if (ui.poOutput && ui.poBox) {
+      // 只读框：成功后显示采购单号供选中复制；非完成态清空隐藏（连同「采购单号：」label 整行 poBox）
+      ui.poOutput.value = p2Done ? c2.poNo : '';
+      ui.poBox.style.display = p2Done ? 'flex' : 'none';
+    }
+    if (ui.orderInput) {
+      // phase1+phase2 都完成：回填本次 1688订单号并锁成只读，跨 tab 共享同一份；
+      // 用 readOnly 自身判断「上次是否锁定」——从锁定态解除（清除/新流程）时清空回填值、恢复可输入
+      const bothDone = p1.status === 'done' && p2.status === 'done' && c2.orderNo1688;
+      if (bothDone) {
+        ui.orderInput.value = c2.orderNo1688;
+        ui.orderInput.readOnly = true;
+        ui.orderInput.style.background = '#f7f7f7';
+      } else if (ui.orderInput.readOnly) {
+        ui.orderInput.value = '';
+        ui.orderInput.readOnly = false;
+        ui.orderInput.style.background = '';
+      }
+    }
+    lastP1Done = (p1.status === 'done');
+    recomputeP2Btn();
   }
 
   function refreshFromStorage() {
@@ -114,6 +149,41 @@
       cpoStarting = false;
       // 成功启动后保持禁用（流程在跑，避免误触并行重跑）；未启动则恢复供重试
       if (!started && ui.startBtn) ui.startBtn.disabled = false;
+    }
+  }
+
+  // ②区按钮启用：phase1 done + 在店小秘页 + 输入框有值。lastP1Done 由 renderState 更新
+  let lastP1Done = false;
+  function recomputeP2Btn() {
+    if (!ui.p2Btn) return;
+    const orderVal = (ui.orderInput && ui.orderInput.value || '').trim();
+    const locked = !!(ui.orderInput && ui.orderInput.readOnly);   // 流程完成锁定态：禁用，引导先清除再开新单
+    ui.p2Btn.disabled = locked || !(lastP1Done && isDxmPage() && orderVal);
+  }
+
+  // 发起 Phase 2（仅店小秘页）：校验 → CPO_START_PHASE2
+  let cpoStarting2 = false;   // 重入守卫
+  async function onStartPhase2() {
+    if (cpoStarting2) return;
+    cpoStarting2 = true;                              // 提前置位，覆盖 await 校验窗口（对齐①区）
+    if (ui.p2Btn) ui.p2Btn.disabled = true;          // 同步禁用，先于下面的 async 校验
+    let started = false;
+    try {
+      const orderNo1688 = (ui.orderInput && ui.orderInput.value || '').trim();
+      const o = await chrome.storage.local.get(STATE_KEY);
+      const p1Done = !!(o[STATE_KEY] && o[STATE_KEY].phase1 && o[STATE_KEY].phase1.status === 'done');
+      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done });
+      if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
+      setP2Msg('启动中…');
+      const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave } });
+      if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
+      else started = true;
+    } catch (e) {
+      setP2Msg('启动失败：' + e.message, 'error');
+    } finally {
+      cpoStarting2 = false;
+      if (!started) recomputeP2Btn();                // 启动成功则保持禁用（流程在跑）
     }
   }
 
@@ -194,15 +264,55 @@
       h2.textContent = '② 创建采购单';
       ui.p2Status = document.createElement('div');
       ui.p2Status.style.cssText = 'color:#666;';
-      const note2 = document.createElement('div');
-      note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
-      note2.textContent = 'Phase 1 成功后在店小秘发起（功能开发中）';
-      ui.p2Btn = document.createElement('button');
-      ui.p2Btn.className = 'tal-action-btn';
-      ui.p2Btn.textContent = '创建采购单';
-      ui.p2Btn.disabled = true;
-      ui.p2Btn.addEventListener('click', () => U.showToast('Phase 2（创建采购单）开发中', 'info'));
-      wrap.append(h2, ui.p2Status, note2, ui.p2Btn);
+      ui.p2Data = document.createElement('div');
+      ui.p2Data.style.cssText = 'color:#888;font-size:11px;line-height:1.4;';
+      wrap.append(h2, ui.p2Status, ui.p2Data);
+
+      if (isDxmPage()) {
+        const hint2 = document.createElement('div');
+        hint2.style.cssText = 'color:#666;line-height:1.4;';
+        hint2.textContent = '需先完成①添加SKU；填 1688订单号后开始';
+        ui.orderInput = document.createElement('input');
+        ui.orderInput.placeholder = '1688订单号';
+        ui.orderInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+        ui.orderInput.addEventListener('input', recomputeP2Btn);
+        const orderRow = document.createElement('div');
+        orderRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        const orderLabel = document.createElement('span');
+        orderLabel.textContent = '1688订单号：';
+        orderLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
+        orderRow.append(orderLabel, ui.orderInput);
+        // 自动保存开关：勾选=到「保存，并通过审核」自动点；不勾=弹可拖动确认框等用户核对后再点
+        const saveChkLabel = document.createElement('label');
+        saveChkLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:#666;cursor:pointer;line-height:1.4;';
+        ui.autoSaveChk = document.createElement('input');
+        ui.autoSaveChk.type = 'checkbox';
+        ui.autoSaveChk.checked = false;   // 默认不勾选：先弹确认框让用户核对，确认后再保存
+        saveChkLabel.append(ui.autoSaveChk, document.createTextNode('自动点击「保存，并通过审核」（取消勾选则弹窗等你核对确认）'));
+        ui.p2Btn = document.createElement('button');
+        ui.p2Btn.className = 'tal-action-btn';
+        ui.p2Btn.textContent = '开始创建采购单';
+        ui.p2Btn.disabled = true;
+        ui.p2Btn.addEventListener('click', onStartPhase2);
+        ui.p2Msg = document.createElement('div');
+        ui.p2Msg.style.cssText = 'font-size:11px;color:#666;min-height:16px;';
+        // 采购单号只读输出框（制作成功后显示）：readOnly 防手误改动，用户自行选中复制
+        ui.poBox = document.createElement('div');
+        ui.poBox.style.cssText = 'display:none;align-items:center;gap:6px;';
+        const poLabel = document.createElement('span');
+        poLabel.textContent = '采购单号：';
+        poLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
+        ui.poOutput = document.createElement('input');
+        ui.poOutput.readOnly = true;
+        ui.poOutput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
+        ui.poBox.append(poLabel, ui.poOutput);
+        wrap.append(hint2, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
+      } else {
+        const note2 = document.createElement('div');
+        note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
+        note2.textContent = '（在店小秘页发起；需先完成①添加SKU）';
+        wrap.append(note2);
+      }
 
       // 清除按钮（两 phase 未全部完成时弹确认，避免误清）
       const clearBtn = document.createElement('button');
@@ -337,6 +447,131 @@
     return { filled, total: selects.length };
   }
 
+  // 找标签文本对应的 ant-select（同 form-item 内含 .ant-select 的最小容器）
+  function cpoFindSelectByLabel(labelText) {
+    const want = U.normText(labelText);
+    const item = Array.from(document.querySelectorAll('.ant-form-item, .form-item, .ant-row, .ant-col'))
+      .filter(el => U.normText(el.textContent).includes(want) && el.querySelector('.ant-select'))
+      .sort((a, b) => a.textContent.length - b.textContent.length)[0];
+    return item ? item.querySelector('.ant-select') : null;
+  }
+
+  // 选 ant-select 中匹配 want 的选项（采购人员/收货仓库用）→ 成功 true
+  // 关键：大列表（采购人员）是搜索型下拉，打开后可见选项 .ant-select-item-option 不渲染，
+  // 必须在 dropdown 内搜索框输入关键字才触发渲染/过滤；且匹配只能用可见项的 title——
+  // 隐藏 a11y listbox 的 [role="option"] textContent 是数字 ID（如 1966019）、用户名在 aria-label，会误判
+  async function cpoSelectOptionByText(sel, want) {
+    const combo = sel.querySelector('input');
+    (sel.querySelector('.ant-select-selector') || sel).click();
+    const listId = combo && (combo.getAttribute('aria-controls') || combo.getAttribute('aria-owns'));
+    const target = U.normText(want);
+    let typed = false;
+    for (let i = 0; i < 30; i++) {
+      await U.sleep(100);
+      const scoped = listId && document.getElementById(listId)?.closest('.ant-select-dropdown');
+      const scopes = scoped ? [scoped]
+        : Array.from(document.querySelectorAll('.ant-select-dropdown')).filter(d => d.getBoundingClientRect().height > 0);
+      for (const s of scopes) {
+        // 搜索型下拉：输入关键字触发选项渲染（仅输一次，输完等渲染）
+        const searchInput = s.querySelector('.search-input input, input[placeholder*="搜索"]');
+        if (searchInput && !typed) { U.setInputValue(searchInput, want); typed = true; await U.sleep(300); }
+        // 只匹配可见选项；title 优先（textContent 可能含尾空格 / 隐藏 listbox 是数字 ID）
+        const opt = Array.from(s.querySelectorAll('.ant-select-item-option'))
+          .find(o => U.normText(o.getAttribute('title') || o.textContent) === target);
+        if (opt) { opt.click(); return true; }
+      }
+    }
+    return false;
+  }
+
+  // 读 ant-select 当前选中文本（写后读校验用）。title 优先：文本被 CSS 截断时 textContent 带省略号、title 是完整值
+  function cpoReadSelectValue(sel) {
+    const item = sel && sel.querySelector('.ant-select-selection-item');
+    return U.normText((item && (item.getAttribute('title') || item.textContent)) || '');
+  }
+
+  // 写后读：ant-select 选 want 后回读确认实际选中 === want。失败返回带「期望/实际」的诊断错误，不静默
+  async function cpoSelectAndVerify(sel, want, fieldName) {
+    await cpoSelectOptionByText(sel, want);
+    await U.sleep(200);
+    const actual = cpoReadSelectValue(sel);
+    if (actual !== U.normText(want)) {
+      return { ok: false, error: `数据校验：${fieldName}填写后不符，期望「${want}」实际「${actual || '（空）'}」` };
+    }
+    return { ok: true };
+  }
+
+  // 配对商品弹窗：点「配对商品」/「更换配对」→ 填货号搜索 → 点「选择」→ 处理可能的确认弹窗
+  async function cpoPairProduct(skuNo) {
+    const normSku = U.normText(skuNo);
+    // 找「配对商品」或「更换配对」（span.link，不是 button）
+    const pairBtn = Array.from(document.querySelectorAll('span.link'))
+      .find(el => ['配对商品', '更换配对'].includes(el.textContent.trim()));
+    if (!pairBtn) return { ok: false, error: '未找到「配对商品」按钮（确保采购单行已展开）' };
+    pairBtn.click();
+    // 等 product-ref-modal 的 ant-modal-body 出现
+    let modalBody = null;
+    for (let i = 0; i < 30 && !modalBody; i++) {
+      await U.sleep(200);
+      const el = document.querySelector('.product-ref-modal .ant-modal-body');
+      if (el && el.getBoundingClientRect().height > 0) modalBody = el;
+    }
+    if (!modalBody) return { ok: false, error: '配对弹窗未出现' };
+    // 搜索类型「商品SKU」tag 默认 active，无需切换
+    // 填搜索内容（input[name="tableSearchInput"]）
+    const kwInput = modalBody.querySelector('input[name="tableSearchInput"]');
+    if (!kwInput) return { ok: false, error: '配对弹窗：未找到搜索输入框（name=tableSearchInput）' };
+    U.setInputValue(kwInput, skuNo);
+    await U.sleep(150);
+    // 点搜索（button[type="submit"]）
+    const searchBtn = modalBody.querySelector('button[type="submit"]');
+    if (!searchBtn) return { ok: false, error: '配对弹窗：未找到搜索按钮' };
+    searchBtn.click();
+    // 等结果行，找 SKU 匹配项的「选择」按钮
+    // 表格两列布局：每行 4 td（info1, 选择1, info2, 选择2）；SKU 在 .no-new-line2:not(.gray-c)
+    let selBtn = null;
+    for (let i = 0; i < 30 && !selBtn; i++) {
+      await U.sleep(200);
+      for (const row of modalBody.querySelectorAll('table.in-table tbody tr.content')) {
+        const cells = row.querySelectorAll('td');
+        for (let k = 0; k < cells.length - 1; k += 2) {
+          const skuEl = cells[k]?.querySelector('.no-new-line2:not(.gray-c)');
+          if (skuEl && U.normText(skuEl.textContent) === normSku) {
+            selBtn = cells[k + 1]?.querySelector('span.link');
+            break;
+          }
+        }
+        if (selBtn) break;
+      }
+    }
+    if (!selBtn) return { ok: false, error: `配对弹窗：未找到 SKU「${skuNo}」的配对结果（请确认货号已建档）` };
+    selBtn.click();
+    // 等可能的「确认要更换配对关系」弹窗（已有配对时出现）
+    await U.sleep(500);
+    const confirmModal = Array.from(document.querySelectorAll('.ant-modal-content'))
+      .find(m => m.getBoundingClientRect().height > 0 && m.textContent.includes('确认要更换配对关系'));
+    if (confirmModal) {
+      // 选「修改所有草稿箱」选项（value=1）
+      const allOpt = Array.from(confirmModal.querySelectorAll('label.ant-radio-wrapper'))
+        .find(l => l.textContent.includes('修改所有'));
+      allOpt?.click();
+      await U.sleep(150);
+      const confirmBtn = Array.from(confirmModal.querySelectorAll('button'))
+        .find(b => b.textContent.trim() === '确认');
+      if (!confirmBtn) return { ok: false, error: '配对：确认弹窗未找到「确认」按钮' };
+      confirmBtn.click();
+    }
+    // 填写后检查：配对弹窗在「选择」(+确认)后应自动关闭，关闭=配对已提交生效；未关=被必填/报错挡住
+    let modalClosed = false;
+    for (let i = 0; i < 20; i++) {
+      await U.sleep(150);
+      const m = document.querySelector('.product-ref-modal');
+      if (!m || m.getBoundingClientRect().height === 0) { modalClosed = true; break; }
+    }
+    if (!modalClosed) return { ok: false, error: '数据校验：配对弹窗点「选择」后未关闭，配对可能未生效' };
+    return { ok: true };
+  }
+
   // ── bg → content 命令处理器（temu 列表/编辑 + 1688 + 店小秘 填表） ──
   const handlers = {
     CPO_READ_1688_TITLE: async () => {
@@ -423,6 +658,150 @@
       saveBtn.click();
       U.showToast('创建采购单：已提交保存', 'ok');
       return { ok: true, filled: true, person, saved: true };
+    },
+
+    CPO_P2_ADD_FETCH: async ({ orderNo1688 }) => {
+      // isPaste=1 模式：无「1688账号」下拉，直接填订单号 + 点获取
+      // 等 Vue 表单渲染（tab.status=complete 后组件仍需额外时间挂载）
+      try { await U.waitForEl('textarea[placeholder*="1688订单号"]', document, 10000); }
+      catch { return { ok: false, error: '1688订单号输入框 10s 内未渲染，表单未就绪' }; }
+      // a) 填 1688订单号 —— textarea placeholder「填写1688订单号，多订单号请用回车键分隔」
+      const orderInput = document.querySelector('textarea[placeholder*="1688订单号"], textarea[placeholder*="订单号"]');
+      if (!orderInput) return { ok: false, error: '未找到「1688订单」输入框' };
+      U.setInputValue(orderInput, orderNo1688);
+      await U.sleep(150);
+      // b) 点「获取1688订单」（warn-btn）
+      const fetchBtn = U.findByText('button, .ant-btn', '获取1688订单');
+      if (!fetchBtn) return { ok: false, error: '未找到「获取1688订单」按钮' };
+      fetchBtn.click();
+      // d) 轮询「已存在」弹窗（业务拦截）；未出现则 exists:false（bg 靠 edit 跳转监听接管）
+      //    弹窗精确结构待补 dump，先用鲁棒关键词 + 可见性检测
+      for (let i = 0; i < 25; i++) {                 // ~5s
+        await U.sleep(200);
+        const dlg = Array.from(document.querySelectorAll('.ant-modal, .ant-modal-confirm, .modal'))
+          .find(d => d.getBoundingClientRect().height > 0 && /已存在|不能重复添加|已完成/.test(d.textContent));
+        if (dlg) {
+          const closeBtn = U.findByText('.ant-modal button, .modal button', '关闭')
+            || dlg.querySelector('.ant-modal-close, .ant-modal-close-x')
+            || Array.from(dlg.querySelectorAll('button, .ant-btn')).find(b => /关闭|知道了|确定/.test(b.textContent));
+          closeBtn?.click();
+          return { ok: true, exists: true };
+        }
+      }
+      return { ok: true, exists: false };
+    },
+
+    CPO_P2_EDIT_FILL: async ({ skuNo }) => {
+      U.showToast('创建采购单：填写采购信息…', 'info');
+      // 等 edit 页 Vue 表单渲染（收货仓库 d-selector 是渲染完成的标志）
+      try { await U.waitForEl('label[title="收货仓库"], div.d-selector', document, 12000); }
+      catch { return { ok: false, error: 'edit 页收货仓库下拉 12s 内未渲染，表单未就绪' }; }
+      // a) 收货仓库选「中正科技仓」（d-selector 包装的 .ant-select.in-selector），填后回读校验
+      const whSel = cpoFindSelectByLabel('收货仓库');
+      if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
+      const whR = await cpoSelectAndVerify(whSel, '中正科技仓', '收货仓库');
+      if (!whR.ok) return whR;
+      // b) 配对商品（span.link，配对弹窗搜索类型=商品SKU，填货号，选匹配结果，处理确认弹窗）
+      //    顺序关键：必须在采购人员【之前】——配对的「修改所有草稿箱」确认会重置采购人员，
+      //    若先选采购人员会被配对覆盖（实测踩坑，曾误判为「采购人员没填对」）
+      const pair = await cpoPairProduct(skuNo);
+      if (!pair.ok) return pair;
+      // c) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）——放最后，配对后再选，填后回读校验
+      const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
+      const buyerSel = cpoFindSelectByLabel('采购人员');
+      if (!buyerSel) return { ok: false, error: '业务拦截：未找到「采购人员」下拉' };
+      if (!userName) return { ok: false, error: '读取失败：未读到当前登录用户名（.user-name 为空）' };
+      const buyerR = await cpoSelectAndVerify(buyerSel, userName, '采购人员');
+      if (!buyerR.ok) return buyerR;
+      return { ok: true };
+    },
+
+    // 半自动模式：弹可拖动确认框，等用户核对页面已填信息后点「确认保存」/「取消」
+    // 可拖动（不带遮罩）让用户能把框拖开、查看采购单页所有字段。Promise 直到用户点击才 resolve
+    CPO_P2_CONFIRM_SAVE: async () => {
+      return new Promise((resolve) => {
+        document.getElementById('cpo-confirm-box')?.remove();
+        const box = document.createElement('div');
+        box.id = 'cpo-confirm-box';
+        box.style.cssText = 'position:fixed;top:80px;right:30px;z-index:2147483647;width:300px;background:#fff;border:1px solid #1677ff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.2);font-size:13px;color:#333;';
+        const bar = document.createElement('div');
+        bar.style.cssText = 'padding:8px 12px;background:#1677ff;color:#fff;border-radius:8px 8px 0 0;cursor:move;font-weight:600;';
+        bar.textContent = '核对采购信息（可拖动）';
+        const body = document.createElement('div');
+        body.style.cssText = 'padding:12px;line-height:1.6;';
+        body.innerHTML = '请核对采购单页的<b>采购人员 / 收货仓库 / 配对商品</b>，确认无误后点「确认保存」，将自动点击「保存，并通过审核」。';
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:8px;padding:0 12px 12px;';
+        const okBtn = document.createElement('button');
+        okBtn.textContent = '确认保存';
+        okBtn.style.cssText = 'flex:1;padding:7px;border:none;border-radius:4px;background:#1677ff;color:#fff;cursor:pointer;font-size:13px;';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '取消';
+        cancelBtn.style.cssText = 'flex:1;padding:7px;border:1px solid #ddd;border-radius:4px;background:#fff;color:#666;cursor:pointer;font-size:13px;';
+        const finish = (result) => { box.remove(); resolve(result); };
+        okBtn.addEventListener('click', () => finish({ ok: true }));
+        cancelBtn.addEventListener('click', () => finish({ ok: true, cancelled: true }));
+        btnRow.append(okBtn, cancelBtn);
+        box.append(bar, body, btnRow);
+        document.body.appendChild(box);
+        U.makeDraggable(box, bar);
+      });
+    },
+
+    CPO_P2_EDIT_SAVE: async () => {
+      // 等保存按钮出现（防止 EDIT_FILL 与 SAVE 之间极短时序竞争）
+      try { await U.waitForEl('.ant-btn', document, 5000); }
+      catch { return { ok: false, error: '读取失败：edit 页保存按钮 5s 内未就绪' }; }
+      // 点「保存，并通过审核」（注意文案含逗号）
+      const saveBtn = U.findByText('button, .ant-btn', '保存，并通过审核')
+        || U.findByText('button, .ant-btn', '保存并通过审核');
+      if (!saveBtn) return { ok: false, error: '读取失败：未找到「保存，并通过审核」按钮' };
+      U.showToast('创建采购单：正在保存并通过审核…', 'info');
+      saveBtn.click();
+      // 等成功弹窗（含「操作成功」或「采购单」关键字）
+      let text = '';
+      for (let i = 0; i < 30; i++) {                   // ~6s
+        await U.sleep(200);
+        const dlg = Array.from(document.querySelectorAll(
+          '.ant-modal, .ant-modal-confirm, .ant-message, .ant-notification, .modal'))
+          .find(d => d.getBoundingClientRect().height > 0 && /操作成功|采购单/.test(d.textContent));
+        if (dlg) { text = dlg.textContent || ''; break; }
+      }
+      if (!text) return { ok: false, error: '业务拦截：未捕获到审核成功弹窗（保存可能被必填项拦截）' };
+      const poNo = L.extractPoNo(text);
+      if (!poNo) return { ok: false, error: '数据校验：审核弹窗未解析出采购单号。原文：' + text.slice(0, 120) };
+      return { ok: true, poNo };
+    },
+
+    CPO_P2_WAIT_SEARCH: async ({ skuNo }) => {
+      // 等待待到货页 Vue 渲染完成（tab.status=complete ≠ Vue 组件就绪）
+      try { await U.waitForEl('#searchValue, input[name="tableSearchInput"]', document, 10000); }
+      catch { return { ok: false, error: '读取失败：待到货页搜索框 10s 内未渲染，表单未就绪' }; }
+      // 搜索类型是 d-tag-group（tag 切换），非 ant-select。点「商品SKU」tag（默认通常已 active）
+      const typeTag = Array.from(document.querySelectorAll('.d-tag-group-item'))
+        .find(t => U.normText(t.textContent) === '商品SKU');
+      if (typeTag && !typeTag.classList.contains('active')) { typeTag.click(); await U.sleep(150); }
+      // 搜索内容：input#searchValue（name=tableSearchInput）
+      const kwInput = document.querySelector('#searchValue, input[name="tableSearchInput"]');
+      if (!kwInput) return { ok: false, error: '待到货页：未找到搜索内容输入框' };
+      U.setInputValue(kwInput, skuNo);
+      await U.sleep(150);
+      // 搜索按钮：限定在搜索框容器内取 submit（避开高级搜索区的「搜索」）
+      const scope = kwInput.closest('.search-container-main, .searchContainer') || document;
+      const searchBtn = scope.querySelector('button[type="submit"]') || U.findByText('button, .ant-btn', '搜索', scope);
+      if (!searchBtn) return { ok: false, error: '待到货页：未找到搜索按钮' };
+      searchBtn.click();
+      // 等 vxe-table 出结果（有数据行 + 无「暂无数据」空态）。行文本不含 SKU 货号，故按行数+空态判
+      let found = false;
+      for (let i = 0; i < 25; i++) {                 // ~5s
+        await U.sleep(200);
+        const rows = document.querySelectorAll('.vxe-body--row');
+        const emptyShown = Array.from(document.querySelectorAll('.vxe-table--empty-block, .empty-container'))
+          .some(e => e.getBoundingClientRect().height > 0 && /暂无数据/.test(e.textContent));
+        if (rows.length > 0 && !emptyShown) { found = true; break; }
+      }
+      U.showToast(found ? '已定位商品，请手动点「申请付款」' : '未搜到商品行，请手动核对', found ? 'ok' : 'error');
+      return { ok: true, found };   // 搜不到不阻断 done（采购单号已从审核弹窗取得）
     },
   };
 

@@ -1,0 +1,22 @@
+店小秘草稿页真实 DOM 基线
+URL: https://www.dianxiaomi.com/web/purchasing/order/draft/aliPurchasing
+
+=== 触发器按钮（页面顶部操作区，橙色） ===
+<button class="css-1oz1bg8 ant-btn ant-btn-primary btn-orange ant-dropdown-trigger" type="button">
+  <span>创建采购单</span>
+  <i class="iconfont icon_down"></i>
+</button>
+
+=== 下拉菜单结构 ===
+标准 .ant-dropdown-menu（页面预渲染、初始 visible=false，点触发器后展开）
+菜单项是标准 .ant-dropdown-menu-item，文本依次为：
+  1. 创建现有订单
+  2. 创建1688订单（多供货商）
+
+=== 触发方式 ===
+点击或悬停都能展开下拉（与店小秘添加页的「选择图片」不同，此处 click 即可，无需派发鼠标悬停事件）。
+
+=== 点击行为实测 ===
+点「创建现有订单」新开一个标签页到 /purchasing/order/add（原 draft 页保留），
+手动点未见弹窗拦截（即该 click 不会被 Chrome 拦截为 _blank popup）。
+新开 tab 由 bg 的 cpoCaptureChildTab 捕获，bg 继续编排后续步骤。

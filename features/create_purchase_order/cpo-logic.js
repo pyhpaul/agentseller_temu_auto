@@ -40,7 +40,26 @@
     };
   }
 
-  const api = { extractSerial, buildIdCode, validateInputs, mapDxmFields };
+  // 审核成功弹窗文本 "操作成功：1个，采购单：PO1SLPT...已移入待到货状态" → "PO1SLPT..."；无则 null
+  // 先去所有空白：弹窗 textContent 跨 DOM 节点拼接会插入空白（如「采购单： PO...」「关 闭」），否则正则失配
+  function extractPoNo(successText) {
+    const text = String(successText == null ? '' : successText).replace(/\s+/g, '');
+    const m = text.match(/采购单号?[:：](PO\w+)/);
+    return m ? m[1] : null;
+  }
+
+  // 校验 Phase 2 启动：phase1 必须 done + 1688订单号非空
+  function validatePhase2({ orderNo1688, phase1Done } = {}) {
+    if (!phase1Done) {
+      return { ok: false, error: '请先完成 Phase 1 添加SKU' };
+    }
+    if (!orderNo1688 || !String(orderNo1688).trim()) {
+      return { ok: false, error: '1688订单号不能为空' };
+    }
+    return { ok: true };
+  }
+
+  const api = { extractSerial, buildIdCode, validateInputs, mapDxmFields, extractPoNo, validatePhase2 };
   if (typeof window !== 'undefined') window.__CPOLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();
