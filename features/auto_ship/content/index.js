@@ -243,9 +243,17 @@
     const i = checkbox && checkbox.querySelector('input[type="checkbox"]');
     return (i && i.checked) || (checkbox && checkbox.getAttribute('data-checked') === 'true');
   }
+  // 取消除 except 外所有已勾选行。「批量装箱发货」按所有选中行操作，选中前必须清掉
+  // 上一单残留选中（尤其取消未发货的单 checkbox 仍勾着），否则两单一起被操作而失败。
+  async function clearOtherSelections(except) {
+    const checked = bodyRows().map((tr) => rowCheckbox(tr))
+      .filter((cb) => cb && cb !== except && rowChecked(cb));
+    for (const cb of checked) { cb.click(); await U.sleep(80); }
+  }
   async function selectRow(row) {
     const cb = row.checkbox;   // cb 是 label[data-testid="beast-core-checkbox"]
     if (!cb) throw markRead(new Error(`读取失败：发货单 ${row.orderNo} 未找到 checkbox`));
+    await clearOtherSelections(cb);   // 先清其它选中，确保批量装箱发货只操作当前单
     // dump 验证：input.click() 无效，label.click() 才触发 React onChange（data-checked/input.checked 同步更新）
     if (!rowChecked(cb)) { cb.click(); await U.sleep(200); }
     if (!rowChecked(cb)) throw markData(new Error(`数据校验：发货单 ${row.orderNo} 勾选后未选中`));
