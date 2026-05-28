@@ -10,10 +10,14 @@
   function isShipListPage(href) { return SHIP_LIST_RE.test(href || location.href); }
 
   // ── 运行态（内存；SPA 不整页 reload，够用）──
+  // processed/统计跨「开始」与多次「单步执行」累积；reload 重置。
   const run = {
-    active: false,        // 主循环进行中
-    stopRequested: false, // 用户点了停止
+    active: false,        // 正在处理中（开始或单步）
     autoConfirm: false,   // 镜像 storage 开关
+    processed: new Set(), // 已处理发货单号（去重）
+    shipped: 0,
+    skippedLocal: 0,
+    fails: [],
   };
 
   // ── storage 开关 ──
@@ -34,13 +38,14 @@
     viewEl.innerHTML = `
       <div class="tal-card">
         <div class="tal-card-title">自动发货</div>
-        <label class="as-toggle" style="display:flex;align-items:center;gap:8px;margin:8px 0;cursor:pointer">
+        <label class="as-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="as-auto-confirm">
-          <span>自动确认发货（关：逐单弹窗确认；开：全自动直接确认发货）</span>
+          <span>自动确认发货</span>
         </label>
+        <div style="color:#888;font-size:12px;line-height:1.5;margin:4px 0 10px 24px">关：逐单弹窗确认<br>开：全自动直接确认发货</div>
         <div style="display:flex;gap:8px;margin:8px 0">
-          <button id="as-start" class="tal-btn-primary">开始</button>
-          <button id="as-stop" class="tal-btn" disabled>停止</button>
+          <button id="as-start" class="tal-btn-primary">开始（全部）</button>
+          <button id="as-step" class="tal-btn">单步执行</button>
         </div>
         <div id="as-progress" class="tal-status" style="white-space:pre-line"></div>
         <div id="as-summary" class="tal-status" style="white-space:pre-line;margin-top:6px"></div>
@@ -49,14 +54,17 @@
     cb.checked = run.autoConfirm;
     cb.addEventListener('change', () => saveAutoConfirm(cb.checked));
     viewEl.querySelector('#as-start').addEventListener('click', onStart);
-    viewEl.querySelector('#as-stop').addEventListener('click', onStop);
+    viewEl.querySelector('#as-step').addEventListener('click', onStep);
   }
 
   function setProgress(msg) { const el = document.getElementById('as-progress'); if (el) el.textContent = msg || ''; }
   function setSummary(msg) { const el = document.getElementById('as-summary'); if (el) el.textContent = msg || ''; }
-  function setRunningUI(running) {
-    const s = document.getElementById('as-start'); const t = document.getElementById('as-stop');
-    if (s) s.disabled = running; if (t) t.disabled = !running;
+  function setButtonsEnabled(enabled) {
+    const s = document.getElementById('as-start'); const t = document.getElementById('as-step');
+    if (s) s.disabled = !enabled; if (t) t.disabled = !enabled;
+  }
+  function showSummary() {
+    setSummary(L.summarize({ shipped: run.shipped, skippedLocal: run.skippedLocal, fails: run.fails }));
   }
 
   // ════════ DOM 适配层 A：tab / 扫描 / 行定位 / 读取（据 samples/table_and_tabs.txt 真实 DOM）════════
@@ -444,55 +452,67 @@
     return live.find((no) => !processed.has(no)) || null;
   }
 
-  async function runLoop() {
-    run.active = true; run.stopRequested = false;
-    setSummary('');
-    const processed = new Set();
-    let shipped = 0, skippedLocal = 0;
-    const fails = [];
+  // 处理一个发货单（切回待装箱发货 tab + 取下一个未处理 + 处理 + 记账 + 去重）。
+  // 返回处理的 orderNo，或 null（已无待处理单）。单步/全自动共用。
+  async function stepOnce() {
+    await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
+    const orderNo = await nextPick(run.processed);
+    if (!orderNo) return null;
+    setProgress(`处理中：${orderNo}（已处理 ${run.processed.size}）`);
     try {
-      await ensureOnPendingTab();
-      const total = (await scanOrderNos()).length;
-      while (!run.stopRequested) {
-        const orderNo = await nextPick(processed);
-        if (!orderNo) break;
-        const denom = Math.max(total, processed.size + 1);
-        setProgress(`处理中 ${processed.size + 1}/${denom}\n当前发货单：${orderNo}`);
-        try {
-          const r = await processOrder(orderNo);
-          if (r.kind === 'local') skippedLocal += 1;
-          else if (r.kind === 'shipped') shipped += 1;
-          // cancelled：不计 shipped，仍算已处理
-        } catch (err) {
-          fails.push({ orderNo, step: catLabel(err && err._cat), reason: (err && err.message) || String(err) });
-          console.warn('[auto_ship] 单失败:', orderNo, err);
-          try { await closeEditPage(); } catch (_) {}   // 清残留弹窗，避免污染下一单
-        }
-        processed.add(orderNo);
-      }
-    } finally {
-      run.active = false;
-      setRunningUI(false);
-      setProgress(run.stopRequested ? '已停止' : '已完成');
-      setSummary(L.summarize({ shipped, skippedLocal, fails }));
-      AS.showToast(`自动发货结束：发 ${shipped} / 跳过本地仓 ${skippedLocal} / 失败 ${fails.length}`,
-        fails.length ? 'warn' : 'success');
+      const r = await processOrder(orderNo);
+      if (r.kind === 'local') run.skippedLocal += 1;
+      else if (r.kind === 'shipped') run.shipped += 1;
+      // cancelled：不计 shipped，仍算已处理
+    } catch (err) {
+      run.fails.push({ orderNo, step: catLabel(err && err._cat), reason: (err && err.message) || String(err) });
+      console.warn('[auto_ship] 单失败:', orderNo, err);
+      try { await closeEditPage(); } catch (_) {}      // 清残留弹窗，避免污染下一单
     }
+    run.processed.add(orderNo);
+    return orderNo;
   }
 
+  function resetRunStats() { run.processed = new Set(); run.shipped = 0; run.skippedLocal = 0; run.fails = []; }
+
+  // 「开始（全部）」：从头全自动处理所有未处理发货单。
   async function onStart() {
     if (run.active) return;
     if (!isShipListPage()) { AS.showToast('请在发货单列表页使用', 'warn'); return; }
-    setRunningUI(true); setSummary('');
+    run.active = true; setButtonsEnabled(false);
+    resetRunStats(); setSummary('');
     await loadAutoConfirm();                            // 取最新开关
-    try { await runLoop(); }
-    catch (err) {
-      console.error('[auto_ship] 主循环异常:', err);
+    try {
+      while (true) { const done = await stepOnce(); if (!done) break; }
+      setProgress('已完成');
+    } catch (err) {
+      console.error('[auto_ship] 全自动异常:', err);
       setProgress('异常终止：' + ((err && err.message) || err));
-      run.active = false; setRunningUI(false);
+    } finally {
+      run.active = false; setButtonsEnabled(true); showSummary();
+      AS.showToast(`自动发货结束：发 ${run.shipped} / 跳过本地仓 ${run.skippedLocal} / 失败 ${run.fails.length}`,
+        run.fails.length ? 'warn' : 'success');
     }
   }
-  function onStop() { run.stopRequested = true; setProgress('停止中…当前单完成后退出'); }
+
+  // 「单步执行」：只处理一个发货单（processed 跨多次单步累积去重）；每次都先切回待装箱发货 tab。
+  async function onStep() {
+    if (run.active) return;
+    if (!isShipListPage()) { AS.showToast('请在发货单列表页使用', 'warn'); return; }
+    run.active = true; setButtonsEnabled(false);
+    await loadAutoConfirm();
+    try {
+      const done = await stepOnce();
+      if (!done) { setProgress('已无待处理发货单'); AS.showToast('已无待处理发货单', 'success'); }
+      else { setProgress(`已处理：${done}（累计 ${run.processed.size}）`); }
+      showSummary();
+    } catch (err) {
+      console.error('[auto_ship] 单步异常:', err);
+      setProgress('异常：' + ((err && err.message) || err));
+    } finally {
+      run.active = false; setButtonsEnabled(true);
+    }
+  }
 
   AS.registerFeature({
     id: 'auto_ship',
