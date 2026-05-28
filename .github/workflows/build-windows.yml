@@ -56,11 +56,17 @@ jobs:
           v=$(grep '#define MyAppVersion' deploy/installer.iss | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      # 复制成带版本号的文件名，供 artifact 与 release 使用（员工一眼识别版本）。
+      # 用 cp 保留原 dist/TemuLabelSetup.exe（package_all 固定输出名，本地 dev 不受影响）。
+      - name: Name setup.exe with version
+        shell: bash
+        run: cp dist/TemuLabelSetup.exe "dist/TemuLabelSetup-${{ steps.ver.outputs.version }}.exe"
+
       - name: Upload setup.exe as artifact
         uses: actions/upload-artifact@v4
         with:
           name: TemuLabelSetup-${{ steps.ver.outputs.version }}
-          path: dist/TemuLabelSetup.exe
+          path: dist/TemuLabelSetup-${{ steps.ver.outputs.version }}.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -68,6 +74,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/TemuLabelSetup.exe
+          files: dist/TemuLabelSetup-${{ steps.ver.outputs.version }}.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
