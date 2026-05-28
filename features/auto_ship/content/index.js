@@ -321,13 +321,21 @@
   }
 
   // ── 批量装箱发货（页面级按钮，选中才可点）+ 弹窗④去装箱发货 ──
-  async function clickBatchShip(orderNo) {
-    const btn = findClickableByText(document, '批量装箱发货');
-    if (!btn) throw markRead(new Error('读取失败：未找到「批量装箱发货」按钮'));
-    const disabled = btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true'
+  function isBtnDisabled(btn) {
+    return btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true'
       || /disabled/i.test(btn.className) || /disabled/i.test((btn.closest('[class*="BTN_"]') || {}).className || '');
-    if (disabled) throw markBiz(new Error(`业务：发货单 ${orderNo} 选中后「批量装箱发货」不可点`));
-    btn.click();
+  }
+  async function clickBatchShip(orderNo) {
+    // 选中态→按钮可点需 React 重渲染，轮询等 enabled（非固定 sleep，避免慢机器时序竞争）
+    const deadline = Date.now() + 3000;
+    let btn = null;
+    while (Date.now() < deadline) {
+      btn = findClickableByText(document, '批量装箱发货');
+      if (btn && !isBtnDisabled(btn)) { btn.click(); return; }
+      await U.sleep(150);
+    }
+    if (!btn) throw markRead(new Error('读取失败：未找到「批量装箱发货」按钮'));
+    throw markBiz(new Error(`业务：发货单 ${orderNo} 选中后「批量装箱发货」3s 内未变可点`));
   }
   // 确认窗是 modal；若已勾「30天内不再提醒」则不弹、直接出编辑页 drawer → 容错跳过
   async function confirmBatchShipModal() {
@@ -520,7 +528,7 @@
       setProgress('异常终止：' + ((err && err.message) || err));
     } finally {
       run.active = false; setButtonsEnabled(true); clearRowHighlight(); showSummary();
-      AS.showToast(`自动发货结束：发 ${run.shipped} / 跳过本地仓 ${run.skippedLocal} / 失败 ${run.fails.length}`,
+      AS.showToast(`自动发货结束：确认发货 ${run.shipped} / 跳过本地仓 ${run.skippedLocal} / 失败 ${run.fails.length}`,
         run.fails.length ? 'warn' : 'success');
     }
   }

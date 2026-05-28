@@ -37,13 +37,13 @@ test('dedupOrderNos: 去重 + 去空 + trim 保序', () => {
 test('summarize: 无失败', () => {
   assert.strictEqual(
     summarize({ shipped: 3, skippedLocal: 2, fails: [] }),
-    '处理 3 单 / 跳过本地仓 2 / 失败 0'
+    '确认发货 3 / 跳过本地仓 2 / 失败 0'
   );
 });
 test('summarize: 有失败附明细', () => {
   const s = summarize({ shipped: 1, skippedLocal: 0, fails: [
     { orderNo: 'PO1', step: '包裹号', reason: '业务：超时未生成' },
   ]});
-  assert.ok(s.startsWith('处理 1 单 / 跳过本地仓 0 / 失败 1'));
+  assert.ok(s.startsWith('确认发货 1 / 跳过本地仓 0 / 失败 1'));
   assert.ok(s.includes('PO1｜包裹号｜业务：超时未生成'));
 });

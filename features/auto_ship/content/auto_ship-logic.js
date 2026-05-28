@@ -33,10 +33,11 @@
     return out;
   }
 
-  // 汇总文案：「处理 X 单 / 跳过本地仓 Y / 失败 Z」+ 失败明细行。
+  // 汇总文案：「确认发货 X / 跳过本地仓 Y / 失败 Z」+ 失败明细行。
+  // 注：X 是「点了确认发货按钮」的次数，非「服务端确认发货成功」数（半自动有人盯，符合需求）。
   function summarize({ shipped, skippedLocal, fails }) {
     const f = fails || [];
-    let s = `处理 ${shipped} 单 / 跳过本地仓 ${skippedLocal} / 失败 ${f.length}`;
+    let s = `确认发货 ${shipped} / 跳过本地仓 ${skippedLocal} / 失败 ${f.length}`;
     if (f.length) {
       s += '\n' + f.map((x) => `${x.orderNo}｜${x.step}｜${x.reason}`).join('\n');
     }
