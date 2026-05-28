@@ -183,11 +183,12 @@
   // 编辑页字段(包装方式/箱数)标注联调验证——Task 11 若不命中据 EDIT_PAGE 现场 dump 修正。
 
   // ── 弹窗助手 ──
+  // 优先 beast-core-modal-inner（弹窗主体，含完整内容），取最后一个=最上层。
+  // 不能用 [class*="MDL_"] 宽候选：querySelectorAll 顺序下 c[last] 会落到空的 MDL_overflowGradient（dump 教训）。
   function topModal() {
-    const c = document.querySelectorAll(
-      '[data-testid="beast-core-modal-inner"],[data-testid="beast-core-modal-innerWrapper"],'
-      + '[data-testid="beast-core-modal"],[class*="DLG_"],[class*="MDL_"],[role="dialog"]'
-    );
+    const inners = document.querySelectorAll('[data-testid="beast-core-modal-inner"]');
+    if (inners.length) return inners[inners.length - 1];
+    const c = document.querySelectorAll('[data-testid="beast-core-modal-innerWrapper"],[role="dialog"]');
     return c.length ? c[c.length - 1] : null;
   }
   function findClickableByText(scope, text) {
