@@ -1,0 +1,18 @@
+{
+  "id": "auto_ship",
+  "icon": "📦",
+  "label": "自动发货",
+  "locked": false,
+  "order": 6,
+  "content_script": "content/index.js",
+  "content_matches": ["https://seller.kuajingmaihuo.com/*"],
+  "host_permissions": ["https://seller.kuajingmaihuo.com/*"],
+  "permissions": ["storage"],
+  "extra_content_scripts": [
+    {
+      "js": ["content/auto_ship-logic.js"],
+      "matches": ["https://seller.kuajingmaihuo.com/*"],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+===== BATCH_SHIP（批量装箱发货确认弹窗，真实 dump 2026-05-28）=====
+
+是标准 modal（MDL_innerWrapper / beast-core-modal-inner），topModal 可定位。
+标题：「请务必确认包裹和发货数」「否则批量装箱发货后无法进行调整！」
+footer（MDL_footer）：
+  - checkbox「30天内不再提醒」（[data-testid="beast-core-checkbox"]，可选勾，data-checked=false）
+  - <button data-testid="beast-core-button" primary><span>去装箱发货</span></button>
+  - <button data-testid="beast-core-button" gray><span>取消</span></button>
+
+confirmBatchShipModal 用 clickModalText('去装箱发货')(topModal)。
+
+⚠️ 隐患：勾「30天内不再提醒」后此 modal 不再弹，点「批量装箱发货」直接进编辑页。
+   → confirmBatchShipModal 需「没弹就跳过」容错（用编辑页特征判断是否已跳过），
+   待 EDIT_PAGE dump 后一起加。当前未勾，modal 必弹，暂可用。
+
+raw（节选）：
+<div data-testid="beast-core-modal-innerWrapper" class="MDL_innerWrapper_5-111-0"><div data-testid="beast-core-modal-inner" class="MDL_inner_5-111-0" style="width:480px">
+  <div class="MDL_logo_5-111-0"><svg warning/></div>
+  <div data-testid="beast-core-modal-body"><div>
+    <h3>请务必<span style="color:#fb7701">确认包裹和发货数</span></h3>
+    <h3>否则批量装箱发货后无法进行调整！</h3>
+  </div></div>
+  <div class="MDL_bottom_5-111-0"><div class="MDL_overflowGradient_5-111-0"></div>
+    <div class="MDL_footer_5-111-0">
+      <div><label data-testid="beast-core-checkbox" data-checked="false">...<div class="CBX_textWrapper">30天内不再提醒</div></label></div>
+      <button data-testid="beast-core-button" primary><span>去装箱发货</span></button>
+      <button data-testid="beast-core-button" gray><span>取消</span></button>
+    </div>
+  </div>
+</div></div>

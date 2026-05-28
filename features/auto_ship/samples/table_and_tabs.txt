@@ -1,0 +1,61 @@
+===== 关键发现（据真实 dump，2026-05-28 待装箱发货 tab）=====
+
+1. 一行一单：每个 [data-testid="beast-core-table-body-tr"] = 一个发货单（自带 checkbox），
+   NO rowspan 分组（与 packing_label 待仓库收货 tab 不同）。
+2. 列顺序（thead）：[checkbox] | 发货单号 | 商品信息 | 发货信息 | 包裹号 | 发货单状态 | 操作
+   td 直接子：td[0]=checkCell(无 beast-core-table-td)，td[1..6]=beast-core-table-td。
+3. 发货单号：td[1] 内首个无子元素的纯文本 div（如 FH2605284051650）。
+4. 发货仓库：td[3]「发货信息」列，含「发货仓库：」span 后内层 div 第一个 span（KEY086/化州中正科技…）。
+   本地仓样本：FH2605283704909 / FH2605283686989 仓库=化州中正科技。
+5. 包裹号：td[4]。空值=文字「打印打包标签后展示」；有值=PC2605285400438（PC+数字）。
+6. tab：[data-testid="beast-core-tab-itemLabel"] 文字=待装箱发货/待仓库收货；
+   激活态 wrapper/label class 含 active（TAB_active_5-117-0 / TAB_lineLabelActive_5-117-0）。
+   ⚠️ 「待装箱发货」也作为状态文字出现在 td[5]（beast-core-box），选 tab 必须用 tab-itemLabel testid。
+7. 滚动容器：[class*="contentContainer"]（index-module__contentContainer___3XMVS，sh=1660 ch=851，页面级）。
+8. 操作列 td[6]：a[data-testid="beast-core-button-link"] span 文字「打印商品打包标签」/「打印商品条码」/「调整包裹信息」(可 disabled)/「取消发货单」。
+9. checkbox：[data-testid="beast-core-checkbox"] data-checked="false|true"，内 input[type=checkbox]。
+10. 批量装箱发货按钮：本 dump 未含（页面级 toolbar 按钮，选中行才可点）——需另 dump 或运行时文字匹配。
+
+===== IN-PAGE TABS（raw）=====
+激活 tab label：
+<div data-testid="beast-core-tab-itemLabel-wrapper" class="TAB_line_5-117-0 TAB_tabItem_5-117-0 TAB_active_5-117-0 TAB_transition_5-117-0 TAB_top_5-117-0 TAB_horizontal_5-117-0">
+  <div class="TAB_lineLabel_5-117-0 TAB_active_5-117-0 TAB_lineLabelActive_5-117-0" data-testid="beast-core-tab-itemLabel">待装箱发货</div>
+</div>
+未激活 tab label（待仓库收货）：wrapper class 无 TAB_active；label data-testid=beast-core-tab-itemLabel 无 active。
+tab 容器：data-testid="beast-core-tab-top"（TAB_tabContentInnerContainer_5-117-0）。
+
+===== THEAD（raw）=====
+<thead data-testid="beast-core-table-middle-thead">
+ <tr data-testid="beast-core-table-header-tr">
+  <th rowspan=2 checkCell> [beast-core-checkbox 全选] </th>
+  <th rowspan=2><span>发货单号</span></th>
+  <th rowspan=2><span>商品信息</span></th>
+  <th rowspan=2><span>发货信息</span></th>
+  <th rowspan=2><span>包裹号</span></th>
+  <th rowspan=2 rightSticky><span>发货单状态</span></th>
+  <th rightSticky rightmost><span>操作</span></th>
+ </tr>
+</thead>
+
+===== BODY ROW 0（FH2605284051650，非本地仓 KEY086，有包裹号 PC2605285400438）=====
+td[1] 发货单号: <div data-testid="beast-core-box"><div>FH2605284051650</div> + tag-group(空) + order-status-tag(时间轴)</div>
+td[3] 发货信息:
+  <div>发货数量：16件</div>
+  <div style="display:flex"><span>发货仓库：</span><div><span border-bottom>KEY086</span><a beast-core-button-link><span>更换</span></a></div></div>
+  <div><span>收货仓库：</span><span border-bottom>南沙万纬3号子仓</span></div>
+td[4] 包裹号:
+  <div Space><div>PC2605285400438</div><divider/><div>16件</div></div><a beast-core-button-link><span>包裹详情(</span>1<span>)</span></a>
+td[6] 操作:
+  <a beast-core-button-link><span>打印商品打包标签</span></a>
+  <a beast-core-button-link><span>打印商品条码</span></a>
+  <a beast-core-button-link disabled><span>调整包裹信息</span></a>
+  <a beast-core-button-link><span>取消发货单</span></a>
+
+===== BODY ROW 2（FH2605283704909，本地仓 化州中正科技，无包裹号）=====
+td[3] 发货信息: 发货数量：20件 / 发货仓库：化州中正科技 [更换] / 收货仓库：清远普洛斯4号子仓
+td[4] 包裹号: <div data-testid="beast-core-box">打印打包标签后展示</div>   ← 空值占位
+td[6] 操作: 同 row0（打印商品打包标签 / 打印商品条码 / 调整包裹信息 / 取消发货单）
+
+===== SCROLL CONTAINER =====
+scroll: tag=DIV class=index-module__contentContainer___3XMVS sh=1660 ch=851（页面级内容容器）
+本次 body rows count=6，全部在 DOM（可能未虚拟化；滚动扫描逻辑两种情况都兼容）。

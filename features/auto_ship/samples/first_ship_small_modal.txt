@@ -1,0 +1,26 @@
+===== FIRST_SHIP_SMALL（点「先发货后打印」后的二次确认，真实 dump 2026-05-28）=====
+
+⚠️ 重要：这不是 modal，是 Popover（Popconfirm）！容器 .PP_popoverContent_5-117-0 / .body-module__popover
+   —— 所以不能用 topModal(找 modal-inner) 定位，要用 topPopover(找 [class*="popoverContent"])。
+
+结构：
+<div class="PP_popoverContent_5-117-0">
+  <div class="body-module__popover" style="min-width:240px">
+    <div class="body-module__body">
+      <svg warning/>
+      <div class="body-module__right">
+        <div class="body-module__title">确认后包裹商品件数不再支持调整，确认继续？</div>
+        <div class="body-module__content"></div>
+      </div>
+    </div>
+    <div class="body-module__footer">
+      <button data-testid="beast-core-button" primary><span>确认</span></button>
+      <button data-testid="beast-core-button" gray><span>取消</span></button>
+    </div>
+  </div>
+</div>
+
+confirmSmallModal 用 topPopover + 文字「确认」匹配 footer 的 primary button。
+
+教训：Temu Beast 弹窗有两类容器——MDL_(modal-inner) 与 PP_(popoverContent)，
+不能用一个 topModal 通吃。Popconfirm 类二次确认走 popover。

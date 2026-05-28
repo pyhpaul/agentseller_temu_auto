@@ -1,0 +1,21 @@
+===== PRINT_CONFIRM（确认打印商品打包标签弹窗，真实 dump 2026-05-28）=====
+
+容器：[data-testid="beast-core-modal-innerWrapper"] > [data-testid="beast-core-modal-inner"]（class MDL_inner_5-111-0）
+标题：「确认打印商品打包标签？」（span.refactor-shipping-mark-print_title）
+内容：
+  1. 打印后，包裹内商品件数将不可调整。
+  2. 当前商品打包标签【无物流信息】，如要打印包含物流信息的标签，请点击
+     <a data-testid="beast-core-button-link"><span class="refactor-shipping-mark-print_dashed__5mkOr">先发货后打印</span></a>
+     ，并在装箱发货后前往【待仓库收货】菜单下打印。
+footer（.refactor-shipping-mark-print_footer）：
+  <button data-testid="beast-core-button" primary><span>继续打印</span></button>   ← 直接打印(不发货)，本 feature 不点
+  <button data-testid="beast-core-button" gray><span>取消</span></button>
+
+⚠️ 本 feature 要点的是正文里的 dashed link「先发货后打印」(a[data-testid=beast-core-button-link])，
+   不是 footer 的「继续打印」。clickFirstShipThenPrint 用文字「先发货后打印」匹配。
+
+raw outerHTML:
+<div class="MDL_innerWrapper_5-111-0" data-testid="beast-core-modal-innerWrapper"><div data-testid="beast-core-modal-inner" class="MDL_inner_5-111-0" style="width: 554px; max-width: 1000px;"><div data-testid="beast-core-modal-body" class="MDL_body_5-111-0 MDL_noHeader_5-111-0"><div><div><svg data-testid="beast-core-icon-warning-circle_filled"></svg><span class="refactor-shipping-mark-print_title__6-lnf">确认打印商品打包标签？</span></div><div class="refactor-shipping-mark-print_content__8w15H"><div>1. 打印后，包裹内商品件数将不可调整。</div><div>2. 当前商品打包标签<span class="..._bold...">无物流信息</span>，如要打印包含物流信息的标签，请点击 <a class="BTN_outerWrapper_5-117-0 BTN_textPrimary_5-117-0 BTN_medium_5-117-0 BTN_outerWrapperLink_5-117-0" data-testid="beast-core-button-link"><span class="refactor-shipping-mark-print_dashed__5mkOr">先发货后打印</span></a> ，并在装箱发货后前往<span class="..._bold...">【待仓库收货】</span>菜单下打印。</div></div><div class="refactor-shipping-mark-print_footer__YipiX"><button data-testid="beast-core-button" primary><span>继续打印</span></button><button data-testid="beast-core-button" gray><span>取消</span></button></div></div></div><div class="MDL_bottom_5-111-0"><div data-testid="beast-core-modal-overflowGradient" class="MDL_overflowGradient_5-111-0"></div></div></div></div>
+
+⚠️ topModal bug 教训：[class*="MDL_"] 宽候选 + c[c.length-1] 会取到 MDL_overflowGradient（空 div），
+   而非弹窗主体。修法：优先 [data-testid="beast-core-modal-inner"] 取最后一个。
