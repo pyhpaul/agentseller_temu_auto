@@ -393,9 +393,69 @@
     return { orderNo, kind: 'cancelled', shipped: false };
   }
 
-  // 引擎在 Task 8 接入；此处占位避免引用未定义。
-  async function onStart() { setProgress('（引擎未实现）'); }
-  function onStop() { run.stopRequested = true; }
+  // ════════ 主循环（spec §6）════════
+  function catLabel(cat) { return cat === 'data' ? '校验' : cat === 'biz' ? '业务' : '读取'; }
+
+  // 取下一个未处理发货单号；本轮无 → 切 tab 刷新再确认一次（防刷新延迟脏数据）。
+  async function nextPick(processed) {
+    await ensureOnPendingTab();
+    let live = await scanOrderNos();
+    let pick = live.find((no) => !processed.has(no));
+    if (pick) return pick;
+    await refreshViaTabSwitch();
+    live = await scanOrderNos();
+    return live.find((no) => !processed.has(no)) || null;
+  }
+
+  async function runLoop() {
+    run.active = true; run.stopRequested = false;
+    setSummary('');
+    const processed = new Set();
+    let shipped = 0, skippedLocal = 0;
+    const fails = [];
+    try {
+      await ensureOnPendingTab();
+      const total = (await scanOrderNos()).length;
+      while (!run.stopRequested) {
+        const orderNo = await nextPick(processed);
+        if (!orderNo) break;
+        const denom = Math.max(total, processed.size + 1);
+        setProgress(`处理中 ${processed.size + 1}/${denom}\n当前发货单：${orderNo}`);
+        try {
+          const r = await processOrder(orderNo);
+          if (r.kind === 'local') skippedLocal += 1;
+          else if (r.kind === 'shipped') shipped += 1;
+          // cancelled：不计 shipped，仍算已处理
+        } catch (err) {
+          fails.push({ orderNo, step: catLabel(err && err._cat), reason: (err && err.message) || String(err) });
+          console.warn('[auto_ship] 单失败:', orderNo, err);
+          try { await closeEditPage(); } catch (_) {}   // 清残留弹窗，避免污染下一单
+        }
+        processed.add(orderNo);
+      }
+    } finally {
+      run.active = false;
+      setRunningUI(false);
+      setProgress(run.stopRequested ? '已停止' : '已完成');
+      setSummary(L.summarize({ shipped, skippedLocal, fails }));
+      AS.showToast(`自动发货结束：发 ${shipped} / 跳过本地仓 ${skippedLocal} / 失败 ${fails.length}`,
+        fails.length ? 'warn' : 'success');
+    }
+  }
+
+  async function onStart() {
+    if (run.active) return;
+    if (!isShipListPage()) { AS.showToast('请在发货单列表页使用', 'warn'); return; }
+    setRunningUI(true); setSummary('');
+    await loadAutoConfirm();                            // 取最新开关
+    try { await runLoop(); }
+    catch (err) {
+      console.error('[auto_ship] 主循环异常:', err);
+      setProgress('异常终止：' + ((err && err.message) || err));
+      run.active = false; setRunningUI(false);
+    }
+  }
+  function onStop() { run.stopRequested = true; setProgress('停止中…当前单完成后退出'); }
 
   AS.registerFeature({
     id: 'auto_ship',
