@@ -4,17 +4,33 @@
 
 ## 关键发现
 
-### 1. 采购人员（d-selector 包装）
+### 1. 采购人员（d-selector 包装，**搜索型下拉** —— 见 CLAUDE.md 踩坑 #15，曾误判「没填对」调试很久）
 <div class="d-selector w200">
   <div class="ant-select ant-select-in-form-item in-selector w200 ant-select-single ant-select-show-arrow" style="width:200px;">
     <div class="ant-select-selector">
-      <span class="ant-select-selection-item" title="18666218498">18666218498</span>
+      <span class="ant-select-selection-item" title="ZQCHAO1">ZQCHAO1</span>   ← 选中后显示【用户名】
     </div>
   </div>
 </div>
 # label: <label class="ant-form-item-required" title="采购人员">采购人员</label>
-# 下拉选项格式：["","1889018","1924487","请选择","18666218498","zhongzhekeji1","ZCxiduo1","WUYANQION1","CYXXC1","DEFUSM1","YMkeji1","CDWei1","cangku-HXX","ZQCHAO1","ZQCHAO2"]
-# 选项包含 .user-name 文本（如 "ZQCHAO1"）→ cpoSelectOptionByText(sel, userName) 可命中
+
+# ⚠️ 真实 dump 结构（不要信「直接匹配 [role=option] textContent」的直觉，那会命中数字 ID）：
+# A) 打开下拉后 dropdown 内有搜索框，**不输入关键字可见选项不渲染**（锁定 dropdown 后 .ant-select-item-option 数=0）：
+#    <div class="p-left6 p-right6"><span class="...search-input..."><input placeholder="输入搜索值"></span></div>
+# B) dropdown 内并存【两套】选项节点：
+#    (a) 隐藏 a11y listbox（role=listbox，style="height:0;width:0;overflow:hidden"）
+#        —— [role=option] 的 textContent 是【数字 ID】，用户名在 aria-label：
+#        <div aria-label="ZQCHAO1"   role="option" aria-selected="true">1986889</div>
+#        <div aria-label="cangku-HXX" role="option">1966019</div>
+#        <div aria-label="ZQCHAO2"    role="option">2459630</div>
+#    (b) 可见虚拟列表（.rc-virtual-list .ant-select-item-option）—— title=【用户名】，textContent="用户名 "(带尾空格)：
+#        <div class="ant-select-item ant-select-item-option" title="ZQCHAO1">
+#          <div class="ant-select-item-option-content"><div class="in-check-options"><span>ZQCHAO1 </span></div></div></div>
+# 选项全集（title）：请选择 / 18666218498 / zhongzhekeji1 / ZCxiduo1 / WUYANQION1 / CYXXC1 / DEFUSM1 / YMkeji1 / CDWei1 / cangku-HXX / ZQCHAO1 / ZQCHAO2
+#
+# ✅ 正确选法（cpoSelectOptionByText 已落地）：打开下拉 → 在搜索框 setInputValue(用户名) 触发渲染
+#    → 只匹配可见 .ant-select-item-option 的 title === 用户名（禁用 [role=option] textContent，那是数字 ID）
+# ⚠️ 选择时机：采购人员必须在【配对商品之后】再选 —— 配对的「修改所有草稿箱」确认会重置采购人员（踩坑 #15 双重根因之二）
 
 ### 2. 收货仓库（同 d-selector 包装）
 <div class="d-selector w200">
