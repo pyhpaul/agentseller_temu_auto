@@ -259,7 +259,10 @@
   function highlightRow(tr) {
     ensureHighlightStyle();
     clearRowHighlight();
-    if (tr) tr.classList.add('as-active-row');
+    if (!tr) return;
+    tr.classList.add('as-active-row');
+    // 滚动到可视区中央，让用户看清当前处理行（居中后该行在视口内，虚拟滚动不回收，row.tr 引用仍有效）
+    try { tr.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) {}
   }
 
   // 取消除 except 外所有已勾选行。「批量装箱发货」按所有选中行操作，选中前必须清掉
@@ -377,6 +380,62 @@
       throw markData(new Error(`数据校验：发货箱数填写后不符，期望「${want}」实际「${input.value}」`));
     }
   }
+  // ── 预约取货时间（timePicker）：填完箱数后 Temu 自动补日期，时间需手选（默认 18:00）──
+  // input readonly 不能 setInputValue，必须点开下拉 portal 选时/分。
+  // 下拉 portal 挂 document 级（不在 drawer 内）；时/分各一个 ul，li 文字=数值，cIL_disabled 不可选。
+  // 多重兜底打开下拉：点 input → suffix 时钟图标 → 容器，直到 hh 列表出现。
+  async function openTimeDropdown(input, tp) {
+    const targets = [input, tp.querySelector('[data-testid="beast-core-input-suffix"]'), tp];
+    for (const target of targets) {
+      if (!target) continue;
+      target.click();
+      await U.sleep(300);
+      if (document.querySelector('ul[data-testid="beast-core-timePicker-list-hh"]')) return true;
+    }
+    return false;
+  }
+  // 点下拉时/分列表里文字命中且未 disabled 的 li；轮询等待（选时后分钟列表异步刷新可选项）。
+  async function clickTimeListItem(which, text) {
+    const sel = `ul[data-testid="beast-core-timePicker-list-${which}"]`;
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const ul = document.querySelector(sel);          // portal 在 document 级，不在 drawer 内
+      if (ul) {
+        const li = Array.from(ul.querySelectorAll('li'))
+          .find((x) => U.normText(x.textContent) === text && !/disabled/i.test(x.className));
+        if (li) { li.click(); return true; }
+      }
+      await U.sleep(150);
+    }
+    return false;
+  }
+  async function fillPickupTime(hhmm) {
+    const want = String(hhmm);                          // '18:00'
+    const [hh, mm] = want.split(':');
+    const scope = editScope();
+    // 1. 等填箱数后日期被 Temu 自动补上（时间选择器随之可点）：日期 input 有值即视为就绪
+    const dateDeadline = Date.now() + 6000;
+    while (Date.now() < dateDeadline) {
+      const di = scope.querySelector('#expectPickUpGoodsDate input[data-testid="beast-core-datePicker-htmlInput"]');
+      if (di && String(di.value).trim()) break;
+      await U.sleep(200);
+    }
+    // 2. 定位时间输入框
+    const tp = scope.querySelector('#expectPickUpGoodsTime [data-testid="beast-core-timePicker-input"]');
+    const input = tp && tp.querySelector('input[data-testid="beast-core-timePicker-html-input"]');
+    if (!input) throw markRead(new Error('读取失败：编辑页未找到「预约取货时间」时间输入框'));
+    if (String(input.value).startsWith(want)) return;   // 已是目标值，幂等跳过
+    // 3. 点开下拉 → 选时 → 选分（选时后分钟列表才刷新可选项）
+    if (!await openTimeDropdown(input, tp)) throw markRead(new Error('读取失败：预约取货时间下拉未弹出'));
+    if (!await clickTimeListItem('hh', hh)) throw markRead(new Error(`读取失败：取货时间「时」下拉无可选「${hh}」`));
+    await U.sleep(300);
+    if (!await clickTimeListItem('mm', mm)) throw markRead(new Error(`读取失败：取货时间「分」下拉无可选「${mm}」`));
+    await U.sleep(300);
+    // 4. 写后读校验（无「确定」按钮，选完即回填 input；可能回填 18:00 或 18:00:00，用 startsWith 兼容）
+    if (!String(input.value).startsWith(want)) {
+      throw markData(new Error(`数据校验：预约取货时间填写后不符，期望「${want}」实际「${input.value}」`));
+    }
+  }
   async function fillEditPage() {
     // 等 drawer 渲染出 packagingType（status=complete ≠ 组件渲染完）
     const deadline = Date.now() + 8000;
@@ -384,6 +443,7 @@
     await U.sleep(300);
     await selectPackType('箱子和袋子');
     await fillBoxCount('1');
+    await fillPickupTime('18:00');                       // 箱数填完后日期自动补、时间需手选 18:00
   }
 
   // ── 确认发货 / 关闭编辑页（drawer footer）──
@@ -541,14 +601,16 @@
     await loadAutoConfirm();
     try {
       const done = await stepOnce();
-      if (!done) { setProgress('已无待处理发货单'); AS.showToast('已无待处理发货单', 'success'); }
+      // 单步处理完保留当前行高亮（让用户看清刚处理的是哪单）；下次单步/开始时 highlightRow 自动切换。
+      // 仅「已无待处理单」才清；异常时也保留高亮指示出错行。
+      if (!done) { clearRowHighlight(); setProgress('已无待处理发货单'); AS.showToast('已无待处理发货单', 'success'); }
       else { setProgress(`已处理：${done}（${run.processed.size}/${run.total}）`); }
       showSummary();
     } catch (err) {
       console.error('[auto_ship] 单步异常:', err);
       setProgress('异常：' + ((err && err.message) || err));
     } finally {
-      run.active = false; setButtonsEnabled(true); clearRowHighlight();
+      run.active = false; setButtonsEnabled(true);
     }
   }
 

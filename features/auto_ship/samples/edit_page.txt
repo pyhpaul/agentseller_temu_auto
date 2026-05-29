@@ -15,7 +15,7 @@
 | **发货总箱/包数*** | **expressPackageNum** | **inputNumber（placeholder 填写交接给快递公司的预估箱子数）** | **填 1** |
 | 发货仓库* | deliveryAddressId | select value=KEY086 | 已预填，不动 |
 | 物流公司* | expressCompanyId | select（disabled） | 不动 |
-| 预约取货时间* | expectPickUpGoodsDate/Time | datePicker/timePicker（disabled） | 不动 |
+| 预约取货时间* | expectPickUpGoodsDate/Time | datePicker/timePicker | **填箱数后日期自动补、时间需手选 18:00**（见文末） |
 
 包装方式 radio 结构：
 <div id="packagingType" data-testid="beast-core-form-item">
@@ -41,3 +41,34 @@
 
 教训：Temu Beast 弹层有三类容器——modal-inner(MDL_)、popover(PP_)、drawer(Drawer_)，
 不能用一个 topModal 通吃。装箱发货编辑页走 drawer。
+
+===== 预约取货时间 timePicker（真实 dump 2026-05-29，补充）=====
+
+⚠️ 旧 dump 写「disabled 不动」是**填箱数之前**的状态。实测：填完「发货总箱/包数」后，
+   Temu 自动把日期补进 #expectPickUpGoodsDate（input value="2026-05-29"），
+   但时间 #expectPickUpGoodsTime 仍为空，必须手选（业务要求，默认 18:00）。
+
+时间输入框（drawer 内，#expectPickUpGoodsTime）：
+  <div data-testid="beast-core-timePicker-input" data-status="active">
+    <input mode="hh:mm" placeholder="请选择时间" readonly type="text"
+           data-testid="beast-core-timePicker-html-input" value="">     ← readonly！不能 setInputValue
+    <svg data-testid="beast-core-icon-time-circle">（suffix 时钟图标，点它也能弹下拉）
+  </div>
+
+点开后下拉（⚠️ 挂 document 级 portal，不在 drawer 内）：
+  <div data-testid="beast-core-portal" class="...PT_dropdown... PP_dropdown..." style="left:..;top:..">
+    <ul data-testid="beast-core-timePicker-list-hh">
+      <li class="cIL_item cIL_medium cIL_active cIL_disabled">00</li>   ← active+disabled（不可选）
+      <li class="cIL_item cIL_medium cIL_disabled">01</li> ... 13（全 disabled，已过/业务限制）
+      <li class="cIL_item cIL_medium">14</li> ... <li>18</li> ... <li>23</li>   ← 14-23 可选，选 18
+    </ul>
+    <ul data-testid="beast-core-timePicker-list-mm">
+      <li class="cIL_item cIL_medium cIL_active cIL_disabled">00</li>
+      <li class="...cIL_disabled">01</li> ... 59   ← ⚠️ 选「时」前分钟列表全 disabled！
+    </ul>                                              选完 18(时)后 mm 列表才异步刷新出可选 00
+  </div>
+
+无「确定」按钮 → 选完时+分即回填 input.value（受控，DOM 可读，可能 "18:00" 或 "18:00:00"）。
+交互：openTimeDropdown(点 input/suffix/容器多重兜底) → clickTimeListItem('hh','18')
+      → 轮询等 mm 刷新 → clickTimeListItem('mm','00') → 写后读校验 input.value startsWith '18:00'。
+disabled 判定：li.className 含 'disabled'（cIL_disabled）即排除；cIL_active 是当前高亮态，不代表可选。
