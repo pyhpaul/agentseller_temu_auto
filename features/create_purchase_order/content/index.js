@@ -32,7 +32,8 @@
   // ── 面板引用（render 填入；refreshFromStorage / storage.onChanged 更新） ──
   const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
                p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null,
-               poOutput: null, poBox: null, autoSaveChk: null };
+               poOutput: null, poBox: null, autoSaveChk: null,
+               skuInput: null, repurchaseChk: null, p1Section: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
@@ -79,11 +80,15 @@
       ui.poOutput.value = p2Done ? c2.poNo : '';
       ui.poBox.style.display = p2Done ? 'flex' : 'none';
     }
+    // 复购态（持久化在 cpo_state.repurchase）：驱动 checkbox / SKU框可编辑 / ①区灰显
+    const repurchase = !!(state && state.repurchase);
+    if (ui.repurchaseChk) ui.repurchaseChk.checked = repurchase;
+
+    // 完成锁定：phase2 done 即锁（覆盖复购——复购无 phase1 done，不能再依赖 bothDone）
+    const locked = p2.status === 'done' && !!c2.orderNo1688;
     if (ui.orderInput) {
-      // phase1+phase2 都完成：回填本次 1688订单号并锁成只读，跨 tab 共享同一份；
       // 用 readOnly 自身判断「上次是否锁定」——从锁定态解除（清除/新流程）时清空回填值、恢复可输入
-      const bothDone = p1.status === 'done' && p2.status === 'done' && c2.orderNo1688;
-      if (bothDone) {
+      if (locked) {
         ui.orderInput.value = c2.orderNo1688;
         ui.orderInput.readOnly = true;
         ui.orderInput.style.background = '#f7f7f7';
@@ -92,6 +97,30 @@
         ui.orderInput.readOnly = false;
         ui.orderInput.style.background = '';
       }
+    }
+    if (ui.skuInput) {
+      // SKU货号框：完成锁定回填本次值（复购 skuNo 在 collected2，新品在 phase1.collected）；
+      // 复购态可编辑（保留用户输入）；新品态只读回填 phase1 货号
+      const p1Sku = (p1.collected && p1.collected.skuNo) || '';
+      if (locked) {
+        ui.skuInput.value = c2.skuNo || p1Sku;
+        ui.skuInput.readOnly = true;
+        ui.skuInput.style.background = '#f7f7f7';
+      } else if (repurchase) {
+        if (ui.skuInput.readOnly) ui.skuInput.value = '';   // 从只读态切入复购清空一次，之后保留用户输入
+        ui.skuInput.readOnly = false;
+        ui.skuInput.style.background = '';
+      } else {
+        ui.skuInput.value = p1Sku;
+        ui.skuInput.readOnly = true;
+        ui.skuInput.style.background = '#f7f7f7';
+      }
+    }
+    // ①区灰显：仅店小秘页 + 复购模式（Temu 列表页不灰，否则用户既取消不了复购、又用不了①区 → 死锁）
+    if (ui.p1Section) {
+      const dim = repurchase && isDxmPage();
+      ui.p1Section.style.opacity = dim ? '0.45' : '';
+      ui.p1Section.style.pointerEvents = dim ? 'none' : '';
     }
     lastP1Done = (p1.status === 'done');
     recomputeP2Btn();
@@ -158,7 +187,14 @@
     if (!ui.p2Btn) return;
     const orderVal = (ui.orderInput && ui.orderInput.value || '').trim();
     const locked = !!(ui.orderInput && ui.orderInput.readOnly);   // 流程完成锁定态：禁用，引导先清除再开新单
-    ui.p2Btn.disabled = locked || !(lastP1Done && isDxmPage() && orderVal);
+    const repurchase = !!(ui.repurchaseChk && ui.repurchaseChk.checked);
+    if (repurchase) {
+      // 复购：去掉 phase1 依赖，要求手填 SKU货号 + 1688订单号
+      const skuVal = (ui.skuInput && ui.skuInput.value || '').trim();
+      ui.p2Btn.disabled = locked || !(isDxmPage() && orderVal && skuVal);
+    } else {
+      ui.p2Btn.disabled = locked || !(lastP1Done && isDxmPage() && orderVal);
+    }
   }
 
   // 发起 Phase 2（仅店小秘页）：校验 → CPO_START_PHASE2
@@ -170,13 +206,15 @@
     let started = false;
     try {
       const orderNo1688 = (ui.orderInput && ui.orderInput.value || '').trim();
+      const repurchase = !!(ui.repurchaseChk && ui.repurchaseChk.checked);
+      const skuNo = (ui.skuInput && ui.skuInput.value || '').trim();
       const o = await chrome.storage.local.get(STATE_KEY);
       const p1Done = !!(o[STATE_KEY] && o[STATE_KEY].phase1 && o[STATE_KEY].phase1.status === 'done');
-      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done });
+      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done, repurchase, skuNo });
       if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
       setP2Msg('启动中…');
       const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
-      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave } });
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase, skuNo } });
       if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
       else started = true;
     } catch (e) {
@@ -185,6 +223,16 @@
       cpoStarting2 = false;
       if (!started) recomputeP2Btn();                // 启动成功则保持禁用（流程在跑）
     }
+  }
+
+  // 切换复购态：写持久化 cpo_state.repurchase（storage.onChanged → renderState 统一刷新
+  // checkbox / SKU框可编辑性 / ①区灰显，单一数据源驱动）
+  async function onToggleRepurchase() {
+    const o = await chrome.storage.local.get(STATE_KEY);
+    const st = o[STATE_KEY] || {};
+    st.repurchase = !!(ui.repurchaseChk && ui.repurchaseChk.checked);
+    st.updatedAt = Date.now();
+    await chrome.storage.local.set({ [STATE_KEY]: st });
   }
 
   // 清除当前流程数据：两个 phase 未全部完成时先确认，避免误清未完成的工作
@@ -223,6 +271,9 @@
       wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;font-size:12px;';
 
       // ===== ① 添加SKU（Temu 发起） =====
+      // 包一层容器 ui.p1Section：复购模式时整块灰显（仅店小秘页，见 renderState）
+      ui.p1Section = document.createElement('div');
+      ui.p1Section.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
       const h1 = document.createElement('div');
       h1.style.cssText = 'font-weight:600;color:#1677ff;';
       h1.textContent = '① 添加SKU';
@@ -230,7 +281,7 @@
       ui.p1Status.style.cssText = 'color:#666;';
       ui.p1Data = document.createElement('div');
       ui.p1Data.style.cssText = 'color:#888;font-size:11px;line-height:1.4;';
-      wrap.append(h1, ui.p1Status, ui.p1Data);
+      ui.p1Section.append(h1, ui.p1Status, ui.p1Data);
 
       if (isListPage()) {
         const hint = document.createElement('div');
@@ -246,19 +297,31 @@
         ui.startBtn.addEventListener('click', onStartPhase1);
         ui.localMsg = document.createElement('div');
         ui.localMsg.style.cssText = 'font-size:11px;color:#666;min-height:16px;';
-        wrap.append(hint, ui.urlInput, ui.startBtn, ui.localMsg);
+        ui.p1Section.append(hint, ui.urlInput, ui.startBtn, ui.localMsg);
       } else {
         const note = document.createElement('div');
         note.style.cssText = 'color:#999;font-size:11px;';
         note.textContent = '（在 Temu 商家中心商品列表发起）';
-        wrap.append(note);
+        ui.p1Section.append(note);
       }
+      wrap.append(ui.p1Section);
 
       const hr = document.createElement('div');
       hr.style.cssText = 'border-top:1px dashed #ddd;margin:4px 0;';
       wrap.append(hr);
 
-      // ===== ② 创建采购单（店小秘发起，需 Phase 1 完成） =====
+      // ===== 复购开关（①②之间，仅店小秘页）：勾选 = 跳过①、手填SKU货号跑② =====
+      if (isDxmPage()) {
+        const repRow = document.createElement('label');
+        repRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:#333;cursor:pointer;line-height:1.4;font-weight:600;';
+        ui.repurchaseChk = document.createElement('input');
+        ui.repurchaseChk.type = 'checkbox';
+        ui.repurchaseChk.addEventListener('change', onToggleRepurchase);
+        repRow.append(ui.repurchaseChk, document.createTextNode('商品复购（手动填SKU货号，跳过①添加SKU）'));
+        wrap.append(repRow);
+      }
+
+      // ===== ② 创建采购单（店小秘发起；新品需 Phase 1 完成，复购手填SKU货号） =====
       const h2 = document.createElement('div');
       h2.style.cssText = 'font-weight:600;color:#1677ff;';
       h2.textContent = '② 创建采购单';
@@ -271,7 +334,19 @@
       if (isDxmPage()) {
         const hint2 = document.createElement('div');
         hint2.style.cssText = 'color:#666;line-height:1.4;';
-        hint2.textContent = '需先完成①添加SKU；填 1688订单号后开始';
+        hint2.textContent = '新品需先完成①添加SKU；复购勾选上方开关后手填SKU货号';
+        // SKU货号框：复购可编辑 / 新品只读回填 phase1 货号（默认只读，renderState 据复购态切换）
+        ui.skuInput = document.createElement('input');
+        ui.skuInput.placeholder = 'SKU货号';
+        ui.skuInput.readOnly = true;
+        ui.skuInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
+        ui.skuInput.addEventListener('input', recomputeP2Btn);
+        const skuRow = document.createElement('div');
+        skuRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        const skuLabel = document.createElement('span');
+        skuLabel.textContent = 'SKU货号：';
+        skuLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
+        skuRow.append(skuLabel, ui.skuInput);
         ui.orderInput = document.createElement('input');
         ui.orderInput.placeholder = '1688订单号';
         ui.orderInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
@@ -306,7 +381,7 @@
         ui.poOutput.readOnly = true;
         ui.poOutput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
         ui.poBox.append(poLabel, ui.poOutput);
-        wrap.append(hint2, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
+        wrap.append(hint2, skuRow, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
       } else {
         const note2 = document.createElement('div');
         note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
