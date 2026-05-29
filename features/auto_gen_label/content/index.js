@@ -1086,37 +1086,89 @@
     catch (e) { U.showToast('步骤1失败: ' + e.message, 'err'); clearCFlow(); }
   }
 
+  // 读当前搜索类型下拉的选中值（SPU / SKC）；供诊断和写后读校验用
+  function readSearchType() {
+    return document.getElementById('goodsSearchType')?.closest('.rocket-select')
+      ?.querySelector('.rocket-select-selection-item')?.textContent.trim();
+  }
+
+  // 实拍图页搜索：确保搜索类型切到 SKC，返回就绪的 SKC 输入框。
+  // 成功信号 = skcIdStr 输入框就绪（不靠 selection-item 文本，避免"显示 SKC 但输入框未渲染"误判）。
+  // 进入页面（尤其新 tab 首屏）时 Rocket Select 可能尚未交互就绪——节点已出现但事件/状态未绑好，
+  // 点 trigger 下拉弹不出或选了不生效。每轮：skcIdStr 在就返回，否则非 SKC 就强制选，再短等渲染。
+  // 详细 console 日志用于定位执行轨迹（dev 阶段）。
+  async function ensureSkcSearchInput() {
+    console.log('[TAL][ensure] 进入 ensureSkcSearchInput');
+    await U.waitForEl('input#goodsSearchType', document, 12000);
+    const typeSelect = rocketSelectById('goodsSearchType');
+    const readType = () => typeSelect?.querySelector('.rocket-select-selection-item')?.textContent.trim();
+    console.log('[TAL][ensure] typeSelect 找到=', !!typeSelect, '初始类型=', readType());
+    if (!typeSelect) throw new Error('读取失败：未找到搜索类型下拉 (#goodsSearchType)');
+
+    const MAX_TRY = 5;
+    for (let i = 1; i <= MAX_TRY; i++) {
+      let el = document.getElementById('skcIdStr');
+      if (el) { console.log(`[TAL][ensure] 第${i}轮: skcIdStr 已就绪，返回`); return el; }
+      console.log(`[TAL][ensure] 第${i}轮: 类型=${readType()}, skcIdStr 未现`);
+      if (readType() !== 'SKC') {
+        try {
+          await rocketSelect(typeSelect, 'SKC');
+          console.log(`[TAL][ensure] 第${i}轮: rocketSelect 返回, 类型现在=${readType()}`);
+        } catch (e) {
+          console.warn(`[TAL][ensure] 第${i}轮: rocketSelect 抛错: ${e.message}`);
+        }
+      } else {
+        console.log(`[TAL][ensure] 第${i}轮: 类型已 SKC，仅等待 skcIdStr 渲染`);
+      }
+      try {
+        el = await U.waitForEl('input#skcIdStr', document, 2500);
+        console.log(`[TAL][ensure] 第${i}轮: skcIdStr 就绪，返回`);
+        return el;
+      } catch {
+        console.log(`[TAL][ensure] 第${i}轮: 2.5s 内 skcIdStr 未现，重试`);
+      }
+    }
+    throw new Error(`数据校验：选 SKC 后 skcIdStr 始终未就绪（重试 ${MAX_TRY} 次，最后类型=${readType()}）`);
+  }
+
+  // 选 SKC + 填货号 + 写后读校验。页面在选 SKC 后会异步初始化(mallModel)、把搜索表单重置回
+  // 默认 SPU 并销毁 skcIdStr——故每轮重新 ensure(选SKC)+填值，回读"类型仍 SKC 且框内值==目标"
+  // 才算稳定；被重置就退避重试，给页面异步初始化留时间。
+  // 总超时窗口内重试（而非固定次数）：慢网络/慢机器上 mallModel 初始化拖久时，
+  // 只要窗口内最终稳定就成功；超时才失败（安全失败：报错中止，不误操作）。
+  async function fillSkcAndVerify(skcNumber, timeout = 25000) {
+    const want = String(skcNumber);
+    const deadline = Date.now() + timeout;
+    for (let i = 1; Date.now() < deadline; i++) {
+      const input = await ensureSkcSearchInput();
+      input.focus();
+      U.setInputValue(input, skcNumber);
+      await U.sleep(400);
+      const type = readSearchType();
+      const cur = document.getElementById('skcIdStr');
+      const val = cur?.value;
+      console.log(`[TAL][step1] 填值第${i}次: 类型=${type}, value=「${val ?? '无框'}」`);
+      if (type === 'SKC' && cur && val === want) return;
+      console.warn(`[TAL][step1] 第${i}次填值后被重置（类型=${type}），退避后重试`);
+      await U.sleep(Math.min(600 + i * 300, 2500));  // 退避递增，单次上限 2.5s
+    }
+    throw new Error(`数据校验：SKC 搜索框填值在 ${timeout / 1000}s 内反复被页面重置，无法可靠查询`);
+  }
+
   async function runStep1(flow) {
     U.showToast('步骤 1/3：查询 SPU...', 'info');
 
-    // 先等类型下拉出现，再选 SKC（skcIdStr 在选类型之后才会渲染）
-    await U.waitForEl('input#goodsSearchType', document, 12000);
-    await U.sleep(400);
-    const typeSelect = rocketSelectById('goodsSearchType');
-    if (!typeSelect) throw new Error('未找到搜索类型下拉');
-    const curVal = typeSelect.querySelector('.rocket-select-selection-item')?.textContent.trim();
-    if (curVal !== 'SKC') {
-      await rocketSelect(typeSelect, 'SKC');
-      await U.sleep(600);
-    }
-
-    // 选完 SKC 后输入框才出现
-    await U.waitForEl('input#skcIdStr', document, 8000);
-    await U.sleep(300);
-    const skcInput = document.getElementById('skcIdStr');
-    if (!skcInput) throw new Error('未找到 skcIdStr 输入框');
-    skcInput.focus();
-    U.setInputValue(skcInput, flow.skcNumber);
-    await U.sleep(300);
+    // 选 SKC + 填货号 + 写后读校验（自愈"选 SKC 后页面异步重置回 SPU"）
+    await fillSkcAndVerify(flow.skcNumber);
 
     // 点击查询（"查 询" normText 后匹配 "查询"）
     const searchBtn = U.findByText('button', '查询');
     if (!searchBtn) throw new Error('未找到查询按钮');
     searchBtn.click();
-    await U.sleep(2500);
 
-    // 提取 SPU（页面结构：<span>SPU：</span>9201662325）
-    const spuId = extractSpuFromPage();
+    // 等查询结果刷新到唯一行后再取 SPU（搜精确 SKC 结果必唯一）。
+    // 不再固定 sleep + 抓"全页第一个 SPU"——结果未刷新时那样会抓到默认行，导致 SKC↔SPU 错配、操作错商品。
+    const spuId = await extractSpuFromUniqueResult();
     if (!spuId) throw new Error('未找到 SPU（查询结果为空？）');
 
     U.showToast(`找到 SPU: ${spuId}，跳转继续...`, 'info');
@@ -1125,17 +1177,32 @@
     window.location.href = '/govern/information-supplementation';
   }
 
-  function extractSpuFromPage() {
-    // 优先：<span>SPU：</span>xxx 结构
-    const spuSpan = Array.from(document.querySelectorAll('span'))
-      .find(s => s.textContent.trim().startsWith('SPU'));
-    if (spuSpan) {
-      const m = spuSpan.parentElement?.textContent.match(/SPU[：:]\s*(\d+)/);
-      if (m) return m[1];
+  // 实拍图页查询结果中"含 SPU 的数据行"（搜精确 SKC 应唯一）
+  function getSpuResultRows() {
+    return Array.from(document.querySelectorAll('tbody tr, .rocket-table-tbody tr, [class*="table-tbody"] tr'))
+      .filter(r => /SPU[：:]\s*\d+/.test(r.textContent));
+  }
+
+  // 查询后等结果刷新到唯一行，从该行取 SPU。
+  // 不唯一（未刷新 / 查无结果 / 多结果）或超时则报错，绝不抓第一个——从源头防 SKC↔SPU 错配。
+  async function extractSpuFromUniqueResult(timeout = 10000) {
+    const deadline = Date.now() + timeout;
+    let rows = [];
+    let firstLogged = false;
+    while (Date.now() < deadline) {
+      rows = getSpuResultRows();
+      if (!firstLogged) {
+        console.log('[TAL][step1] 查询后含SPU结果行数=', rows.length,
+          'SPU=', rows.map(r => r.textContent.match(/SPU[：:]\s*(\d+)/)?.[1]));
+        firstLogged = true;
+      }
+      if (rows.length === 1) {
+        const m = rows[0].textContent.match(/SPU[：:]\s*(\d+)/);
+        if (m) { console.log('[TAL][step1] 唯一结果行 SPU=', m[1]); return m[1]; }
+      }
+      await U.sleep(300);
     }
-    // 兜底：全页可见文字
-    const m = document.body.innerText.match(/SPU[：:]\s*(\d+)/);
-    return m ? m[1] : null;
+    throw new Error(`数据校验：查询 SKC 后含 SPU 的结果行数=${rows.length}（期望唯一 1 行），可能结果未刷新或该 SKC 查无结果，已中止以防 SKC↔SPU 错配`);
   }
 
   // ── Step 2：合规信息列表页 — 查询 + 点编辑 ───────────────────────────────
@@ -1468,26 +1535,9 @@
   // ── 搜索商品并点修改按钮 ─────────────────────────────────────────────────
   async function runImgSearch(flow) {
     U.showToast('主图插入：搜索商品...', 'info');
-    await U.waitForEl('input#goodsSearchType', document, 12000);
-    await U.sleep(400);
 
-    // 确保类型选 SKC
-    const typeSelect = rocketSelectById('goodsSearchType');
-    if (typeSelect) {
-      const cur = typeSelect.querySelector('.rocket-select-selection-item')?.textContent.trim();
-      if (cur !== 'SKC') {
-        await rocketSelect(typeSelect, 'SKC');
-        await U.sleep(600);
-      }
-    }
-
-    await U.waitForEl('input#skcIdStr', document, 8000);
-    await U.sleep(300);
-    const skcInput = document.getElementById('skcIdStr');
-    if (!skcInput) throw new Error('未找到 skcIdStr 输入框');
-    skcInput.focus();
-    U.setInputValue(skcInput, flow.skcNumber);
-    await U.sleep(300);
+    // 同 runStep1：选 SKC + 填值 + 写后读校验（自愈页面异步重置）
+    await fillSkcAndVerify(flow.skcNumber);
 
     const searchBtn = U.findByText('button', '查询');
     if (!searchBtn) throw new Error('未找到查询按钮');
@@ -1504,6 +1554,13 @@
       .find(el => el.textContent.trim() === '修改' || el.textContent.trim() === '上传');
     if (!actionBtn) throw new Error('匹配行内未找到修改/上传按钮');
 
+    // 点击前断言：matchedRow 确实是目标 SPU 行（fail-fast + 可观测；drawer 内 #spuId 再兜底一次）
+    const rowSpu = matchedRow.textContent.match(/SPU[：:]\s*(\d+)/)?.[1];
+    if (rowSpu !== String(flow.spuId)) {
+      throw new Error(`数据校验：待操作商品行 SPU=「${rowSpu || '空'}」与目标=「${flow.spuId}」不符，已中止`);
+    }
+    console.log(`[TAL] 待操作行确认 SPU=${rowSpu}，点击修改/上传`);
+
     actionBtn.click();
 
     // 等待修改 drawer 打开
@@ -1515,7 +1572,21 @@
   async function runImgUpload(flow) {
     U.showToast('主图插入：读取标签文件...', 'info');
 
-    try { await U.waitForEl('.rocket-drawer-body', document, 10000); } catch { /* 继续 */ }
+    // 必须拿到当前可见的编辑 drawer——未打开则中止，绝不退回列表页全局查找（防错行污染其他商品）
+    const drawer = await waitForDrawerOpen(10000);
+    if (!drawer) throw new Error('读取失败：标签图编辑抽屉(drawer)未打开，已中止以防误传其他商品');
+
+    // 身份二次确认：drawer 内 SPU ID(div#spuId) 必须 == 目标 SPU。
+    // 在 drawer 内查（不用 document，避免撞列表页的 input#spuId）。
+    // 兜住 findRowBySpu 未处理 rowspan / 点错行 / 意外打开错误商品 drawer 等任何情况。
+    if (flow.spuId) {
+      try { await U.waitForEl('#spuId', drawer, 5000); } catch { /* 未渲染则下方按不符中止 */ }
+      const drawerSpu = drawer.querySelector('#spuId')?.textContent.trim();
+      if (drawerSpu !== String(flow.spuId)) {
+        throw new Error(`数据校验：编辑抽屉内 SPU=「${drawerSpu || '空'}」与目标 SPU=「${flow.spuId}」不符，已中止上传以防传错商品`);
+      }
+      console.log(`[TAL] drawer 身份确认 OK：SPU=${drawerSpu}`);
+    }
     await U.sleep(600);
 
     // 通过 Native Host 分块读取标签图（避免单消息超过 Chrome Native Messaging 1MB 上限）
@@ -1523,8 +1594,8 @@
     const filename = flow.labelPngPath.split(/[\\/]/).pop() || 'label.png';
 
     U.showToast('主图插入：定位标签图槽位...', 'info');
-    const uploaded = await uploadToLabelSlots(bytes, filename);
-    if (!uploaded) throw new Error('未找到可上传的标签图位置');
+    const uploaded = await uploadToLabelSlots(drawer, bytes, filename);
+    if (!uploaded) throw new Error('数据校验：当前编辑抽屉内未找到标签图上传位置');
 
     // 等待上传组件处理文件
     await U.sleep(1500);
@@ -1541,13 +1612,14 @@
   }
 
   // 找所有「标签图」类型上传按钮，优先空白槽位（计数为 0），全有则上传全部
-  async function uploadToLabelSlots(bytes, filename) {
-    const allBtns = Array.from(document.querySelectorAll('.rocket-upload[role="button"]'));
+  async function uploadToLabelSlots(drawer, bytes, filename) {
+    // 严格限定在当前编辑 drawer 内查找，绝不用 document 全局（否则会命中列表页其他商品行的槽位 → 错行上传）
+    const allBtns = Array.from(drawer.querySelectorAll('.rocket-upload[role="button"]'));
     const labelBtns = allBtns.filter(btn =>
       Array.from(btn.querySelectorAll('span'))
         .some(s => s.childElementCount === 0 && s.textContent.trim() === '标签图')
     );
-    console.log('[TAL] 标签图 upload 按钮数量:', labelBtns.length);
+    console.log('[TAL] (drawer 内) 标签图 upload 按钮数量:', labelBtns.length);
     if (!labelBtns.length) return false;
 
     // 空白槽位：计数器为 (0/N)
