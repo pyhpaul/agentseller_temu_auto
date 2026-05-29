@@ -462,16 +462,24 @@ function cpoFocusOrigin(originTabId) {
 
 // Phase 2 主编排：创建现有订单 → 通过审核 → 待到货定位 → 停在申请付款前
 // 新开独立 tab 跑全流程，不复用触发方 tab；originTabId 仅用于「新 tab 定位」+「error 切回」
-async function cpoRun2({ orderNo1688, autoSave = true }, originTabId = null) {
+async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false, skuNo: repurchaseSkuNo = '' }, originTabId = null) {
   const { cpo_state } = await chrome.storage.local.get('cpo_state');
   const p1 = (cpo_state && cpo_state.phase1) || {};
-  const skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
-  if (p1.status !== 'done') { await cpoSetPhase2({ status: 'error', label: '请先完成 Phase 1 添加SKU' }); return; }
-  if (!skuNo) { await cpoSetPhase2({ status: 'error', label: 'Phase 1 未采集到 SKU货号' }); return; }
+  // skuNo 来源分叉：复购用用户手填（消息传入，跳过 phase1）；新品用 Phase 1 采集值 + 强校验 phase1 done
+  let skuNo;
+  if (repurchase) {
+    skuNo = (repurchaseSkuNo || '').trim();
+    if (!skuNo) { await cpoSetPhase2({ status: 'error', label: '复购模式：SKU货号不能为空' }); return; }
+  } else {
+    skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
+    if (p1.status !== 'done') { await cpoSetPhase2({ status: 'error', label: '请先完成 Phase 1 添加SKU' }); return; }
+    if (!skuNo) { await cpoSetPhase2({ status: 'error', label: 'Phase 1 未采集到 SKU货号' }); return; }
+  }
   if (!orderNo1688 || !orderNo1688.trim()) { await cpoSetPhase2({ status: 'error', label: '1688订单号不能为空' }); return; }
   const order = orderNo1688.trim();
 
-  const collected2 = { poNo: '', orderNo1688: order };
+  // collected2 写入 skuNo：供 done 后面板回填 SKU货号框展示（复购 skuNo 不在 phase1.collected）
+  const collected2 = { poNo: '', orderNo1688: order, skuNo };
   const tmpTabs = [];   // 临时 tab，出错统一回收（待到货页除外；当前 draft tab 也不回收）
   try {
     await cpoSetPhase2({ status: 'running', step: 1, label: '导航到创建采购单页', collected2 });
