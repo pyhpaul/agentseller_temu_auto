@@ -48,9 +48,15 @@
     return m ? m[1] : null;
   }
 
-  // 校验 Phase 2 启动：phase1 必须 done + 1688订单号非空
-  function validatePhase2({ orderNo1688, phase1Done } = {}) {
-    if (!phase1Done) {
+  // 校验 Phase 2 启动：
+  // - 复购模式（repurchase）：跳过 phase1 校验，要求手填 SKU货号 + 1688订单号
+  // - 新品模式：phase1 必须 done + 1688订单号非空（现状，向后兼容：不传 repurchase 即此分支）
+  function validatePhase2({ orderNo1688, phase1Done, repurchase, skuNo } = {}) {
+    if (repurchase) {
+      if (!skuNo || !String(skuNo).trim()) {
+        return { ok: false, error: 'SKU货号不能为空' };
+      }
+    } else if (!phase1Done) {
       return { ok: false, error: '请先完成 Phase 1 添加SKU' };
     }
     if (!orderNo1688 || !String(orderNo1688).trim()) {

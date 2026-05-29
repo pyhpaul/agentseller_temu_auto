@@ -96,3 +96,25 @@ test('validatePhase2: 订单号为空', () => {
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /1688订单号/);
 });
+
+test('validatePhase2: 复购模式 skuNo+订单号齐全（跳过 phase1）', () => {
+  assert.deepStrictEqual(
+    validatePhase2({ orderNo1688: 'AB123', phase1Done: false, repurchase: true, skuNo: 'SKU-001' }),
+    { ok: true }
+  );
+});
+test('validatePhase2: 复购模式缺 skuNo', () => {
+  const r = validatePhase2({ orderNo1688: 'AB123', phase1Done: false, repurchase: true, skuNo: '  ' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /SKU货号/);
+});
+test('validatePhase2: 复购模式缺订单号', () => {
+  const r = validatePhase2({ orderNo1688: '', phase1Done: false, repurchase: true, skuNo: 'SKU-001' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /1688订单号/);
+});
+test('validatePhase2: 新品分支不回归（repurchase 缺省）', () => {
+  const r = validatePhase2({ orderNo1688: 'AB123', phase1Done: false });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /Phase 1|添加SKU/);
+});
