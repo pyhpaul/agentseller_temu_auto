@@ -127,11 +127,11 @@ engine.Stop()
 
 **流程**：
 
-- **Step 1**（实拍图页面）：从 SKC 查 SPU
-  - 选搜索类型 = SKC（rocketSelect）
-  - 输入 skcNumber → 点查询
-  - 提取页面 `SPU：xxx` → 写入 CFlow.spuId
-  - 跳页到 `/govern/information-supplementation`
+- **Step 1**（实拍图页面）：从 SKC 查 SPU（v1.1.1 数据正确性加固，见根 `CLAUDE.md`「数据正确性」§1/§2）
+  - `ensureSkcSearchInput`：选搜索类型=SKC，**以 skcIdStr 输入框就绪为成功信号**（非 selection-item 文本），组件未就绪时重试
+  - `fillSkcAndVerify`：填 skcNumber 后写后读校验「类型仍 SKC 且值==目标」，**被页面异步初始化(`mallModel`)重置回 SPU 就退避重试**，总超时窗口(25s)内自愈
+  - `extractSpuFromUniqueResult`：点查询后**轮询等"含 SPU 结果行恰好 1 行"再取 SPU**（精确 SKC 结果必唯一），不唯一/超时报错中止——**绝不抓全页第一个 SPU**（曾因此把默认第一行 SPU 当目标、全程操作错误商品）
+  - 写入 CFlow.spuId → 跳页到 `/govern/information-supplementation`
 - **Step 2**（合规信息列表）：输入 SPU 查询 → 强校验目标行（`ensureQueryMatchesSpu` 重试 3 次）→ 点匹配行的"编辑"按钮 → 等 drawer 打开
 - **Step 3**（drawer 填表）：
   - `waitForAllSectionsRendered` 等所有 `div[id=数字]` section 内 form 控件就绪
@@ -162,14 +162,15 @@ engine.Stop()
 **流程**：
 
 1. 跳到 `/govern/compliant-live-photos`，imgFlow.active=true
-2. 搜索类型选 SKC + 输入 skcNumber + 点查询
+2. `fillSkcAndVerify` 选 SKC + 填 skcNumber + 写后读（同 Phase 2 Step1，自愈页面 `mallModel` 重置）
 3. 强校验目标 SPU 行（同 Phase 2 Step 2）
-4. 点匹配行的"修改"或"上传"按钮 → 等 drawer 打开
-5. 通过 native_host 分块读取标签 PNG（`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
-6. 定位所有"标签图"类型上传按钮（`.rocket-upload[role="button"]` 内 `<span>标签图</span>`）
-7. 优先空白槽位（计数器显示 `(0/N)`），全有则上传全部
-8. `injectFileToInput` 用 DataTransfer + File 构造对象赋值 `input.files` + dispatch change 事件
-9. 点"上传并识别"按钮提交
+4. 点匹配行"修改/上传"前**断言该行 SPU==目标**；点击后 `waitForDrawerOpen` 拿可见 drawer，**未打开即中止**（不退回列表页全局查找）
+5. **drawer 内身份二次确认**：`drawer.querySelector('#spuId')` == 目标 SPU，不符中止（防点错行/rowspan 错位传错商品）
+6. 通过 native_host 分块读取标签 PNG（`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
+7. **在 drawer 内**定位"标签图"上传按钮（`drawer.querySelectorAll('.rocket-upload[role="button"]')` 内 `<span>标签图</span>`，**禁止 `document` 全局**——曾因全局查找把标签图传到列表页其他商品行，见根 `CLAUDE.md`「数据正确性」§3）
+8. 优先空白槽位（计数器显示 `(0/N)`），全有则上传全部
+9. `injectFileToInput` 用 DataTransfer + File 构造对象赋值 `input.files` + dispatch change 事件
+10. 点"上传并识别"按钮提交
 
 ## Native Messaging 协议
 
