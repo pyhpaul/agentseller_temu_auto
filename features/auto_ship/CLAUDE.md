@@ -65,6 +65,7 @@ Temu Beast 弹层分三种容器，各自定位（见 samples/{print_confirm,fir
 |------|-------------|------|------|
 | 包装方式 | `#packagingType` | radioGroup | 找 radio label 内 `.RD_textWrapper`=「箱子和袋子」→ 点 label(`selectPackType`，写后读 data-checked) |
 | 发货总箱/包数 | `#expressPackageNum` | inputNumber | `input[data-testid="beast-core-inputNumber-htmlInput"]` 填「1」(`fillBoxCount`，写后读 value) |
+| 预约取货时间 | `#expectPickUpGoodsDate` / `#expectPickUpGoodsTime` | datePicker / timePicker | **填完箱数后 Temu 自动补日期**，时间需手选「18:00」(`fillPickupTime`，写后读 value)；详见踩坑 7 |
 | 确认发货 | drawer footer | button | span「确认发货」(`clickConfirmShip`)；其余字段(发货方式/重量/仓库)已预填不动 |
 
 ## 踩坑清单（联调实测，后续复用）
@@ -79,6 +80,13 @@ Temu Beast 弹层分三种容器，各自定位（见 samples/{print_confirm,fir
 5. **批量装箱发货按所有选中行操作**：选中当前单前必须 `clearOtherSelections` 清掉上一单残留选中
    (尤其取消未发货的单 checkbox 仍勾着)，否则两单一起被操作而失败。
 6. **包裹号空值文案**「打印打包标签后展示」(非空串/`-`)，已入 `PKG_PLACEHOLDERS`。
+7. **预约取货时间填完箱数后才激活**：旧 dump「disabled 不动」是填箱数前的态；填完「发货总箱/包数」后
+   Temu 自动补日期(`#expectPickUpGoodsDate`)、激活时间选择器(`#expectPickUpGoodsTime`)但时间为空，
+   必须手选 18:00(`fillPickupTime`)。坑点：① 时间 input `readonly`，不能 setInputValue，必须点开下拉选；
+   ② 下拉是 **document 级 portal**（`[data-testid="beast-core-portal"]` 内 `timePicker-list-hh/mm` 两 ul），
+   **不在 drawer 内**，查询用 document 不能用 editScope()；③ **选「时」前「分」列表全 disabled**，
+   选完 18 后 mm 才异步刷新出可选项，故 `clickTimeListItem('mm',..)` 轮询等待；④ `cIL_disabled` li 不可选
+   （含已过时段，dump 里 00-13 时禁用），`cIL_active` 只是高亮态不代表可选；⑤ 无「确定」按钮，选完即回填。
 
 ## 已知限制
 
