@@ -15,6 +15,14 @@
   - **② 创建采购单（Phase 2，已实现）**：在 **店小秘**发起（需 Phase 1 完成）→ 填 1688订单号 → 新开 tab 自动走「创建现有订单 → 获取1688订单 → 编辑页填采购人员/收货仓库 + 配对商品 → 保存并通过审核 → 待到货页搜索定位」，停在「申请付款」前交人工
 - **跨三域**：`agentseller.temu.com` / `detail.1688.com` / `www.dianxiaomi.com`（content_matches 显式声明三域；FAB 会在三域出现，项目已知现状）
 
+### 复购模式
+- ②区「商品复购」开关（**仅店小秘页**显示，位于①②之间）。勾选 = 跳过①添加SKU，手填 `SKU货号 + 1688订单号` 直接跑 Phase 2（复购商品店小秘已有 SKU 档案，无需重建）。
+- **作用域约束（防死锁）**：复购开关 + SKU货号框 + ①区灰显**均只在店小秘页生效**。Temu 列表页①区永远正常可用 —— 否则用户在 Temu 页既取消不了复购（开关不在该页）、又用不了①区 → 死锁。故 `renderState` 的①区灰显严格 `repurchase && isDxmPage()`。
+- **状态**：复购态持久化 `cpo_state.repurchase`（boolean），与 phase1/phase2 同属单一状态源；checkbox 勾选态 / SKU框可编辑性 / ①区灰显全由 `renderState` 据它驱动，跨 tab / 面板重建一致。`onToggleRepurchase` 写入、`onClear`（remove 整个 `cpo_state`）/ 新品跑 Phase 1（`cpoRun` 重置）时归 false。
+- **skuNo 来源分叉**：复购 `cpoRun2` 用消息入参 `data.skuNo`（手填）+ 跳过 `phase1.status` 校验；新品仍读 `phase1.collected.skuNo` + 强校验 phase1 done。复购 skuNo 写进 `collected2.skuNo` 供 done 后回填（`renderState` 回填优先级 `collected2.skuNo` > `phase1.collected.skuNo`）。
+- **完成锁定**：改为 `phase2.status==='done' && collected2.orderNo1688`（不再依赖 phase1 done），覆盖两模式；done 后 SKU货号框 + 订单号框回填只读，「清除当前流程」解锁。
+- **校验**：`validatePhase2({ repurchase:true, skuNo, orderNo1688 })` 走「skuNo + 订单号非空」分支；新品分支向后兼容（不传 repurchase 即原「phase1 done + 订单号」）。`tests/cpo-logic.test.js` 含 4 例复购用例。
+
 ## 架构：background 编排者（本项目新模式）
 
 现有其它 feature 的 background 多是「native messaging 透传」；本 feature **首次把跨 tab 编排逻辑放进 `core/background/service-worker.js`**（沿用 image_search 的「文件内标记段」先例，段标记 `// ── create_purchase_order ──`）。
