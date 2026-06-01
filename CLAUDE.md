@@ -361,6 +361,24 @@ Inno Setup 一键 installer：
 
 Release 版会自动把 feature 内 `const TAL_DEBUG = true;` 替换为 `false;`（关闭调试面板）。
 
+### 扩展自检 + 自动 reload（v1.2.1 起生效）
+
+Chrome 不监控 unpacked 扩展文件变化 —— 员工装新 installer 后 chrome 仍跑旧版扩展，必须手动 `chrome://extensions` 卡片点 reload 才能应用。漏做即 bug（v1.2.0 复购模式漏 reload 即真实事故）。
+
+**自动 reload 三方协作**：
+1. **installer**（`deploy/installer.iss` `[Code] CurStepChanged ssDone`）：装完写 `{app}\installed_version.txt` = `{#MyAppVersion}`。
+2. **native host**（`native_host/main.py` 的 `_get_installed_version` action）：读 EXE 同目录的 marker 文件返回版本号。
+3. **service worker**（`core/background/service-worker.js` 顶部「auto-reload-on-installer-update」段）：SW 实例化时 + onStartup + onInstalled 三处触发 `checkInstalledVersion`，调 native host 拿 marker → 与 `chrome.runtime.getManifest().version` 对比（两边都 `split('-')[0]` 清洗 rc 后缀）→ 磁盘 > 加载即 `chrome.runtime.reload()` 自我重载。
+
+**关键限制**：
+- v1.2.1 起的版本才有自检代码；**v1.1.1 → v1.2.0 这次升级救不了**（员工仍需手动 reload 一次）。
+- silent fail 兜底所有异常（native host 未注册 / 旧 EXE 不识别 action / marker 缺失 / 超时），不影响业务。
+- reload 极小概率打断进行中的 feature 任务，状态都在 `chrome.storage.local` 不丢，员工重试即可。
+
+**纯逻辑单测**：`tests/version-cmp.test.js`（`node --test`）覆盖 `cmpVersion` 边界（高/等/低/段数不等/NaN 降级）。
+
+**详见**：spec `docs/superpowers/specs/2026-05-31-extension-auto-reload-on-installer-update-design.md`；plan `docs/superpowers/plans/2026-05-31-extension-auto-reload-on-installer-update.md`。
+
 ## 关键文档
 
 - 设计 spec：`docs/superpowers/specs/2026-05-19-extension-multi-feature-architecture-design.md`
