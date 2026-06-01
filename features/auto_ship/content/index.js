@@ -447,12 +447,29 @@
   }
 
   // ── 确认发货 / 关闭编辑页（drawer footer）──
+  // 点完编辑页「确认发货」后 Temu 还会弹 popover 二次确认（标题「确认装箱完毕并发货？」），
+  // 必须点 popover 里的「确认」才真发货——联调实测确认，与「先发货后打印」popover 同类容器但文案/语境不同。
   async function clickConfirmShip() {
     const scope = editScope();
     const footer = scope.querySelector('[class*="footer"]') || scope;
     const btn = findClickableByText(footer, '确认发货') || findClickableByText(scope, '确认发货');
     if (!btn) throw markRead(new Error('读取失败：编辑页未找到「确认发货」按钮'));
     btn.click();
+    await confirmShipPopover();
+  }
+  // 「确认装箱完毕并发货？」二次确认 popover。错误文案与 confirmSmallModal 分开（错误分层铁律：
+  // 两个步骤分别报错，调试时不混淆——避免「确认发货失败」被误诊成「先发货后打印失败」）。
+  async function confirmShipPopover() {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const pop = topPopover();
+      if (pop) {
+        const btn = findClickableByText(pop, '确认') || findClickableByText(pop, '确定');
+        if (btn) { btn.click(); return; }
+      }
+      await U.sleep(150);
+    }
+    throw markRead(new Error('读取失败：未出现「确认装箱完毕并发货」二次确认弹窗'));
   }
   async function closeEditPage() {
     const scope = editScope();
