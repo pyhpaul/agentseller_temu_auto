@@ -58,6 +58,7 @@ Temu Beast 弹层分三种容器，各自定位（见 samples/{print_confirm,fir
 | 先发货后打印 二次确认 | **popover** (`PP_`) | `topPopover` = 可见 `[class*="popoverContent"]` | 点「确认」(`confirmSmallModal`) |
 | 批量装箱发货 确认 | **modal** | `topModal` | 点「去装箱发货」(`confirmBatchShipModal`，含「30天不再提醒」勾后不弹的容错) |
 | 装箱发货 编辑页 | **drawer** (`Drawer_`) | `topDrawer` = 可见 `[data-testid="beast-core-drawer-content"]` | 见下 |
+| 确认发货 二次确认 | **popover** | `topPopover`（drawer 内点完「确认发货」后弹出，标题「确认装箱完毕并发货？」） | 点「确认」(`confirmShipPopover`)——**漏点这步 drawer 不会关、不真发货** |
 
 ### 编辑页（drawer）字段——按 form-item id 精确定位
 
@@ -80,7 +81,11 @@ Temu Beast 弹层分三种容器，各自定位（见 samples/{print_confirm,fir
 5. **批量装箱发货按所有选中行操作**：选中当前单前必须 `clearOtherSelections` 清掉上一单残留选中
    (尤其取消未发货的单 checkbox 仍勾着)，否则两单一起被操作而失败。
 6. **包裹号空值文案**「打印打包标签后展示」(非空串/`-`)，已入 `PKG_PLACEHOLDERS`。
-7. **预约取货时间填完箱数后才激活**：旧 dump「disabled 不动」是填箱数前的态；填完「发货总箱/包数」后
+7. **「确认发货」按钮不是终点**：drawer footer 点完「确认发货」后 Temu **再弹 popover** 二次确认
+   （标题「确认装箱完毕并发货？」），漏点这步 drawer 不会关、列表不刷新、**根本没真发货**。
+   `clickConfirmShip` 必须在点完按钮后 `await confirmShipPopover()`。联调踩过——只点 drawer 按钮看着像成功
+   （popover 自己出来还以为是 toast），实际后端零请求。
+8. **预约取货时间填完箱数后才激活**：旧 dump「disabled 不动」是填箱数前的态；填完「发货总箱/包数」后
    Temu 自动补日期(`#expectPickUpGoodsDate`)、激活时间选择器(`#expectPickUpGoodsTime`)但时间为空，
    必须手选 18:00(`fillPickupTime`)。坑点：① 时间 input `readonly`，不能 setInputValue，必须点开下拉选；
    ② 下拉是 **document 级 portal**（`[data-testid="beast-core-portal"]` 内 `timePicker-list-hh/mm` 两 ul），
