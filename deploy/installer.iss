@@ -109,6 +109,12 @@ var
 begin
   if CurStep = ssDone then
   begin
+    // 写版本 marker：扩展 SW 启动时调 native host 读这个文件，对比 chrome 加载版本，
+    // 磁盘 > 加载 → chrome.runtime.reload() 自动应用（chrome 不监控 unpacked 扩展文件变化）。
+    // 必须先于引导对话框写入（员工万一立刻 chrome reload，自检逻辑要能拿到正确值）。
+    SaveStringToFile(ExpandConstant('{app}\installed_version.txt'),
+                     '{#MyAppVersion}', False);
+
     ExtensionDir := ExpandConstant('{app}\extension');
     Msg :=
       '安装完成！' + #13#10 + #13#10 +

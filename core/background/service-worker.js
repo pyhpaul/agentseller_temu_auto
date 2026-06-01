@@ -1,3 +1,36 @@
+// ── auto-reload-on-installer-update ── 扩展自检 + 自动 reload ───────────────
+// chrome 不监控 unpacked 扩展文件变化，员工装新版 installer 后 chrome 仍跑旧版。
+// 本段在 SW 实例化时（每次唤醒）调 native host 读磁盘 marker，磁盘版本 > 当前
+// 加载版本 → chrome.runtime.reload() 自我重载（chrome 唯一允许扩展自我重载的 API）。
+// silent fail：native host 未注册 / 旧 EXE / marker 缺失都不阻断业务。
+importScripts('version-cmp.js');   // 加载 cmpVersion（双模式纯逻辑模块）
+
+async function checkInstalledVersion() {
+  let port;
+  try {
+    port = chrome.runtime.connectNative('com.temu.label_host');
+    const res = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('timeout')), 3000);
+      port.onMessage.addListener(m => { clearTimeout(t); resolve(m); });
+      port.onDisconnect.addListener(() => { clearTimeout(t); reject(new Error('disconnected')); });
+      port.postMessage({ action: 'get_installed_version' });
+    });
+    if (!res?.success || !res.version) return;
+    const clean = v => String(v).split('-')[0].trim();   // 截 rc/dev 后缀，与 normalize_manifest_version 等价
+    const installed = clean(res.version);
+    const loaded = clean(chrome.runtime.getManifest().version);
+    if (cmpVersion(installed, loaded) > 0) {
+      console.log(`[auto-reload] 磁盘 v${installed} > 加载 v${loaded}，自动 reload`);
+      chrome.runtime.reload();
+    }
+  } catch { /* native host 未注册 / 旧 EXE / marker 缺失 / 超时 → silent，不影响业务 */ }
+  finally { try { port?.disconnect(); } catch {} }
+}
+checkInstalledVersion();   // SW 实例化即跑（顶层模式，与 enableSessionStorageAccess 一致）
+chrome.runtime.onStartup.addListener(checkInstalledVersion);
+chrome.runtime.onInstalled.addListener(checkInstalledVersion);
+// ── end auto-reload-on-installer-update ──────────────────────────────────────
+
 // ── image_search_1688 ── 图片搜索常量和工具函数 ──────────────────────────────
 const IMG_SEARCH_URL         = 'https://s.1688.com/youyuan/index.htm';
 const IMG_PAYLOAD_KEY        = 'imagePayload';
