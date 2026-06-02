@@ -839,7 +839,7 @@
       catch { return { ok: false, error: '读取失败：待到货页搜索框 10s 内未渲染，表单未就绪' }; }
 
       // 切搜索类型为「采购单号」（v1.2.2 起新品+复购统一用 PO 号搜；默认通常已 active）
-      // 注意：页面有 43 个 .d-tag-group-item（多组筛选 tag），但「采购单号」全局唯一
+      // 注意：.d-tag-group-item 覆盖页面多组筛选 tag，用文本匹配「采购单号」确保唯一命中
       const typeTag = Array.from(document.querySelectorAll('.d-tag-group-item'))
         .find(t => U.normText(t.textContent) === '采购单号');
       if (!typeTag) {
