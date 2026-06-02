@@ -153,7 +153,7 @@
       setLocalMsg('启动中…');
       const resp = await chrome.runtime.sendMessage({ type: 'CPO_START', data: { url1688, skc: selectedSkc, skuNo, spuId } });
       if (!resp?.ok) setLocalMsg(resp?.error || '启动失败', 'error');
-      else started = true;
+      else { setLocalMsg(''); started = true; }   // ack 成功后清临时消息，让 p1Status 接管显示进度
     } catch (e) {
       setLocalMsg('启动失败：' + e.message, 'error');
     } finally {
@@ -196,7 +196,7 @@
       const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
       const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase } });
       if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
-      else started = true;
+      else { setP2Msg(''); started = true; }   // ack 成功后清临时消息，让 p2Status 接管显示进度
     } catch (e) {
       setP2Msg('启动失败：' + e.message, 'error');
     } finally {
