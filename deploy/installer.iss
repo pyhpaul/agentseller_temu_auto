@@ -99,6 +99,28 @@ begin
   Result := ExePath;
 end;
 
+// 覆盖安装前清理可能残留的 native host 进程（v1.2.3 起）
+//
+// 为什么需要：Chrome 启动的 TemuLabelHost.exe 是 stdin/stdout 子进程，
+// Inno Setup 默认 Restart Manager 只能识别 GUI 进程，看不到 native host →
+// 即使弹「自动关闭应用程序」对话框，host 进程也不会被关掉。结果：[Files]
+// 拷贝 TemuLabelHost.exe 时 Windows 文件锁未释放，DeleteFile 失败错误码 5
+// (ACCESS_DENIED)，员工升级卡死。
+//
+// 修法：在拷贝文件前手动 taskkill + sleep 等 Chrome 那边 pipe disconnect
+// + Windows kernel 释放 exe 文件 mapping。
+//
+// 注：taskkill 在进程不存在时返回 errorlevel 128，我们不区分（首装/升级都正常）。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM TemuLabelHost.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2500);
+  Result := '';
+end;
+
 // 安装完成后弹出引导对话框 + 「打开 chrome://extensions」按钮
 procedure CurStepChanged(CurStep: TSetupStep);
 var
