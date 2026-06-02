@@ -33,7 +33,7 @@
   const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
                p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null,
                poOutput: null, poBox: null, autoSaveChk: null,
-               skuInput: null, repurchaseChk: null, p1Section: null };
+               repurchaseChk: null, p1Section: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
@@ -96,24 +96,6 @@
         ui.orderInput.value = '';
         ui.orderInput.readOnly = false;
         ui.orderInput.style.background = '';
-      }
-    }
-    if (ui.skuInput) {
-      // SKU货号框：完成锁定回填本次值（复购 skuNo 在 collected2，新品在 phase1.collected）；
-      // 复购态可编辑（保留用户输入）；新品态只读回填 phase1 货号
-      const p1Sku = (p1.collected && p1.collected.skuNo) || '';
-      if (locked) {
-        ui.skuInput.value = c2.skuNo || p1Sku;
-        ui.skuInput.readOnly = true;
-        ui.skuInput.style.background = '#f7f7f7';
-      } else if (repurchase) {
-        if (ui.skuInput.readOnly) ui.skuInput.value = '';   // 从只读态切入复购清空一次，之后保留用户输入
-        ui.skuInput.readOnly = false;
-        ui.skuInput.style.background = '';
-      } else {
-        ui.skuInput.value = p1Sku;
-        ui.skuInput.readOnly = true;
-        ui.skuInput.style.background = '#f7f7f7';
       }
     }
     // ①区灰显：仅店小秘页 + 复购模式（Temu 列表页不灰，否则用户既取消不了复购、又用不了①区 → 死锁）
@@ -189,9 +171,8 @@
     const locked = !!(ui.orderInput && ui.orderInput.readOnly);   // 流程完成锁定态：禁用，引导先清除再开新单
     const repurchase = !!(ui.repurchaseChk && ui.repurchaseChk.checked);
     if (repurchase) {
-      // 复购：去掉 phase1 依赖，要求手填 SKU货号 + 1688订单号
-      const skuVal = (ui.skuInput && ui.skuInput.value || '').trim();
-      ui.p2Btn.disabled = locked || !(isDxmPage() && orderVal && skuVal);
+      // 复购：去掉 phase1 依赖，只要求填 1688订单号
+      ui.p2Btn.disabled = locked || !(isDxmPage() && orderVal);
     } else {
       ui.p2Btn.disabled = locked || !(lastP1Done && isDxmPage() && orderVal);
     }
@@ -207,14 +188,13 @@
     try {
       const orderNo1688 = (ui.orderInput && ui.orderInput.value || '').trim();
       const repurchase = !!(ui.repurchaseChk && ui.repurchaseChk.checked);
-      const skuNo = (ui.skuInput && ui.skuInput.value || '').trim();
       const o = await chrome.storage.local.get(STATE_KEY);
       const p1Done = !!(o[STATE_KEY] && o[STATE_KEY].phase1 && o[STATE_KEY].phase1.status === 'done');
-      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done, repurchase, skuNo });
+      const v = L.validatePhase2({ orderNo1688, phase1Done: p1Done, repurchase });
       if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
       setP2Msg('启动中…');
       const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
-      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase, skuNo } });
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase } });
       if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
       else started = true;
     } catch (e) {
@@ -310,18 +290,18 @@
       hr.style.cssText = 'border-top:1px dashed #ddd;margin:4px 0;';
       wrap.append(hr);
 
-      // ===== 复购开关（①②之间，仅店小秘页）：勾选 = 跳过①、手填SKU货号跑② =====
+      // ===== 复购开关（①②之间，仅店小秘页）：勾选 = 跳过①、只填1688订单号跑② =====
       if (isDxmPage()) {
         const repRow = document.createElement('label');
         repRow.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:#333;cursor:pointer;line-height:1.4;font-weight:600;';
         ui.repurchaseChk = document.createElement('input');
         ui.repurchaseChk.type = 'checkbox';
         ui.repurchaseChk.addEventListener('change', onToggleRepurchase);
-        repRow.append(ui.repurchaseChk, document.createTextNode('商品复购（手动填SKU货号，跳过①添加SKU）'));
+        repRow.append(ui.repurchaseChk, document.createTextNode('商品复购（跳过①添加SKU，直接填1688订单号）'));
         wrap.append(repRow);
       }
 
-      // ===== ② 创建采购单（店小秘发起；新品需 Phase 1 完成，复购手填SKU货号） =====
+      // ===== ② 创建采购单（店小秘发起；新品需 Phase 1 完成，复购直接填1688订单号） =====
       const h2 = document.createElement('div');
       h2.style.cssText = 'font-weight:600;color:#1677ff;';
       h2.textContent = '② 创建采购单';
@@ -334,19 +314,7 @@
       if (isDxmPage()) {
         const hint2 = document.createElement('div');
         hint2.style.cssText = 'color:#666;line-height:1.4;';
-        hint2.textContent = '新品需先完成①添加SKU；复购勾选上方开关后手填SKU货号';
-        // SKU货号框：复购可编辑 / 新品只读回填 phase1 货号（默认只读，renderState 据复购态切换）
-        ui.skuInput = document.createElement('input');
-        ui.skuInput.placeholder = 'SKU货号';
-        ui.skuInput.readOnly = true;
-        ui.skuInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
-        ui.skuInput.addEventListener('input', recomputeP2Btn);
-        const skuRow = document.createElement('div');
-        skuRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
-        const skuLabel = document.createElement('span');
-        skuLabel.textContent = 'SKU货号：';
-        skuLabel.style.cssText = 'font-size:12px;color:#666;white-space:nowrap;';
-        skuRow.append(skuLabel, ui.skuInput);
+        hint2.textContent = '新品需先完成①添加SKU；复购直接填1688订单号即可';
         ui.orderInput = document.createElement('input');
         ui.orderInput.placeholder = '1688订单号';
         ui.orderInput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
@@ -381,7 +349,7 @@
         ui.poOutput.readOnly = true;
         ui.poOutput.style.cssText = 'flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;background:#f7f7f7;';
         ui.poBox.append(poLabel, ui.poOutput);
-        wrap.append(hint2, skuRow, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
+        wrap.append(hint2, orderRow, saveChkLabel, ui.p2Btn, ui.poBox, ui.p2Msg);
       } else {
         const note2 = document.createElement('div');
         note2.style.cssText = 'color:#999;font-size:11px;line-height:1.4;';
