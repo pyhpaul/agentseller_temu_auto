@@ -222,7 +222,15 @@
     const p1 = (st && st.phase1) || {};
     const p2 = (st && st.phase2) || {};
     const c = p1.collected || {};
-    const hasData = (p1.status && p1.status !== 'idle') || c.skuNo || c.title;
+    const c2 = p2.collected2 || {};
+    // hasData 覆盖 phase1 + phase2 + 复购态 + 用户手填 input —— 任一非空都算"有数据可清"
+    // （v1.2.2：复购模式跳过 phase1，hasData 不能只看 phase1 否则复购流程清不掉）
+    const urlVal = (ui.urlInput && ui.urlInput.value || '').trim();
+    const orderVal = (ui.orderInput && ui.orderInput.value || '').trim();
+    const repurchase = !!(st && st.repurchase);
+    const hasData = (p1.status && p1.status !== 'idle') || c.skuNo || c.title
+                 || (p2.status && p2.status !== 'idle') || c2.poNo || c2.orderNo1688
+                 || repurchase || urlVal || orderVal;
     if (!hasData) { U.showToast('当前无流程数据', 'info'); return; }
     const bothDone = p1.status === 'done' && p2.status === 'done';
     if (!bothDone && !window.confirm('当前采购单流程尚未全部完成，确认清除已采集的数据？')) return;
@@ -234,6 +242,9 @@
     selectedSkc = '';
     highlightRow(null);
     if (ui.startBtn) ui.startBtn.disabled = true;
+    // 清 UI 上用户手填的 input value（storage 清干净后 DOM 也要同步——renderState 只在"曾 readOnly"时清，未锁定态的手填值会留存）
+    if (ui.urlInput) ui.urlInput.value = '';
+    if (ui.orderInput && !ui.orderInput.readOnly) ui.orderInput.value = '';
     U.showToast('已清除当前采购单流程数据', 'ok');
   }
 
