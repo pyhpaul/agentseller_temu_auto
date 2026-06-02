@@ -819,35 +819,43 @@
       return { ok: true, poNo };
     },
 
-    CPO_P2_WAIT_SEARCH: async ({ skuNo }) => {
+    CPO_P2_WAIT_SEARCH: async ({ poNo }) => {
       // 等待待到货页 Vue 渲染完成（tab.status=complete ≠ Vue 组件就绪）
       try { await U.waitForEl('#searchValue, input[name="tableSearchInput"]', document, 10000); }
       catch { return { ok: false, error: '读取失败：待到货页搜索框 10s 内未渲染，表单未就绪' }; }
-      // 搜索类型是 d-tag-group（tag 切换），非 ant-select。点「商品SKU」tag（默认通常已 active）
+
+      // 切搜索类型为「采购单号」（v1.2.2 起新品+复购统一用 PO 号搜；默认通常已 active）
+      // 注意：页面有 43 个 .d-tag-group-item（多组筛选 tag），但「采购单号」全局唯一
       const typeTag = Array.from(document.querySelectorAll('.d-tag-group-item'))
-        .find(t => U.normText(t.textContent) === '商品SKU');
-      if (typeTag && !typeTag.classList.contains('active')) { typeTag.click(); await U.sleep(150); }
+        .find(t => U.normText(t.textContent) === '采购单号');
+      if (!typeTag) {
+        return { ok: false, error: '读取失败：待到货页搜索类型「采购单号」未找到' };
+      }
+      if (!typeTag.classList.contains('active')) { typeTag.click(); await U.sleep(150); }
+
       // 搜索内容：input#searchValue（name=tableSearchInput）
       const kwInput = document.querySelector('#searchValue, input[name="tableSearchInput"]');
-      if (!kwInput) return { ok: false, error: '待到货页：未找到搜索内容输入框' };
-      U.setInputValue(kwInput, skuNo);
+      if (!kwInput) return { ok: false, error: '读取失败：待到货页未找到搜索内容输入框' };
+      U.setInputValue(kwInput, poNo);
       await U.sleep(150);
+
       // 搜索按钮：限定在搜索框容器内取 submit（避开高级搜索区的「搜索」）
       const scope = kwInput.closest('.search-container-main, .searchContainer') || document;
       const searchBtn = scope.querySelector('button[type="submit"]') || U.findByText('button, .ant-btn', '搜索', scope);
-      if (!searchBtn) return { ok: false, error: '待到货页：未找到搜索按钮' };
+      if (!searchBtn) return { ok: false, error: '读取失败：待到货页未找到搜索按钮' };
       searchBtn.click();
-      // 等 vxe-table 出结果（有数据行 + 无「暂无数据」空态）。行文本不含 SKU 货号，故按行数+空态判
+
+      // 等 vxe-table 出结果（有数据行 + 无「暂无数据」空态）
       let found = false;
-      for (let i = 0; i < 25; i++) {                 // ~5s
+      for (let i = 0; i < 25; i++) {     // ~5s
         await U.sleep(200);
         const rows = document.querySelectorAll('.vxe-body--row');
         const emptyShown = Array.from(document.querySelectorAll('.vxe-table--empty-block, .empty-container'))
           .some(e => e.getBoundingClientRect().height > 0 && /暂无数据/.test(e.textContent));
         if (rows.length > 0 && !emptyShown) { found = true; break; }
       }
-      U.showToast(found ? '已定位商品，请手动点「申请付款」' : '未搜到商品行，请手动核对', found ? 'ok' : 'error');
-      return { ok: true, found };   // 搜不到不阻断 done（采购单号已从审核弹窗取得）
+      U.showToast(found ? '已定位采购单，请手动点「申请付款」' : '未搜到采购单行，请手动核对', found ? 'ok' : 'error');
+      return { ok: true, found };       // 搜不到不阻断 done（PO 号已从审核弹窗取得）
     },
   };
 
