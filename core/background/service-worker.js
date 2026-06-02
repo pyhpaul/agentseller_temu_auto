@@ -499,7 +499,7 @@ async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false }, ori
   const { cpo_state } = await chrome.storage.local.get('cpo_state');
   const p1 = (cpo_state && cpo_state.phase1) || {};
   // skuNo 来源分叉：新品用 Phase 1 采集值 + 强校验 phase1 done；复购跳过 phase1，skuNo 留空
-  let skuNo = '';                        // 新品才用; 复购下 skuNo 留空
+  let skuNo = '';                        // 新品才用; 复购下 skuNo 留空 (handler 应判 repurchase 字段, 不要用 skuNo 是否为空)
   if (!repurchase) {
     skuNo = ((p1.collected && p1.collected.skuNo) || '').trim();
     if (p1.status !== 'done') { await cpoSetPhase2({ status: 'error', label: '请先完成 Phase 1 添加SKU' }); return; }

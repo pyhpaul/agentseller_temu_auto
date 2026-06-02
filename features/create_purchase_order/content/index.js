@@ -80,7 +80,7 @@
       ui.poOutput.value = p2Done ? c2.poNo : '';
       ui.poBox.style.display = p2Done ? 'flex' : 'none';
     }
-    // 复购态（持久化在 cpo_state.repurchase）：驱动 checkbox / SKU框可编辑 / ①区灰显
+    // 复购态（持久化在 cpo_state.repurchase）：驱动 checkbox / ①区灰显
     const repurchase = !!(state && state.repurchase);
     if (ui.repurchaseChk) ui.repurchaseChk.checked = repurchase;
 
@@ -206,7 +206,7 @@
   }
 
   // 切换复购态：写持久化 cpo_state.repurchase（storage.onChanged → renderState 统一刷新
-  // checkbox / SKU框可编辑性 / ①区灰显，单一数据源驱动）
+  // checkbox / ①区灰显，单一数据源驱动）
   async function onToggleRepurchase() {
     const o = await chrome.storage.local.get(STATE_KEY);
     const st = o[STATE_KEY] || {};
@@ -734,22 +734,25 @@
       return { ok: true, exists: false };
     },
 
-    CPO_P2_EDIT_FILL: async ({ skuNo }) => {
+    CPO_P2_EDIT_FILL: async ({ skuNo, repurchase }) => {
       U.showToast('创建采购单：填写采购信息…', 'info');
       // 等 edit 页 Vue 表单渲染（收货仓库 d-selector 是渲染完成的标志）
       try { await U.waitForEl('label[title="收货仓库"], div.d-selector', document, 12000); }
       catch { return { ok: false, error: 'edit 页收货仓库下拉 12s 内未渲染，表单未就绪' }; }
-      // a) 收货仓库选「中正科技仓」（d-selector 包装的 .ant-select.in-selector），填后回读校验
+      // a) 收货仓库选「中正科技仓」（新品+复购都跑）
       const whSel = cpoFindSelectByLabel('收货仓库');
       if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
       const whR = await cpoSelectAndVerify(whSel, '中正科技仓', '收货仓库');
       if (!whR.ok) return whR;
-      // b) 配对商品（span.link，配对弹窗搜索类型=商品SKU，填货号，选匹配结果，处理确认弹窗）
+      // b) 配对商品——仅新品模式跑（复购模式店小秘已有 SKU 档案、获取订单时自动载入，无需配对）
       //    顺序关键：必须在采购人员【之前】——配对的「修改所有草稿箱」确认会重置采购人员，
       //    若先选采购人员会被配对覆盖（实测踩坑，曾误判为「采购人员没填对」）
-      const pair = await cpoPairProduct(skuNo);
-      if (!pair.ok) return pair;
-      // c) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）——放最后，配对后再选，填后回读校验
+      if (!repurchase) {
+        const pair = await cpoPairProduct(skuNo);
+        if (!pair.ok) return pair;
+      }
+      // c) 采购人员选当前登录用户（读 .user-name，选项为 "ZQCHAO1" 等用户名格式）
+      //    新品下放配对后（配对的「修改所有草稿箱」确认会重置采购人员），复购下放仓库后
       const userName = (document.querySelector('.user-name, [class*="user-name"]')?.textContent || '').trim();
       const buyerSel = cpoFindSelectByLabel('采购人员');
       if (!buyerSel) return { ok: false, error: '业务拦截：未找到「采购人员」下拉' };
