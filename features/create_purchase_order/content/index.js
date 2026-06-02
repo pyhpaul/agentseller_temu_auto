@@ -245,6 +245,9 @@
     // 清 UI 上用户手填的 input value（storage 清干净后 DOM 也要同步——renderState 只在"曾 readOnly"时清，未锁定态的手填值会留存）
     if (ui.urlInput) ui.urlInput.value = '';
     if (ui.orderInput && !ui.orderInput.readOnly) ui.orderInput.value = '';
+    // 兜底清 ①②区临时消息（启动中…/校验错误/启动失败）——p1Status / p2Status / 采集摘要由 renderState 据 storage 自然 reset
+    setLocalMsg('');
+    setP2Msg('');
     U.showToast('已清除当前采购单流程数据', 'ok');
   }
 
