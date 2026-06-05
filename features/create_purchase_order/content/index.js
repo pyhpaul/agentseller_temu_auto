@@ -9,6 +9,14 @@
 
   const STATE_KEY = 'cpo_state';
 
+  // 收货仓库三选项（复购模式用）：default 不操作下拉、使用页面默认值
+  const CPO_WAREHOUSE_NAMES = { local: '中正科技仓', temu: 'TEMU商品代发仓', default: '' };
+  const CPO_WAREHOUSE_OPTIONS = [
+    { value: 'local', label: '本地仓（中正科技仓）' },
+    { value: 'temu', label: 'TEMU仓（TEMU商品代发仓）' },
+    { value: 'default', label: '默认（不改仓库）' },
+  ];
+
   // ── 页面判定 ──
   function isListPage() { return location.href.includes('agentseller.temu.com/goods/list'); }
   function isDxmPage() { return location.href.includes('dianxiaomi.com'); }
@@ -33,7 +41,7 @@
   const ui = { startBtn: null, urlInput: null, localMsg: null, p1Status: null, p1Data: null,
                p2Status: null, p2Data: null, p2Btn: null, orderInput: null, p2Msg: null,
                poOutput: null, poBox: null, autoSaveChk: null,
-               repurchaseChk: null, p1Section: null };
+               repurchaseChk: null, p1Section: null, whRow: null, whRadios: null };
 
   function setLocalMsg(text, kind = 'info') {
     if (!ui.localMsg) return;
@@ -83,6 +91,12 @@
     // 复购态（持久化在 cpo_state.repurchase）：驱动 checkbox / ①区灰显
     const repurchase = !!(state && state.repurchase);
     if (ui.repurchaseChk) ui.repurchaseChk.checked = repurchase;
+    // 复购仓库三选项（持久化在 cpo_state.repurchaseWarehouse，默认 'default'）：仅复购勾选时显示
+    if (ui.whRow) {
+      ui.whRow.style.display = repurchase ? 'flex' : 'none';
+      const wh = (state && state.repurchaseWarehouse) || 'default';
+      (ui.whRadios || []).forEach(r => { r.checked = (r.value === wh); });
+    }
 
     // 完成锁定：phase2 done 即锁（覆盖复购——复购无 phase1 done，不能再依赖 bothDone）
     const locked = p2.status === 'done' && !!c2.orderNo1688;
@@ -194,7 +208,9 @@
       if (!v.ok) { setP2Msg(v.error, 'error'); return; }   // finally 会复位守卫+恢复按钮
       setP2Msg('启动中…');
       const autoSave = ui.autoSaveChk ? ui.autoSaveChk.checked : true;
-      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase } });
+      // 复购仓库选项从 storage 单一数据源读（radio 选中态也由它驱动），新品不带
+      const warehouse = (o[STATE_KEY] && o[STATE_KEY].repurchaseWarehouse) || 'default';
+      const resp = await chrome.runtime.sendMessage({ type: 'CPO_START_PHASE2', data: { orderNo1688, autoSave, repurchase, warehouse } });
       if (!resp?.ok) setP2Msg(resp?.error || '启动失败', 'error');
       else { setP2Msg(''); started = true; }   // ack 成功后清临时消息，让 p2Status 接管显示进度
     } catch (e) {
@@ -215,7 +231,16 @@
     await chrome.storage.local.set({ [STATE_KEY]: st });
   }
 
-  // 清除当前流程数据：两个 phase 未全部完成时先确认，避免误清未完成的工作
+  // 选复购仓库：写持久化 cpo_state.repurchaseWarehouse（storage.onChanged → renderState 统一刷新选中态）
+  async function onSelectWarehouse(e) {
+    const o = await chrome.storage.local.get(STATE_KEY);
+    const st = o[STATE_KEY] || {};
+    st.repurchaseWarehouse = e.target.value;
+    st.updatedAt = Date.now();
+    await chrome.storage.local.set({ [STATE_KEY]: st });
+  }
+
+  // 清除当前流程数据：直接清，不弹确认（误清成本低——重跑一次即可，确认弹窗反而拖慢高频操作）
   async function onClear() {
     const o = await chrome.storage.local.get(STATE_KEY);
     const st = o[STATE_KEY];
@@ -232,8 +257,6 @@
                  || (p2.status && p2.status !== 'idle') || c2.poNo || c2.orderNo1688
                  || repurchase || urlVal || orderVal;
     if (!hasData) { U.showToast('当前无流程数据', 'info'); return; }
-    const bothDone = p1.status === 'done' && p2.status === 'done';
-    if (!bothDone && !window.confirm('当前采购单流程尚未全部完成，确认清除已采集的数据？')) return;
     await doClear();
   }
 
@@ -313,6 +336,26 @@
         ui.repurchaseChk.addEventListener('change', onToggleRepurchase);
         repRow.append(ui.repurchaseChk, document.createTextNode('商品复购（跳过①添加SKU，直接填1688订单号）'));
         wrap.append(repRow);
+        // 复购仓库三选项（仅复购勾选时显示，renderState 驱动；选中态持久化跨 tab 一致）
+        ui.whRow = document.createElement('div');
+        ui.whRow.style.cssText = 'display:none;flex-direction:column;gap:4px;padding-left:20px;font-size:12px;color:#333;';
+        const whTitle = document.createElement('div');
+        whTitle.textContent = '收货仓库：';
+        whTitle.style.cssText = 'color:#666;';
+        ui.whRow.append(whTitle);
+        ui.whRadios = CPO_WAREHOUSE_OPTIONS.map(opt => {
+          const lab = document.createElement('label');
+          lab.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;line-height:1.4;';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'cpo-warehouse';
+          radio.value = opt.value;
+          radio.addEventListener('change', onSelectWarehouse);
+          lab.append(radio, document.createTextNode(opt.label));
+          ui.whRow.append(lab);
+          return radio;
+        });
+        wrap.append(ui.whRow);
       }
 
       // ===== ② 创建采购单（店小秘发起；新品需 Phase 1 完成，复购直接填1688订单号） =====
@@ -748,16 +791,20 @@
       return { ok: true, exists: false };
     },
 
-    CPO_P2_EDIT_FILL: async ({ skuNo, repurchase }) => {
+    CPO_P2_EDIT_FILL: async ({ skuNo, repurchase, warehouse }) => {
       U.showToast('创建采购单：填写采购信息…', 'info');
       // 等 edit 页 Vue 表单渲染（收货仓库 d-selector 是渲染完成的标志）
       try { await U.waitForEl('label[title="收货仓库"], div.d-selector', document, 12000); }
       catch { return { ok: false, error: 'edit 页收货仓库下拉 12s 内未渲染，表单未就绪' }; }
-      // a) 收货仓库选「中正科技仓」（新品+复购都跑）
-      const whSel = cpoFindSelectByLabel('收货仓库');
-      if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
-      const whR = await cpoSelectAndVerify(whSel, '中正科技仓', '收货仓库');
-      if (!whR.ok) return whR;
+      // a) 收货仓库：新品固定「中正科技仓」；复购按面板三选项（local/temu/default）——
+      //    default 不操作下拉、使用页面默认值
+      const whName = repurchase ? CPO_WAREHOUSE_NAMES[warehouse] : CPO_WAREHOUSE_NAMES.local;
+      if (whName) {
+        const whSel = cpoFindSelectByLabel('收货仓库');
+        if (!whSel) return { ok: false, error: '业务拦截：未找到「收货仓库」下拉' };
+        const whR = await cpoSelectAndVerify(whSel, whName, '收货仓库');
+        if (!whR.ok) return whR;
+      }
       // b) 配对商品——仅新品模式跑（复购模式店小秘已有 SKU 档案、获取订单时自动载入，无需配对）
       //    顺序关键：必须在采购人员【之前】——配对的「修改所有草稿箱」确认会重置采购人员，
       //    若先选采购人员会被配对覆盖（实测踩坑，曾误判为「采购人员没填对」）
@@ -868,7 +915,41 @@
           .some(e => e.getBoundingClientRect().height > 0 && /暂无数据/.test(e.textContent));
         if (rows.length > 0 && !emptyShown) { found = true; break; }
       }
-      U.showToast(found ? '已定位采购单，请手动点「申请付款」' : '未搜到采购单行，请手动核对', found ? 'ok' : 'error');
+      if (found) {
+        // 待到货表是两行分组结构：header-row（含 PO 号 + 仓库/采购员）+ content-row（商品 + 操作列）。
+        // 按 PO 号文本锁定 header-row（不抓第一行），滚动置顶（避免被展开的 Hub 浮窗挡住）
+        const headerRow = Array.from(document.querySelectorAll('.vxe-body--row'))
+          .find(r => r.textContent.includes(poNo));
+        headerRow?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        // 自动展开 Hub 网格（不切 feature view——feature 面板更高会挡住表格行，
+        // Hub 网格矮、不挡；用户点一次「创建采购单」即可看到采购单号）
+        window.AgentSeller.openHub();
+        // 自动点「申请付款」：按钮在 header-row 之后、下一个 header-row 之前的 content-row 操作列
+        // （锁定本采购单的行段，禁止全表抓第一个——页面可能有其他采购单的同名按钮）
+        let payBtn = null;
+        for (let r = headerRow?.nextElementSibling; r && !r.classList.contains('header-row'); r = r.nextElementSibling) {
+          payBtn = Array.from(r.querySelectorAll('button')).find(b => U.normText(b.textContent) === '申请付款');
+          if (payBtn) break;
+        }
+        if (!payBtn) {
+          U.showToast('已定位采购单，但未找到「申请付款」按钮，请手动点击', 'error');
+          return { ok: true, found, paymentModalOpened: false };
+        }
+        payBtn.click();
+        // 写后读：以「申请付款」弹窗（.ant-modal-title 文本）出现为点击生效信号；
+        // 弹窗内「提交申请」留给用户核对金额后自行点击，不自动提交
+        let modalShown = false;
+        for (let i = 0; i < 25; i++) {     // ~5s
+          await U.sleep(200);
+          modalShown = Array.from(document.querySelectorAll('.ant-modal-title'))
+            .some(t => U.normText(t.textContent) === '申请付款' && t.getBoundingClientRect().height > 0);
+          if (modalShown) break;
+        }
+        U.showToast(modalShown ? '已打开申请付款弹窗，请核对金额后点「提交申请」'
+                               : '已点「申请付款」但弹窗 5s 未出现，请手动点击', modalShown ? 'ok' : 'error');
+        return { ok: true, found, paymentModalOpened: modalShown };
+      }
+      U.showToast('未搜到采购单行，请手动核对', 'error');
       return { ok: true, found };       // 搜不到不阻断 done（PO 号已从审核弹窗取得）
     },
   };
