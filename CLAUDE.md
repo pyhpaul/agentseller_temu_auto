@@ -94,6 +94,7 @@ window.AgentSeller = {
   },
   sendNative(action, data),               // 透传到 service worker → native host
   openFeature(fid),                       // 程序化展开 Panel + 切到指定 feature view（reload 自动续跑场景常用）
+  openHub(),                              // 程序化展开 Panel 到 Hub 网格（不切 feature view；网格矮、少挡页面内容）
 };
 ```
 

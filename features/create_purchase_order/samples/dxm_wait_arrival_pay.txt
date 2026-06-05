@@ -1,0 +1,80 @@
+店小秘 待到货页（purchasing/order/waitArrival）—— 申请付款按钮 + 弹窗 真实 DOM 基线
+来源：用户 2026-06-05 dump（base64 图片数据已截断为 [base64...]）
+
+═══════════════════════════════════════════
+一、表格行结构（vxe-table 两行分组：header-row + content-row）
+═══════════════════════════════════════════
+要点：
+- 每个采购单两行：tr.vxe-body--row.purchase-order-table-row.header-row（rowid=main_row_<数字>）
+  + tr.vxe-body--row.purchase-order-table-row.content-row（rowid=row_<N>）
+- PO 号在 header-row 的 col_44 内 button>span 文本（如 PO1SLPT028310）
+- header-row col_49 还有「仓库：中正科技仓 | 采购员：ZQCHAO1」
+- 「申请付款」按钮在 content-row 的 col_50（操作列）：
+  <button class="... ant-btn ant-btn-link ant-btn-sm" type="button"><span>申请付款</span></button>
+  同列还有「入库」button、「更多」button（ant-dropdown-trigger）
+
+<tr class="vxe-body--row purchase-order-table-row header-row" rowid="main_row_129812329634599163">
+  <td class="vxe-body--column col_42 col--expand" colid="col_42"><div class="vxe-cell"></div></td>
+  <td class="vxe-body--column col_43 col--center col--checkbox" colid="col_43"><div class="vxe-cell"><label class="ant-checkbox-wrapper css-1oz1bg8">...</label></div></td>
+  <td class="vxe-body--column col_44 col--left" colid="col_44"><div class="vxe-cell">
+    <div class="flex items-center gap-10"><div class="flex items-center gap-5">
+      <button class="css-1oz1bg8 ant-btn ant-btn-link !p-0 !h-22 !lh-22" type="button"><span>PO1SLPT028310</span></button>
+    </div></div></div></td>
+  <td class="vxe-body--column col_45 col--left" colid="col_45" colspan="2"><div class="vxe-cell">
+    <span class="no-new-line"> 供货商：金华康宇工艺品有限公司</span>...</div></td>
+  <td class="vxe-body--column col_49 col--center" colid="col_49" colspan="3"><div class="vxe-cell">
+    <div class="flex justify-end items-center text-gray-600 pb-5"> 仓库：中正科技仓 | 采购员：ZQCHAO1</div></div></td>
+</tr>
+<tr class="vxe-body--row purchase-order-table-row content-row" rowid="row_41">
+  <td colid="col_42">...</td><td colid="col_43">...</td>
+  <td class="vxe-body--column col_44 col--left" colid="col_44"><div class="vxe-cell">
+    ... <img class="img-css" src="https://img.cdnfe.com/product/fancy/....jpg">
+    <div> 商品种类：1</div><div> 采购数量：50</div>
+    <button class="... ant-btn ant-btn-link ..." type="button"><i class="iconfont icon_details"></i><span class="ml-5">货品详情</span></button></div></td>
+  <td colid="col_45"><div class="vxe-cell">
+    <div> 货款： <span class="line-through"> ￥ 84.00</span><span> ￥ 64.57</span></div>
+    <div class="color-gray"> ( <span> 含运费：￥8.00</span> / <span> 折扣金额：￥19.43</span> ) </div>
+    <div> 到货货款：￥0.00</div></div></td>
+  <td colid="col_46"><div class="vxe-cell">
+    <span class="text-orange-500">1688：</span><span>greenworld_绿城-3306118227406742986</span>
+    <button title="追加运单号" type="button"><i class="iconfont icon_tag_edit"></i><span>添加</span></button></div></td>
+  <td colid="col_47"><div class="vxe-cell"><div> 创建：2026-06-04 23:37</div><div> 更新：2026-06-05 00:18</div></div></td>
+  <td colid="col_49"><div class="vxe-cell"><div class="mb-5">未到货 [0 / 50]</div><img src="data:image/png;base64,[base64...]" alt="可申请"></div></td>
+  <td class="vxe-body--column col_50 col--center col--last" colid="col_50"><div class="vxe-cell">
+    <div class="flex flex-col gap-5 text-right">
+      <button class="css-1oz1bg8 ant-btn ant-btn-link ant-btn-sm" type="button"><span>申请付款</span></button>
+      <button class="css-1oz1bg8 ant-btn ant-btn-link ant-btn-sm" type="button"><span>入库</span></button>
+      <button class="css-1oz1bg8 ant-btn ant-btn-link ant-btn-sm ant-dropdown-trigger" type="button"><span>更多</span><i class="iconfont icon_down"></i></button>
+    </div></div></td>
+</tr>
+
+═══════════════════════════════════════════
+二、「申请付款」弹窗（点击按钮后出现）
+═══════════════════════════════════════════
+要点：
+- 容器 .ant-modal（role=document, width 900px）> .ant-modal-content
+- 标题 .ant-modal-title 文本「申请付款」（id=vcDialogTitle0）—— 点击生效信号
+- body 内嵌一个小 vxe-table（采购单号 / 金额公式 / 付款操作列，表头有「全额填充」link button）
+- footer：<button class="... ant-btn ant-btn-primary"><span>提交申请</span></button>
+        + <button class="... ant-btn ant-btn-default"><span>关闭</span></button>
+- 「提交申请」留给用户核对金额后自行点击（自动化不碰）
+
+<div class="ant-modal css-1oz1bg8" role="document" style="width: 900px;">
+ <div class="ant-modal-content">
+  <button type="button" aria-label="Close" class="ant-modal-close">...</button>
+  <div class="ant-modal-header"><div class="ant-modal-title" id="vcDialogTitle0">申请付款</div></div>
+  <div class="ant-modal-body">
+    ... 财务审批流程图（待审批/已审批，base64 图）...
+    <div class="vxe-table ...">
+      thead: 采购单号 | (货款金额 - 已申请）+ 运费 - 折扣金额 = 应付总额) | 付款操作 (<button><span>全额填充</span></button>)
+      tbody 行: <span>PO1SLPT028310</span> | ( 76.00 - 0.00) + 8.00 -19.43 = <input disabled value="84.00">
+               | 本次申请：<input disabled placeholder="应付金额：64.57" value="64.57">
+    </div>
+    <div class="mt-10 flex"><span class="mr-20"> 应付总额： 84.00</span><span> 付款总额： 64.57</span></div>
+  </div>
+  <div class="ant-modal-footer">
+    <button class="css-1oz1bg8 ant-btn ant-btn-primary" type="button"><span>提交申请</span></button>
+    <button class="css-1oz1bg8 ant-btn ant-btn-default" type="button"><span>关闭</span></button>
+  </div>
+ </div>
+</div>

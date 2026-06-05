@@ -495,7 +495,7 @@ function cpoFocusOrigin(originTabId) {
 
 // Phase 2 主编排：创建现有订单 → 通过审核 → 待到货定位 → 停在申请付款前
 // 新开独立 tab 跑全流程，不复用触发方 tab；originTabId 仅用于「新 tab 定位」+「error 切回」
-async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false }, originTabId = null) {
+async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false, warehouse = 'default' }, originTabId = null) {
   const { cpo_state } = await chrome.storage.local.get('cpo_state');
   const p1 = (cpo_state && cpo_state.phase1) || {};
   // skuNo 来源分叉：新品用 Phase 1 采集值 + 强校验 phase1 done；复购跳过 phase1，skuNo 留空
@@ -554,7 +554,7 @@ async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false }, ori
 
     // step4：edit 填采购人员/收货仓库 + 配对商品
     await cpoSetPhase2({ step: 4, label: '填采购人员/收货仓库、配对商品', collected2 });
-    await cpoSendCommand(editTabId, 'CPO_P2_EDIT_FILL', { skuNo, repurchase });
+    await cpoSendCommand(editTabId, 'CPO_P2_EDIT_FILL', { skuNo, repurchase, warehouse });
 
     // step5：半自动模式（autoSave=false）先弹可拖动确认框，等用户核对后再保存
     // 用 chrome.tabs.sendMessage 直发（不走 cpoSendCommand：那有 20s 超时 + retry，会打断/重复弹窗）
@@ -577,11 +577,14 @@ async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false }, ori
     await cpoCloseTab(editTabId); tmpTabs.splice(tmpTabs.indexOf(editTabId), 1);
     const tWait = await cpoCreateTabNextTo(CPO_DXM_WAIT_URL, originTabId);
     await cpoWaitTabComplete(tWait.id);
-    await cpoSendCommand(tWait.id, 'CPO_P2_WAIT_SEARCH', { poNo: collected2.poNo });
-    // tWait 待到货页保留给用户点申请付款，不加入 tmpTabs、不回收
+    const rWait = await cpoSendCommand(tWait.id, 'CPO_P2_WAIT_SEARCH', { poNo: collected2.poNo });
+    // tWait 待到货页保留给用户提交付款申请，不加入 tmpTabs、不回收
 
-    // step7：done，提醒手动申请付款
-    await cpoSetPhase2({ status: 'done', step: 7, label: '已定位商品，请手动点「申请付款」完成', collected2 });
+    // step7：done。申请付款弹窗已自动打开则提示提交；降级路径（按钮/弹窗没找到）提示手动点
+    const doneLabel = rWait && rWait.paymentModalOpened
+      ? '已打开申请付款弹窗，请核对金额后点「提交申请」'
+      : '已定位采购单，请手动点「申请付款」完成';
+    await cpoSetPhase2({ status: 'done', step: 7, label: doneLabel, collected2 });
   } catch (e) {
     for (const id of tmpTabs) { chrome.tabs.remove(id).catch(() => {}); }
     cpoFocusOrigin(originTabId);

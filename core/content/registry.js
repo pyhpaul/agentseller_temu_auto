@@ -78,5 +78,13 @@
       if (view === 'fab') ui.showHub(true);  // FAB → 先展开 Panel 到 Hub
       ui.showFeature(fid);                    // 再切到 feature view
     },
+    // 程序化展开 Panel 到 Hub 网格（不切 feature view）：Hub 比 feature view 矮，
+    // 适合「提示用户面板在这里、但不挡页面内容」的场景，用户自行点一次进 feature
+    openHub: () => {
+      const ui = window.__AgentSellerUI;
+      if (!ui) return;
+      if (ui.getState().view === 'fab') ui.showHub(true);
+      else ui.showHub(false);
+    },
   };
 })();
