@@ -28,7 +28,9 @@
   故定位用 `findRow`(按 tr)，非 `findGroup`。
 - 虚拟滚动表格：每轮重扫活表格 + 按发货单号去重(processed-set)，不一次性快照
 - 防脏数据：流程自探测 in-page tab，不在待装箱发货主动切回(`ensureOnPendingTab`)；
-  无未处理单时切 tab 刷新再确认才结束(`nextPick` 二次扫描)；等包裹号中途切 tab 刷新一次(`waitPackageNo`)
+  无未处理单时切 tab 刷新再确认才结束(`nextPick` 二次扫描)；等包裹号中途切 tab 刷新一次(`waitPackageNo`)；
+  **发货后等上一个已发货单从扫描结果消失再取单**(`run.lastShipped`，超时 8s 降级)——发货后表格异步刷新，
+  中间态下行渲染不全会漏扫其他单（实测：同 SKC 第二个发货单被漏），「已发货单消失」才是刷新完成的真实信号
 - 写后读校验：选中 checkbox / 编辑页包装方式 / 箱数 填后回读(项目铁律)
 - 错误分层：读取(`markRead`)/校验(`markData`)/业务(`markBiz`)，`catLabel` 映射「读取/校验/业务」，文案不混用
 

@@ -19,6 +19,7 @@
     skippedLocal: 0,
     fails: [],
     total: 0,             // 初始扫描的发货单总数（动态取最大，不减）
+    lastShipped: '',      // 上一个确认发货的单号：下轮扫描等它从表中消失（=表格刷新完成）再取单
   };
 
   // ── storage 开关 ──
@@ -558,6 +559,17 @@
   async function scanForPick() {
     await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
     let live = await scanOrderNos();
+    // 发货后 Temu 异步刷新表格：上一个已发货单还在扫描结果里 = 表格还是旧数据（中间态）。
+    // 中间态下行可能渲染不全，readOrderNo 读空/读错会把别的单漏掉（实测：同 SKC 第二单被漏扫）。
+    // 等已发货单从表中消失（=新数据已载入）再取单；超时降级用当前结果，不永久卡。
+    if (run.lastShipped && live.includes(run.lastShipped)) {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline && live.includes(run.lastShipped)) {
+        await U.sleep(600);
+        live = await scanOrderNos();
+      }
+    }
+    run.lastShipped = '';
     let remaining = live.filter((no) => !run.processed.has(no));
     if (!remaining.length) {
       await refreshViaTabSwitch();
@@ -577,7 +589,7 @@
     try {
       const r = await processOrder(orderNo);
       if (r.kind === 'local') run.skippedLocal += 1;
-      else if (r.kind === 'shipped') run.shipped += 1;
+      else if (r.kind === 'shipped') { run.shipped += 1; run.lastShipped = orderNo; }
       // cancelled：不计 shipped，仍算已处理
     } catch (err) {
       run.fails.push({ orderNo, step: catLabel(err && err._cat), reason: (err && err.message) || String(err) });
@@ -588,7 +600,7 @@
     return orderNo;
   }
 
-  function resetRunStats() { run.processed = new Set(); run.shipped = 0; run.skippedLocal = 0; run.fails = []; run.total = 0; }
+  function resetRunStats() { run.processed = new Set(); run.shipped = 0; run.skippedLocal = 0; run.fails = []; run.total = 0; run.lastShipped = ''; }
 
   // 「开始（全部）」：从头全自动处理所有未处理发货单。
   async function onStart() {
