@@ -11,6 +11,7 @@ test('csvField: 含逗号/引号/换行时双引号包裹并转义内部引号',
   assert.strictEqual(U.csvField('a,b'), '"a,b"');
   assert.strictEqual(U.csvField('say "hi"'), '"say ""hi"""');
   assert.strictEqual(U.csvField('l1\nl2'), '"l1\nl2"');
+  assert.strictEqual(U.csvField('a\rb'), '"a\rb"');
 });
 
 test('csvField: null/undefined 转空串', () => {

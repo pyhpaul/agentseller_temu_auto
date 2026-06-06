@@ -14,7 +14,7 @@
 
   // ── 错误分层（debugging-rules 错误文案铁律）─────────────────────────────
   function mkErr(kind, msg) {
-    const prefix = { read: '读取失败', data: '数据校验', biz: '不能操作' }[kind] || '错误';
+    const prefix = { read: '读取失败', data: '数据校验', biz: '不能操作', write: '写入失败' }[kind] || '错误';
     return new Error(prefix + '：' + msg);
   }
 
@@ -205,7 +205,7 @@
       const slice = u8.subarray(offset, offset + CHUNK);
       const done = offset + slice.length >= u8.length;
       const r = await sendNative('SAVE_FILE_CHUNK', { path, data: bytesToBase64(slice), offset, done });
-      if (!r || !r.success) throw mkErr('read', 'CSV 写入失败：' + ((r && r.error) || '未知'));
+      if (!r || !r.success) throw mkErr('write', 'CSV 落盘失败：' + ((r && r.error) || '未知'));
       offset += slice.length; last = r;
     } while (offset < u8.length);
     return last;
@@ -243,6 +243,7 @@
       next.click();
       await waitTableChange(prevSig, 15000);
     }
+    if (pagesScanned >= 500) console.warn('[SME] 翻页 guard 上限触顶（500 页），结果可能未覆盖全部分页');
     return { rows: Array.from(seen.values()), total, pagesScanned };
   }
 
