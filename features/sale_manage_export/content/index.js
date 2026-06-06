@@ -104,10 +104,12 @@
     return isNaN(n) ? null : n;
   }
 
-  // 页面内容签名：激活页码 | 首组 SKC | 本页组数。翻页/改每页条数后签名必变。
+  // 表格内容签名：首组 SKC | 末组 SKC | 组数。**只看表格数据，不含页码**——
+  // 点 next 后激活页码立即变、数据 4-5s 后才到（端到端实测），含页码的签名会提前放行，
+  // 导致扫到旧数据（重复采集）。相邻页 SKC 集合必不同，内容变化才是数据就绪的真信号。
   function pageSignature() {
     const g = collectPageGroups();
-    return readActivePage() + '|' + (g[0] ? g[0].skc : '') + '|' + g.length;
+    return (g[0] ? g[0].skc : '') + '|' + (g.length ? g[g.length - 1].skc : '') + '|' + g.length;
   }
 
   // 等表格内容真正变化（auto_ship #47 同款坑：点了下一页 ≠ 表格已刷新）。
@@ -119,7 +121,7 @@
     while (Date.now() < deadline) {
       await U.sleep(200);
       const sig = pageSignature();
-      if (sig !== prevSig && sig.split('|')[1]) return sig;
+      if (sig !== prevSig && sig.split('|')[0]) return sig;
     }
     throw mkErr('read', '表格刷新超时（' + timeoutMs + 'ms 内容未变化' + (ctx ? '，' + ctx : '') + '），采集中止');
   }
