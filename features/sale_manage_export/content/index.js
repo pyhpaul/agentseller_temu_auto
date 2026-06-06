@@ -128,15 +128,55 @@
     throw mkErr('read', '表格刷新超时（' + timeoutMs + 'ms 内容未变化' + (ctx ? '，' + ctx : '') + '），采集中止');
   }
 
-  // 回到第 1 页（用户可能停在第 N 页点开始；不回头会漏采前面的页）
+  // 点「下一页」并确认真的前进了一页。点了 ≠ 生效：上一轮刷新尾声 Beast 会吞点击
+  // （端到端实测：单点死等 15s 超时，手动补点即翻页）→ 写后读 + 退避重试。
+  async function clickNextAndWait(curPage) {
+    const ATTEMPTS = 3;
+    let lastErr = null;
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const next = document.querySelector('[data-testid="beast-core-pagination-next"]');
+      if (!next) throw mkErr('read', '未找到下一页按钮');
+      const prevSig = pageSignature();
+      next.click();
+      let changed = true;
+      try {
+        await waitTableChange(prevSig, 8000, '第 ' + curPage + ' 页翻下一页后（第 ' + (i + 1) + ' 次点击）');
+      } catch (e) {
+        changed = false; lastErr = e;
+        console.warn('[SME] 第 ' + (i + 1) + ' 次点击下一页未生效，重试：', e.message);
+      }
+      if (changed) {
+        // 防跳页：迟到的上次点击 + 本次点击都生效会跳过一页，漏采比失败更糟，必须中止
+        const now = readActivePage();
+        if (now != null && now > curPage + 1) {
+          throw mkErr('data', '翻页跳过了第 ' + (curPage + 1) + ' 页（当前第 ' + now + ' 页），为防漏采中止，请重新采集');
+        }
+        return;
+      }
+    }
+    throw lastErr;
+  }
+
+  // 回到第 1 页（用户可能停在第 N 页点开始；不回头会漏采前面的页）。
+  // 点击同样可能被刷新尾声吞掉 → 重试；落到第 1 页由循环头条件确认。
   async function gotoFirstPage() {
-    if ((readActivePage() || 1) === 1) return;
-    const first = Array.from(document.querySelectorAll('[class*="PGT_pagerItem"]'))
-      .find((el) => (el.textContent || '').trim() === '1');
-    if (!first) throw mkErr('read', '未找到第 1 页页码按钮');
-    const prevSig = pageSignature();
-    first.click();
-    await waitTableChange(prevSig, 15000, '回第 1 页时');
+    for (let i = 0; i < 3; i++) {
+      if ((readActivePage() || 1) === 1) return;
+      const first = Array.from(document.querySelectorAll('[class*="PGT_pagerItem"]'))
+        .find((el) => (el.textContent || '').trim() === '1');
+      if (!first) throw mkErr('read', '未找到第 1 页页码按钮');
+      const prevSig = pageSignature();
+      first.click();
+      try {
+        await waitTableChange(prevSig, 8000, '回第 1 页时（第 ' + (i + 1) + ' 次点击）');
+        return;
+      } catch (e) {
+        console.warn('[SME] 回第 1 页点击未生效，重试：', e.message);
+      }
+    }
+    if ((readActivePage() || 1) !== 1) {
+      throw mkErr('read', '回第 1 页失败（3 次点击后仍在第 ' + readActivePage() + ' 页）');
+    }
   }
 
   // 调大每页条数（best-effort）：打开 size select → 在 portal 下拉里选最大数字项 → 写后读校验。
@@ -241,9 +281,7 @@
       const next = document.querySelector('[data-testid="beast-core-pagination-next"]');
       if (!next) throw mkErr('read', '未找到下一页按钮');
       if (/PGT_disabled/.test(next.className)) break; // 末页
-      const prevSig = pageSignature();
-      next.click();
-      await waitTableChange(prevSig, 15000, '第 ' + page + ' 页翻下一页后');
+      await clickNextAndWait(page);
     }
     if (pagesScanned >= 500) console.warn('[SME] 翻页 guard 上限触顶（500 页），结果可能未覆盖全部分页');
     return { rows: Array.from(seen.values()), total, pagesScanned, rawGroups };

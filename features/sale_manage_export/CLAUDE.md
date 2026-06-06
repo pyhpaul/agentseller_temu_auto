@@ -25,8 +25,10 @@ UTF-8 BOM CSV（`销售管理清单_YYYYMMDD_HHMMSS.csv`）到预设文件夹。
 1. `maximizePageSize`：best-effort 调大每页条数，写后读校验；下拉选项在 body portal，
    过滤「纯数字 + 可见 + 不在分页器内」防止误点页码；失败降级按当前条数翻页。
 2. 回第 1 页（改条数可能重置页码；用户也可能停在第 N 页点开始，不回头会漏采）。
-3. 逐页 `collectPageGroups` → `Map<SKC,row>` 去重 → 点 next → `waitTableChange`。
+3. 逐页 `collectPageGroups` → `Map<SKC,row>` 去重 → `clickNextAndWait` 翻页。
 4. **翻页后必须等内容签名（激活页|首组SKC|组数）变化**，spin 遮罩消失不够（auto_ship #47 同款坑）。
+   **且点击本身可能被刷新尾声吞掉（点了 ≠ 生效，端到端实测）**→ `clickNextAndWait` 每次点击只等 8s，
+   没变化就重点（≤3 次）；签名变化后校验激活页码 == 期望页，跳页（双点击都生效）则中止防漏采。
 5. 任一页 0 组 / 缺 SKC 字段 → 立即中止不写文件；错误文案分「读取失败/数据校验/写入失败/不能操作」四层。
 6. 「共有 N 条」与采集 SKC 数不一致时只提示不硬校验（N 可能为 SKU 计数）。
 
