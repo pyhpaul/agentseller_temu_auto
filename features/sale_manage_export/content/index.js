@@ -283,7 +283,16 @@
       pagesScanned += 1;
       onProgress && onProgress({ page, count: seen.size });
       const next = document.querySelector('[data-testid="beast-core-pagination-next"]');
-      if (!next) throw mkErr('read', '未找到下一页按钮');
+      if (!next) {
+        // 单页时 Beast 渲染分页器但不渲染 next 按钮（端到端实测）——但需与「选择器失效」
+        // 区分：页码项 ≥2 说明确实有多页，此时 next 缺失是读取故障，静默 break 会漏采
+        const pagerPages = Array.from(document.querySelectorAll('[class*="PGT_pagerItem"]'))
+          .filter((el) => /^\d+$/.test((el.textContent || '').trim()));
+        if (pagerPages.length > 1) {
+          throw mkErr('read', '存在 ' + pagerPages.length + ' 个页码但未找到下一页按钮（分页器选择器可能失效）');
+        }
+        break; // 单页：本页已采完即结束
+      }
       if (/PGT_disabled/.test(next.className)) break; // 末页
       await clickNextAndWait(page);
     }
