@@ -1,0 +1,19 @@
+{
+  "id": "sale_manage_export",
+  "icon": "📊",
+  "label": "销售清单导出",
+  "locked": false,
+  "order": 7,
+  "content_script": "content/index.js",
+  "content_matches": ["https://agentseller.temu.com/*"],
+  "host_permissions": ["https://agentseller.temu.com/*"],
+  "permissions": ["nativeMessaging"],
+  "native_host": "com.temu.label_host",
+  "extra_content_scripts": [
+    {
+      "js": ["content/sme-utils.js"],
+      "matches": ["https://agentseller.temu.com/*"],
+      "run_at": "document_start"
+    }
+  ]
+}
