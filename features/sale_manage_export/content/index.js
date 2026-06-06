@@ -117,7 +117,7 @@
 
   // 等表格内容真正变化（auto_ship #47 同款坑：点了下一页 ≠ 表格已刷新）。
   // 就绪条件：spin 遮罩不可见 且 签名 != prevSig 且 首组 SKC 可读。超时抛读取层错误。
-  async function waitTableChange(prevSig, timeoutMs) {
+  async function waitTableChange(prevSig, timeoutMs, ctx) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await U.sleep(200);
@@ -125,7 +125,7 @@
       const sig = pageSignature();
       if (sig !== prevSig && sig.split('|')[1]) return sig;
     }
-    throw mkErr('read', '表格刷新超时（' + timeoutMs + 'ms 内容未变化），采集中止');
+    throw mkErr('read', '表格刷新超时（' + timeoutMs + 'ms 内容未变化' + (ctx ? '，' + ctx : '') + '），采集中止');
   }
 
   // 回到第 1 页（用户可能停在第 N 页点开始；不回头会漏采前面的页）
@@ -136,7 +136,7 @@
     if (!first) throw mkErr('read', '未找到第 1 页页码按钮');
     const prevSig = pageSignature();
     first.click();
-    await waitTableChange(prevSig, 15000);
+    await waitTableChange(prevSig, 15000, '回第 1 页时');
   }
 
   // 调大每页条数（best-effort）：打开 size select → 在 portal 下拉里选最大数字项 → 写后读校验。
@@ -180,7 +180,7 @@
       if (Date.now() + 150 >= vDeadline) throw mkErr('data', '每页条数填写后不符，期望「' + want + '」实际「' + v + '」');
     }
     // 等表格按新条数刷新；若结果集小到内容签名不变（如总数 ≤ 原每页数），超时降级继续
-    try { await waitTableChange(prevSig, 8000); } catch (e) { console.warn('[SME] 改条数后表格签名未变化，按已校验值继续：', e.message); }
+    try { await waitTableChange(prevSig, 8000, '调整每页条数后'); } catch (e) { console.warn('[SME] 改条数后表格签名未变化，按已校验值继续：', e.message); }
     return { changed: true, size: want };
   }
 
@@ -226,10 +226,12 @@
 
     const seen = new Map(); // Map<SKC, row> 去重（防表格未刷新重复扫）
     let pagesScanned = 0;
+    let rawGroups = 0;
     for (let guard = 0; guard < 500; guard++) {
       const page = readActivePage() || pagesScanned + 1;
       const groups = collectPageGroups();
       if (!groups.length) throw mkErr('read', '第 ' + page + ' 页未扫描到任何商品组（表格选择器失效或页面异常）');
+      rawGroups += groups.length;
       for (const g of groups) {
         if (!g.skc) throw mkErr('data', '第 ' + page + ' 页存在缺少 SKC 字段的商品组（商品名：' + (g.name || '').slice(0, 30) + '…）');
         if (!seen.has(g.skc)) seen.set(g.skc, g);
@@ -241,10 +243,10 @@
       if (/PGT_disabled/.test(next.className)) break; // 末页
       const prevSig = pageSignature();
       next.click();
-      await waitTableChange(prevSig, 15000);
+      await waitTableChange(prevSig, 15000, '第 ' + page + ' 页翻下一页后');
     }
     if (pagesScanned >= 500) console.warn('[SME] 翻页 guard 上限触顶（500 页），结果可能未覆盖全部分页');
-    return { rows: Array.from(seen.values()), total, pagesScanned };
+    return { rows: Array.from(seen.values()), total, pagesScanned, rawGroups };
   }
 
   async function onStart() {
@@ -254,7 +256,7 @@
     setRunning(true);
     setStatus('采集中…');
     try {
-      const { rows, total, pagesScanned } = await collectAllPages(({ page, count }) => {
+      const { rows, total, pagesScanned, rawGroups } = await collectAllPages(({ page, count }) => {
         setStatus(`采集中…第 ${page} 页，已采 ${count} 个 SKC`);
       });
       const csv = SU.buildCsvText(rows);
@@ -262,6 +264,9 @@
       const path = joinWin(dir, SU.buildCsvFileName(new Date()));
       await saveBytes(path, bytes);
       let msg = `✅ 完成：${pagesScanned} 页共 ${rows.length} 个 SKC → ${path}`;
+      if (rawGroups !== rows.length) {
+        msg += `（跨页重复 ${rawGroups - rows.length} 个 SKC 已去重）`;
+      }
       if (total != null && rows.length !== total) {
         msg += `（注意：页面「共有 ${total} 条」与采集数不一致，可能为 SKU 计数，请人工核对）`;
       }

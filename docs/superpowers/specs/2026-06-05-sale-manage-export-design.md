@@ -41,12 +41,12 @@ features/sale_manage_export/
 
 feature.json 要点：
 - `content_matches` / `host_permissions`：仅 `https://agentseller.temu.com/*`
-- `permissions`: `["nativeMessaging", "storage"]`
+- `permissions`: `["nativeMessaging"]`
 - 该域名已被现有 feature 覆盖，无新增注入面。
 
 ### Panel UI
 
-- 「保存文件夹」行：显示当前目录 + 选择按钮（`PICK_FOLDER`），结果存 `chrome.storage.local`，下次默认复用。
+- 「保存文件夹」行：显示当前目录 + 选择按钮（`PICK_FOLDER`），结果存 `localStorage`（同 packing_label 模式），下次默认复用。
 - 「开始采集」按钮：仅当 URL 含 `/stock/fully-mgt/sale-manage` 时可用，否则灰显并提示前往该页面。
 - 进度/状态区：第 X/Y 页、已采 N 个 SKC、错误信息。
 
