@@ -30,18 +30,28 @@
 
   const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
 
-  // 列定义：与 CSV 表头一致；width 单位是字符宽（Excel 标准）
+  // 列定义：与 CSV 表头一致；width 单位是字符宽（Excel 标准）。
+  // numeric: SKC/SPU 按用户要求出数字单元格（值不满足安全数字时逐格回退文本）；
+  // SKC货号可能含字母/前导零、商品名称是自由文本 → 恒为文本。
   const COLUMNS = [
-    { header: 'SKC', width: 14 },
-    { header: 'SKC货号', width: 12 },
-    { header: 'SPU', width: 14 },
-    { header: '商品名称', width: 60 },
+    { header: 'SKC', width: 14, numeric: true },
+    { header: 'SKC货号', width: 12, numeric: false },
+    { header: 'SPU', width: 14, numeric: true },
+    { header: '商品名称', width: 60, numeric: false },
   ];
 
-  // inlineStr 单元格；s="1" 指向 styles.xml cellXfs 的左对齐 xf；
-  // xml:space="preserve" 防 Excel 吞值内前后空白
-  function cell(v) {
-    return '<c t="inlineStr" s="1"><is><t xml:space="preserve">' + xmlEscape(v) + '</t></is></c>';
+  // 数字单元格安全条件：纯数字、无前导零（数字化会丢零）、≤15 位（Excel 双精度上限，
+  // 超出会静默改写尾数——宁可回退文本也不能丢精度）
+  function isSafeNumber(s) {
+    return /^(0|[1-9]\d{0,14})$/.test(s);
+  }
+
+  // s="1" 指向 styles.xml cellXfs 的左对齐 xf；
+  // 文本格 xml:space="preserve" 防 Excel 吞值内前后空白
+  function cell(v, numeric) {
+    const s = v == null ? '' : String(v);
+    if (numeric && isSafeNumber(s)) return '<c s="1"><v>' + s + '</v></c>';
+    return '<c t="inlineStr" s="1"><is><t xml:space="preserve">' + xmlEscape(s) + '</t></is></c>';
   }
 
   // rows: [{skc, skcCode, spu, name}] → sheet1.xml 文本
@@ -51,9 +61,10 @@
     const lines = [XML_DECL +
       '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
       '<cols>' + cols + '</cols><sheetData>'];
-    lines.push('<row>' + COLUMNS.map((c) => cell(c.header)).join('') + '</row>');
+    lines.push('<row>' + COLUMNS.map((c) => cell(c.header, false)).join('') + '</row>');
     for (const r of rows) {
-      lines.push('<row>' + [r.skc, r.skcCode, r.spu, r.name].map(cell).join('') + '</row>');
+      lines.push('<row>' + [r.skc, r.skcCode, r.spu, r.name]
+        .map((v, i) => cell(v, COLUMNS[i].numeric)).join('') + '</row>');
     }
     lines.push('</sheetData></worksheet>');
     return lines.join('');

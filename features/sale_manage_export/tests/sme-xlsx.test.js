@@ -14,7 +14,7 @@ test('crc32: 空输入 → 0', () => {
 });
 
 // ── sheet XML ──────────────────────────────────────────────────────────────
-test('buildSheetXml: 含列宽 cols + 表头 + inlineStr 数据行', () => {
+test('buildSheetXml: 含列宽 cols + 表头 + 数据行', () => {
   const xml = X.buildSheetXml([
     { skc: '55589159770', skcCode: 'RAC449', spu: '2354682166', name: 'Aluminum alloy' },
   ]);
@@ -23,10 +23,27 @@ test('buildSheetXml: 含列宽 cols + 表头 + inlineStr 数据行', () => {
   assert.match(xml, /<col min="2" max="2" width="12" customWidth="1"\/>/);
   assert.match(xml, /<col min="3" max="3" width="14" customWidth="1"\/>/);
   assert.match(xml, /<col min="4" max="4" width="60" customWidth="1"\/>/);
-  // 表头 + 数据都是 inlineStr（免 sharedStrings），全部挂左对齐 style s="1"
+  // 表头是 inlineStr，全部挂左对齐 style s="1"
   assert.match(xml, /<c t="inlineStr" s="1"><is><t[^>]*>SKC<\/t><\/is><\/c>/);
-  assert.match(xml, /<t[^>]*>55589159770<\/t>/);
+  // SKC/SPU 是数字单元格（无 t 属性 + <v>）；SKC货号/商品名称是 inlineStr
+  assert.match(xml, /<c s="1"><v>55589159770<\/v><\/c>/);
+  assert.match(xml, /<c s="1"><v>2354682166<\/v><\/c>/);
+  assert.match(xml, /<c t="inlineStr" s="1"><is><t[^>]*>RAC449<\/t><\/is><\/c>/);
   assert.match(xml, /<t[^>]*>Aluminum alloy<\/t>/);
+});
+
+test('buildSheetXml: SKC/SPU 非安全数字时回退文本单元格', () => {
+  const xml = X.buildSheetXml([
+    // 含字母 / 前导零（数字化会丢零）/ 超 15 位（双精度丢精度）→ 全部回退 inlineStr
+    { skc: 'AB123', skcCode: 'X', spu: '007', name: 'n1' },
+    { skc: '1234567890123456', skcCode: 'Y', spu: '12345678901234', name: 'n2' },
+  ]);
+  assert.match(xml, /<is><t[^>]*>AB123<\/t><\/is>/);
+  assert.match(xml, /<is><t[^>]*>007<\/t><\/is>/);
+  assert.match(xml, /<is><t[^>]*>1234567890123456<\/t><\/is>/);
+  assert.doesNotMatch(xml, /<v>1234567890123456<\/v>/);
+  // 14 位在安全范围内 → 数字
+  assert.match(xml, /<c s="1"><v>12345678901234<\/v><\/c>/);
 });
 
 test('buildSheetXml: XML 特殊字符转义', () => {
