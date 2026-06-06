@@ -28,7 +28,7 @@ Feature ID：`sale_manage_export`
 - Beast UI 表格（`TB_*_5-120-1` hash class，selector 须用 `data-testid` / class 前缀匹配，不硬编码完整 hash）。
 - **rowspan 分组**：每个 SKC 一组，组内含 N 个 SKU 行 + 末尾 1 个「合计」行；checkbox、商品信息格、操作列以 rowspan 合并在组首行。「合计」行没有商品信息格。
 - **标准分页器**（非虚拟滚动）：`data-testid="beast-core-pagination"`，含「共有 N 条」、每页条数 select、`beast-core-pagination-next`（末页时带 `PGT_disabled` 类）。
-- 加载遮罩：`Spn_spinningMask`。
+- ~~加载遮罩：`Spn_spinningMask`~~（端到端勘误：该 mask 节点常驻 DOM 且恒为 display:block 可见，**不能当 loading 信号**）。
 
 ## 4. Feature 骨架
 
@@ -59,7 +59,7 @@ feature.json 要点：
    - 去重：`Map<SKC, row>`，重复 SKC 跳过。
    - 任一页扫描到 0 组 → 报错中止，不静默。
    - 点 next 翻页；next 带 `PGT_disabled` 则结束。
-4. **翻页后等待刷新**（对应 auto_ship #47 同 SKC 漏扫坑）：记录翻页前激活页码 + 首行 SKC，轮询直到「激活页码已变 且 spin 遮罩消失 且 首行 SKC 可读」，超时报错（读取层文案）。不允许裸 sleep 替代条件轮询。
+4. **翻页后等待刷新**（对应 auto_ship #47 同 SKC 漏扫坑）：记录翻页前内容签名（激活页码|首组 SKC|组数），轮询直到「签名已变 且 首组 SKC 可读」，超时报错（读取层文案）。不允许裸 sleep 替代条件轮询。（端到端勘误：原设计的「spin 遮罩消失」条件已移除——mask 常驻可见会让就绪判断永远不执行。）
 5. **完整性校验**：完成后对比去重 SKC 数与逐页累计组数；与「共有 N 条」做提示性对比（N 的语义——SKC 还是 SKU 计数——首版通过运行日志确认，不做硬校验）。
 
 ## 6. CSV 生成与保存

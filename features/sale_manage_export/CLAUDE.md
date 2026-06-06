@@ -19,6 +19,9 @@ UTF-8 BOM CSV（`销售管理清单_YYYYMMDD_HHMMSS.csv`）到预设文件夹。
 - Beast UI 表格，class 带版本 hash（`_5-120-1`）→ selector 一律 `data-testid` / `class*=` 前缀。
 - rowspan 分组：每 SKC 组 = 首行（含商品信息格，四字段都在这）+ N 个 SKU 行 + 1 个「合计」行（无商品信息格，扫描时自然跳过）。
 - 标准分页器（非虚拟滚动）：`beast-core-pagination`；末页 next 含 `PGT_disabled`。
+- **`Spn_spinningMask` 不能当 loading 信号**：该 mask 节点常驻 DOM 且恒为 `display:block` 可见
+  （静止状态实测 offsetParent 非 null、盖住整个表格区域）。用它做等待门槛会让就绪判断永远不执行。
+  loading 等待只认内容签名变化。
 
 ## 采集流程与坑
 

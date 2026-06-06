@@ -104,11 +104,6 @@
     return isNaN(n) ? null : n;
   }
 
-  function isSpinning() {
-    const m = document.querySelector('[class*="Spn_spinningMask"]');
-    return !!(m && m.offsetParent !== null); // 遮罩存在且可见才算 loading
-  }
-
   // 页面内容签名：激活页码 | 首组 SKC | 本页组数。翻页/改每页条数后签名必变。
   function pageSignature() {
     const g = collectPageGroups();
@@ -116,12 +111,13 @@
   }
 
   // 等表格内容真正变化（auto_ship #47 同款坑：点了下一页 ≠ 表格已刷新）。
-  // 就绪条件：spin 遮罩不可见 且 签名 != prevSig 且 首组 SKC 可读。超时抛读取层错误。
+  // 就绪条件：签名 != prevSig 且 首组 SKC 可读。超时抛读取层错误。
+  // 注意：不能用 Spn_spinningMask 判 loading——该 mask 节点常驻 DOM 且恒为 display:block
+  //（端到端实测，静止时也"可见"），用它做门槛会让签名比较永远不执行。
   async function waitTableChange(prevSig, timeoutMs, ctx) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await U.sleep(200);
-      if (isSpinning()) continue;
       const sig = pageSignature();
       if (sig !== prevSig && sig.split('|')[1]) return sig;
     }
