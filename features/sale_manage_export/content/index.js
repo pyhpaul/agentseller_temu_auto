@@ -91,6 +91,99 @@
     return groups;
   }
 
+  // ── 分页器读取与等待 ──────────────────────────────────────────────────────
+  function readTotalCount() {
+    const el = document.querySelector('[class*="PGT_totalText"]');
+    const m = el && (el.textContent || '').match(/共有\s*(\d+)\s*条/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  function readActivePage() {
+    const el = document.querySelector('[class*="PGT_pagerItemActive"]');
+    const n = el ? parseInt((el.textContent || '').trim(), 10) : NaN;
+    return isNaN(n) ? null : n;
+  }
+
+  function isSpinning() {
+    const m = document.querySelector('[class*="Spn_spinningMask"]');
+    return !!(m && m.offsetParent !== null); // 遮罩存在且可见才算 loading
+  }
+
+  // 页面内容签名：激活页码 | 首组 SKC | 本页组数。翻页/改每页条数后签名必变。
+  function pageSignature() {
+    const g = collectPageGroups();
+    return readActivePage() + '|' + (g[0] ? g[0].skc : '') + '|' + g.length;
+  }
+
+  // 等表格内容真正变化（auto_ship #47 同款坑：点了下一页 ≠ 表格已刷新）。
+  // 就绪条件：spin 遮罩不可见 且 签名 != prevSig 且 首组 SKC 可读。超时抛读取层错误。
+  async function waitTableChange(prevSig, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await U.sleep(200);
+      if (isSpinning()) continue;
+      const sig = pageSignature();
+      if (sig !== prevSig && sig.split('|')[1]) return sig;
+    }
+    throw mkErr('read', '表格刷新超时（' + timeoutMs + 'ms 内容未变化），采集中止');
+  }
+
+  // 回到第 1 页（用户可能停在第 N 页点开始；不回头会漏采前面的页）
+  async function gotoFirstPage() {
+    if ((readActivePage() || 1) === 1) return;
+    const first = Array.from(document.querySelectorAll('[class*="PGT_pagerItem"]'))
+      .find((el) => (el.textContent || '').trim() === '1');
+    if (!first) throw mkErr('read', '未找到第 1 页页码按钮');
+    const prevSig = pageSignature();
+    first.click();
+    await waitTableChange(prevSig, 15000);
+  }
+
+  // 调大每页条数（best-effort）：打开 size select → 在 portal 下拉里选最大数字项 → 写后读校验。
+  // 任何一步找不到 DOM → 关闭下拉、返回 {changed:false, reason}，调用方降级按当前条数翻页（不中止）。
+  async function maximizePageSize() {
+    const sizeSel = document.querySelector('[class*="PGT_sizeChanger"] [data-testid="beast-core-select"]');
+    if (!sizeSel) return { changed: false, reason: '未找到每页条数选择器' };
+    const input = sizeSel.querySelector('input[data-testid="beast-core-select-htmlInput"]');
+    const cur = input ? parseInt(input.value, 10) : NaN;
+    const pagRoot = document.querySelector('[data-testid="beast-core-pagination"]');
+    const header = sizeSel.querySelector('[data-testid="beast-core-select-header"]');
+    if (!header) return { changed: false, reason: '未找到 select header' };
+    header.click(); // 打开下拉（选项渲染在 body 末尾 portal）
+    // 等候选项：纯数字、可见、且不在分页器内（排除页码 li 1/2/3…）
+    let opts = [];
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      await U.sleep(150);
+      opts = Array.from(document.querySelectorAll('[class*="ST_option"], li'))
+        .filter((el) => /^\d+$/.test((el.textContent || '').trim()))
+        .filter((el) => el.offsetParent !== null)
+        .filter((el) => !(pagRoot && pagRoot.contains(el)));
+      if (opts.length) break;
+    }
+    if (!opts.length) {
+      document.body.click(); // 关掉下拉
+      return { changed: false, reason: '未找到每页条数下拉选项' };
+    }
+    const best = opts.reduce((a, b) =>
+      parseInt(a.textContent.trim(), 10) >= parseInt(b.textContent.trim(), 10) ? a : b);
+    const want = parseInt(best.textContent.trim(), 10);
+    if (!isNaN(cur) && want <= cur) { document.body.click(); return { changed: false, reason: '当前已是最大条数' }; }
+    const prevSig = pageSignature();
+    best.click();
+    // 写后读校验（表单自动化铁律）：回读 select 值 == 期望
+    const vDeadline = Date.now() + 5000;
+    while (Date.now() < vDeadline) {
+      await U.sleep(150);
+      const v = parseInt((sizeSel.querySelector('input[data-testid="beast-core-select-htmlInput"]') || {}).value, 10);
+      if (v === want) break;
+      if (Date.now() + 150 >= vDeadline) throw mkErr('data', '每页条数填写后不符，期望「' + want + '」实际「' + v + '」');
+    }
+    // 等表格按新条数刷新；若结果集小到内容签名不变（如总数 ≤ 原每页数），超时降级继续
+    try { await waitTableChange(prevSig, 8000); } catch (e) { console.warn('[SME] 改条数后表格签名未变化，按已校验值继续：', e.message); }
+    return { changed: true, size: want };
+  }
+
   // ── CSV 字节 + 分块保存（同 packing_label savePdf 模式）────────────────────
   function bytesToBase64(u8) {
     let bin = '';
@@ -118,17 +211,39 @@
     return last;
   }
 
-  // ── 采集编排（Task 2 版：仅当前页；Task 3 扩展为全分页）──────────────────
+  // ── 采集编排（全分页：回第 1 页 → 调大条数 → 扫页/去重/翻页直到末页）──────
   async function collectAllPages(onProgress) {
-    const seen = new Map(); // Map<SKC, row> 去重
-    const groups = collectPageGroups();
-    if (!groups.length) throw mkErr('read', '当前页未扫描到任何商品组（表格选择器失效或页面未加载完）');
-    for (const g of groups) {
-      if (!g.skc) throw mkErr('data', '存在缺少 SKC 字段的商品组（商品名：' + (g.name || '').slice(0, 30) + '…）');
-      if (!seen.has(g.skc)) seen.set(g.skc, g);
+    if (!document.querySelector('tr[data-testid="beast-core-table-body-tr"]')) {
+      throw mkErr('read', '未找到结果表格（请先执行查询并等待结果加载）');
     }
-    onProgress && onProgress({ page: 1, count: seen.size });
-    return { rows: Array.from(seen.values()), total: null, pagesScanned: 1 };
+    if (!document.querySelector('[data-testid="beast-core-pagination"]')) {
+      throw mkErr('read', '未找到分页器');
+    }
+    const total = readTotalCount();
+    const sizeR = await maximizePageSize();
+    if (!sizeR.changed) console.warn('[SME] 每页条数未调整：', sizeR.reason);
+    await gotoFirstPage();
+
+    const seen = new Map(); // Map<SKC, row> 去重（防表格未刷新重复扫）
+    let pagesScanned = 0;
+    for (let guard = 0; guard < 500; guard++) {
+      const page = readActivePage() || pagesScanned + 1;
+      const groups = collectPageGroups();
+      if (!groups.length) throw mkErr('read', '第 ' + page + ' 页未扫描到任何商品组（表格选择器失效或页面异常）');
+      for (const g of groups) {
+        if (!g.skc) throw mkErr('data', '第 ' + page + ' 页存在缺少 SKC 字段的商品组（商品名：' + (g.name || '').slice(0, 30) + '…）');
+        if (!seen.has(g.skc)) seen.set(g.skc, g);
+      }
+      pagesScanned += 1;
+      onProgress && onProgress({ page, count: seen.size });
+      const next = document.querySelector('[data-testid="beast-core-pagination-next"]');
+      if (!next) throw mkErr('read', '未找到下一页按钮');
+      if (/PGT_disabled/.test(next.className)) break; // 末页
+      const prevSig = pageSignature();
+      next.click();
+      await waitTableChange(prevSig, 15000);
+    }
+    return { rows: Array.from(seen.values()), total, pagesScanned };
   }
 
   async function onStart() {
