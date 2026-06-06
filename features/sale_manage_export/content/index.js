@@ -138,7 +138,7 @@
       next.click();
       let changed = true;
       try {
-        await waitTableChange(prevSig, 8000, '第 ' + curPage + ' 页翻下一页后（第 ' + (i + 1) + ' 次点击）');
+        await waitTableChange(prevSig, 15000, '第 ' + curPage + ' 页翻下一页后（第 ' + (i + 1) + ' 次点击）');
       } catch (e) {
         changed = false; lastErr = e;
         console.warn('[SME] 第 ' + (i + 1) + ' 次点击下一页未生效，重试：', e.message);
@@ -166,7 +166,7 @@
       const prevSig = pageSignature();
       first.click();
       try {
-        await waitTableChange(prevSig, 8000, '回第 1 页时（第 ' + (i + 1) + ' 次点击）');
+        await waitTableChange(prevSig, 15000, '回第 1 页时（第 ' + (i + 1) + ' 次点击）');
         return;
       } catch (e) {
         console.warn('[SME] 回第 1 页点击未生效，重试：', e.message);
@@ -267,6 +267,11 @@
     let rawGroups = 0;
     for (let guard = 0; guard < 500; guard++) {
       const page = readActivePage() || pagesScanned + 1;
+      // 数据源稳定性校验：采集中用户改了筛选/搜索会换数据集，采出的混合结果不可用
+      const curTotal = readTotalCount();
+      if (total != null && curTotal != null && curTotal !== total) {
+        throw mkErr('data', '采集中结果总数从 ' + total + ' 变为 ' + curTotal + '（筛选条件被修改？），为防数据混杂中止，请勿在采集中操作页面');
+      }
       const groups = collectPageGroups();
       if (!groups.length) throw mkErr('read', '第 ' + page + ' 页未扫描到任何商品组（表格选择器失效或页面异常）');
       rawGroups += groups.length;
@@ -290,10 +295,13 @@
     if (!dir) { AS.showToast('不能操作：未选择保存文件夹', 'warn'); return; }
     if (!isSaleManagePage()) { AS.showToast('不能操作：当前不在销售管理页', 'warn'); return; }
     setRunning(true);
-    setStatus('采集中…');
+    // 后台 tab 会被 Chrome 节流 timer（轮询变慢甚至假死），采集全程必须前台
+    AS.showToast('开始采集：请保持本页面在前台，勿切走或操作筛选', 'warn');
+    setStatus('采集中…（请保持本页面在前台，勿操作筛选/搜索）');
     try {
       const { rows, total, pagesScanned, rawGroups } = await collectAllPages(({ page, count }) => {
-        setStatus(`采集中…第 ${page} 页，已采 ${count} 个 SKC`);
+        setStatus(`采集中…第 ${page} 页，已采 ${count} 个 SKC（请保持页面前台）`);
+        AS.showToast(`已采第 ${page} 页，累计 ${count} 个 SKC`);
       });
       const csv = SU.buildCsvText(rows);
       const bytes = new TextEncoder().encode('\uFEFF' + csv); // UTF-8 BOM（Excel 中文兼容）

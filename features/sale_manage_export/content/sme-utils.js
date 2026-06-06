@@ -9,11 +9,20 @@
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 
-  // rows: [{skc, skcCode, spu, name}] → CSV 文本（表头 + CRLF，Excel 友好；BOM 由保存层加）
+  // ="..." 文本公式形式：Excel 打开即按文本处理（左对齐、长数字不科学计数、不丢精度）。
+  // 值内引号先按 Excel 公式语义加倍，再整体走 CSV 转义。空值返回空串不生成 ="" 噪音。
+  function csvTextField(v) {
+    const s = v == null ? '' : String(v);
+    if (s === '') return '';
+    return csvField('="' + s.replace(/"/g, '""') + '"');
+  }
+
+  // rows: [{skc, skcCode, spu, name}] → CSV 文本（表头 + CRLF，Excel 友好；BOM 由保存层加）。
+  // SKC/SKC货号/SPU 用文本公式形式（编号类，防科学计数）；商品名称普通转义。
   function buildCsvText(rows) {
     const lines = ['SKC,SKC货号,SPU,商品名称'];
     for (const r of rows) {
-      lines.push([csvField(r.skc), csvField(r.skcCode), csvField(r.spu), csvField(r.name)].join(','));
+      lines.push([csvTextField(r.skc), csvTextField(r.skcCode), csvTextField(r.spu), csvField(r.name)].join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -40,7 +49,7 @@
     return '销售管理清单_' + ymd + '_' + hms + '.csv';
   }
 
-  const api = { csvField, buildCsvText, parseInfoFields, buildCsvFileName };
+  const api = { csvField, csvTextField, buildCsvText, parseInfoFields, buildCsvFileName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.__SMEUtils = api;
 })(typeof window !== 'undefined' ? window : globalThis);
