@@ -1,11 +1,12 @@
 // sale_manage_export：销售管理页（agentseller.temu.com/stock/fully-mgt/sale-manage）
-// 采集表格所有分页的 SKC/SKC货号/SPU/商品名称 → CSV 写入预设文件夹。
+// 采集表格所有分页的 SKC/SKC货号/SPU/商品名称 → xlsx 写入预设文件夹。
 (function () {
   'use strict';
   const AS = window.AgentSeller;
   const U = AS.utils;
   const sendNative = AS.sendNative;
   const SU = window.__SMEUtils;   // sme-utils.js（document_start 注入）
+  const SX = window.__SMEXlsx;    // sme-xlsx.js（document_start 注入）
   const LS_PATH = 'smeSavePath';
 
   function isSaleManagePage(href) {
@@ -23,7 +24,7 @@
   function setSavePath(p) { localStorage.setItem(LS_PATH, p || ''); }
 
   async function onPickSavePath() {
-    const r = await sendNative('PICK_FOLDER', { title: '选择 CSV 保存文件夹' });
+    const r = await sendNative('PICK_FOLDER', { title: '选择导出保存文件夹' });
     if (r && r.success && r.path) { setSavePath(r.path); refreshPathUI(); }
   }
 
@@ -222,7 +223,7 @@
     return { changed: true, size: want };
   }
 
-  // ── CSV 字节 + 分块保存（同 packing_label savePdf 模式）────────────────────
+  // ── 文件字节分块保存（同 packing_label savePdf 模式）──────────────────────
   function bytesToBase64(u8) {
     let bin = '';
     const CH = 0x8000;
@@ -243,7 +244,7 @@
       const slice = u8.subarray(offset, offset + CHUNK);
       const done = offset + slice.length >= u8.length;
       const r = await sendNative('SAVE_FILE_CHUNK', { path, data: bytesToBase64(slice), offset, done });
-      if (!r || !r.success) throw mkErr('write', 'CSV 落盘失败：' + ((r && r.error) || '未知'));
+      if (!r || !r.success) throw mkErr('write', '文件落盘失败：' + ((r && r.error) || '未知'));
       offset += slice.length; last = r;
     } while (offset < u8.length);
     return last;
@@ -291,6 +292,8 @@
   }
 
   async function onStart() {
+    // 防御：工具脚本未注入（扩展刚 reload 的孤儿 tab 等场景），早失败给明确指引
+    if (!SU || !SX) { AS.showToast('读取失败：工具脚本未注入，请刷新页面后重试', 'error'); return; }
     const dir = getSavePath();
     if (!dir) { AS.showToast('不能操作：未选择保存文件夹', 'warn'); return; }
     if (!isSaleManagePage()) { AS.showToast('不能操作：当前不在销售管理页', 'warn'); return; }
@@ -303,9 +306,9 @@
         setStatus(`采集中…第 ${page} 页，已采 ${count} 个 SKC（请保持页面前台）`);
         AS.showToast(`已采第 ${page} 页，累计 ${count} 个 SKC`);
       });
-      const csv = SU.buildCsvText(rows);
-      const bytes = new TextEncoder().encode('\uFEFF' + csv); // UTF-8 BOM（Excel 中文兼容）
-      const path = joinWin(dir, SU.buildCsvFileName(new Date()));
+      // xlsx 替代 CSV：固定列宽 + 左对齐是文件属性，CSV 无法承载（用户端到端确认升级）
+      const bytes = SX.buildXlsxBytes(rows);
+      const path = joinWin(dir, SU.buildXlsxFileName(new Date()));
       await saveBytes(path, bytes);
       let msg = `✅ 完成：${pagesScanned} 页共 ${rows.length} 个 SKC → ${path}`;
       if (rawGroups !== rows.length) {

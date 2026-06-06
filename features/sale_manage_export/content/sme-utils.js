@@ -43,13 +43,16 @@
 
   function pad2(n) { return String(n).padStart(2, '0'); }
 
-  function buildCsvFileName(d) {
+  function buildExportFileName(d, ext) {
     const ymd = d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate());
     const hms = pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
-    return '销售管理清单_' + ymd + '_' + hms + '.csv';
+    return '销售管理清单_' + ymd + '_' + hms + '.' + ext;
   }
 
-  const api = { csvField, csvTextField, buildCsvText, parseInfoFields, buildCsvFileName };
+  function buildCsvFileName(d) { return buildExportFileName(d, 'csv'); }
+  function buildXlsxFileName(d) { return buildExportFileName(d, 'xlsx'); }
+
+  const api = { csvField, csvTextField, buildCsvText, parseInfoFields, buildCsvFileName, buildXlsxFileName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.__SMEUtils = api;
 })(typeof window !== 'undefined' ? window : globalThis);

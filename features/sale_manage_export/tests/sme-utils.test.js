@@ -78,3 +78,8 @@ test('buildCsvFileName: 销售管理清单_YYYYMMDD_HHMMSS.csv', () => {
   const d = new Date(2026, 5, 5, 14, 30, 22); // 2026-06-05 14:30:22
   assert.strictEqual(U.buildCsvFileName(d), '销售管理清单_20260605_143022.csv');
 });
+
+test('buildXlsxFileName: 销售管理清单_YYYYMMDD_HHMMSS.xlsx', () => {
+  const d = new Date(2026, 5, 5, 14, 30, 22);
+  assert.strictEqual(U.buildXlsxFileName(d), '销售管理清单_20260605_143022.xlsx');
+});

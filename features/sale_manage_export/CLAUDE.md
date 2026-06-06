@@ -6,13 +6,14 @@
 
 销售管理页（`https://agentseller.temu.com/stock/fully-mgt/sale-manage/main`）一键采集
 结果表格**所有分页**的 SKC / SKC货号 / SPU / 商品名称（SKC 粒度），按 SKC 去重后导出
-UTF-8 BOM CSV（`销售管理清单_YYYYMMDD_HHMMSS.csv`）到预设文件夹。
+xlsx（`销售管理清单_YYYYMMDD_HHMMSS.xlsx`，固定列宽 + 全表左对齐）到预设文件夹。
 
 ## 文件
 
 - `content/sme-utils.js` — 纯函数（CSV 转义 / 字段解析 / 文件名），双导出，document_start 注入挂 `window.__SMEUtils`
+- `content/sme-xlsx.js` — 最小 xlsx 生成器（zip stored + CRC32 + inlineStr sheet，无第三方依赖），挂 `window.__SMEXlsx`
 - `content/index.js` — panel UI + 表格扫描 + 分页循环 + SAVE_FILE_CHUNK 落盘
-- `tests/sme-utils.test.js` — `node --test`
+- `tests/sme-utils.test.js`、`tests/sme-xlsx.test.js` — `node --test`
 
 ## 表格 DOM 关键事实
 
@@ -39,9 +40,13 @@ UTF-8 BOM CSV（`销售管理清单_YYYYMMDD_HHMMSS.csv`）到预设文件夹。
 7. **数据源稳定性**：每页比对「共有 N 条」与开始时是否一致，变了（采集中用户改筛选）立即中止防混杂。
 8. **前台约束**：后台 tab 被 Chrome 节流 timer，采集会变慢/假死 → 开始时 toast + 状态区提醒保持前台；
    每页采完弹一次进度 toast。
-9. CSV 编号列（SKC/SKC货号/SPU）用 `="..."` 文本公式形式：Excel 打开即左对齐、长数字不科学计数；
-   商品名称普通转义（`csvTextField` vs `csvField`）。
+9. 导出格式为 xlsx（v2，原 CSV 方案被列宽问题淘汰）：列宽/左对齐是**文件属性，CSV 无法承载**——
+   `="..."` 文本公式只解决了对齐和科学计数，解决不了列宽。`sme-xlsx.js` 手写最小 xlsx：
+   zip stored（不压缩，省 deflate 实现）+ CRC32 + 6 个固定 XML 部件；sheet 用 inlineStr
+   单元格免 sharedStrings；`<cols>` 固化列宽（SKC 14 / SKC货号 12 / SPU 14 / 商品名称 60）；
+   styles.xml `cellXfs[1]` 左对齐（注意 fills 必须 ≥2，否则部分 Excel 报文件损坏）。
+   CSV 函数（`csvTextField` / `buildCsvText`）保留未删，xlsx 出问题可一行切回。
 
 ## native host 用法（不新增 action）
 
-`PICK_FOLDER`（保存目录，localStorage `smeSavePath`）+ `SAVE_FILE_CHUNK`（512KB 分块写 CSV）。
+`PICK_FOLDER`（保存目录，localStorage `smeSavePath`）+ `SAVE_FILE_CHUNK`（512KB 分块写 xlsx）。

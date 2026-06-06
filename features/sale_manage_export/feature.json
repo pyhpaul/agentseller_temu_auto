@@ -11,7 +11,7 @@
   "native_host": "com.temu.label_host",
   "extra_content_scripts": [
     {
-      "js": ["content/sme-utils.js"],
+      "js": ["content/sme-utils.js", "content/sme-xlsx.js"],
       "matches": ["https://agentseller.temu.com/*"],
       "run_at": "document_start"
     }
