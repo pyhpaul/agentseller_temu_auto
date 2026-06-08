@@ -44,6 +44,23 @@ def copy_core_assets():
         print(f'[build] {sub}/ → dist/extension/{sub}/  ({sum(1 for _ in dst.rglob("*") if _.is_file())} files)')
 
 
+def copy_dashboard_assets():
+    """拷贝 core/dashboard/ 整个子树 → dist/extension/dashboard/，并给各 .js 注 sourceURL。
+    dashboard 是 ES module 扩展页，不走 content_scripts 注入，故与 copy_core_assets 的
+    background/content/popup/icons 分开处理（那批是 content script + popup 资产）。
+    """
+    src = CORE / 'dashboard'
+    if not src.exists():
+        return
+    dst = DIST / 'dashboard'
+    shutil.copytree(src, dst)
+    for js in dst.rglob('*.js'):
+        rel_to_root = (src / js.relative_to(dst)).relative_to(ROOT)
+        _inject_source_url(js, str(rel_to_root))
+    n = sum(1 for _ in dst.rglob('*') if _.is_file())
+    print(f'[build] dashboard/ → dist/extension/dashboard/  ({n} files)')
+
+
 def scan_features():
     """扫描 features/*/feature.json，返回 feature 元数据列表。"""
     features = []
@@ -172,6 +189,7 @@ def render_manifest(features=None):
 def build_all():
     clean_dist()
     copy_core_assets()
+    copy_dashboard_assets()
     emit_build_info()
     features = scan_features()
     copy_feature_assets(features)
