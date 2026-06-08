@@ -123,6 +123,29 @@ def _set_manifest_version_for_release(extension_root: Path):
     print(f'[package] manifest.json version: {old} → {manifest_version} → {target.relative_to(ROOT)}')
 
 
+def _strip_dashboard_for_release(extension_root: Path):
+    """release 部署包剥离 dashboard 监控页（开发中的自动化监控系统扩展页，半成品不随员工包发布）。
+
+    dashboard（core/dashboard/）是独立扩展页，build_extension.py 的 copy_dashboard_assets
+    无条件拷进 dist 供 dev 本地验证；但员工发版包不含半成品。故在此从部署副本删除整个
+    dashboard/ 目录（不碰 dev 的 dist/extension/）。Hub「打开监控」入口另在 ui.js 用 isDev 守卫。
+
+    幂等：dashboard 目录不存在时静默跳过（如未来彻底移除或本次构建未含 dashboard）。
+    CSP（manifest content_security_policy）保留不动——只放行 ws://localhost，对现有插件零影响，
+    Plan 3 真接 WS 还要用，dashboard 剥离后该放行项在 release 里没人用、无害。
+    """
+    dash = extension_root / 'dashboard'
+    if dash.exists():
+        try:
+            shutil.rmtree(dash)
+        except OSError as e:
+            print(f'[package] 错误：dashboard/ 剥离失败（{e}），release 包中止', file=sys.stderr)
+            sys.exit(2)
+        print('[package] dashboard/ 已从 release 部署包剥离（dev-only，半成品不随员工包发布）')
+    else:
+        print('[package] dashboard/ 不在部署包（未构建或已剥离），跳过')
+
+
 def _disable_build_info_for_release(extension_root: Path):
     """release 部署包关闭 dev 构建时间戳显示 + 注入真实版本号到 build-info.js。
 
@@ -200,6 +223,7 @@ def main():
     # 关掉 release 版的 TAL_DEBUG + dev build 时间戳显示，并把 manifest 版本号同步成 tag
     _replace_tal_debug_to_false(SETUP_DIR / 'extension')
     _disable_build_info_for_release(SETUP_DIR / 'extension')
+    _strip_dashboard_for_release(SETUP_DIR / 'extension')      # 新增：剥离半成品 dashboard
     _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（native_host/build/build.bat 的 --distpath . 决定落点：native_host/）

@@ -1,0 +1,57 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'build'))
+from package_all import _strip_dashboard_for_release
+
+
+def _make_extension_dir(tmp_path: Path, with_dashboard: bool) -> Path:
+    """在 tmp_path 下建最小 extension 目录结构，可选带 dashboard/。"""
+    ext = tmp_path / 'extension'
+    # 始终建 background + content，模拟正常产物
+    (ext / 'background').mkdir(parents=True)
+    (ext / 'background' / 'sw.js').write_text('// sw', encoding='utf-8')
+    (ext / 'content').mkdir(parents=True)
+    (ext / 'content' / 'ui.js').write_text('// ui', encoding='utf-8')
+    if with_dashboard:
+        (ext / 'dashboard').mkdir(parents=True)
+        (ext / 'dashboard' / 'x.js').write_text('// mock', encoding='utf-8')
+        # 嵌套子目录，贴近真实 dashboard（含 mock / state 子目录），验证 rmtree 递归删整棵树
+        (ext / 'dashboard' / 'mock').mkdir(parents=True, exist_ok=True)
+        (ext / 'dashboard' / 'mock' / 'mock-data.js').write_text('x')
+        (ext / 'dashboard' / 'state').mkdir(parents=True, exist_ok=True)
+        (ext / 'dashboard' / 'state' / 'store.js').write_text('x')
+    return ext
+
+
+def test_strip_removes_dashboard_keeps_others(tmp_path):
+    ext = _make_extension_dir(tmp_path, with_dashboard=True)
+    assert (ext / 'dashboard').exists(), 'pre: dashboard 目录应存在'
+    assert (ext / 'dashboard' / 'mock' / 'mock-data.js').exists(), 'pre: dashboard 子目录应存在'
+
+    _strip_dashboard_for_release(ext)
+
+    assert not (ext / 'dashboard').exists(), 'dashboard/ 整个目录（含子目录）应已被删除'
+    assert (ext / 'background' / 'sw.js').exists(), 'background/ 兄弟目录不应受影响'
+    assert (ext / 'content' / 'ui.js').exists(), 'content/ 兄弟目录不应受影响'
+
+
+def test_strip_idempotent_when_dashboard_absent(tmp_path):
+    ext = _make_extension_dir(tmp_path, with_dashboard=False)
+    assert not (ext / 'dashboard').exists(), 'pre: dashboard 目录不存在'
+
+    # 不应抛异常
+    _strip_dashboard_for_release(ext)
+
+    # 其他目录保持不变
+    assert (ext / 'background' / 'sw.js').exists()
+    assert (ext / 'content' / 'ui.js').exists()
+
+
+if __name__ == '__main__':
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_removes_dashboard_keeps_others(Path(d) / 'case1')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_idempotent_when_dashboard_absent(Path(d) / 'case2')
+    print('All tests passed.')
