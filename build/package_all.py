@@ -146,6 +146,26 @@ def _strip_dashboard_for_release(extension_root: Path):
         print('[package] dashboard/ 不在部署包（未构建或已剥离），跳过')
 
 
+def _strip_windows_permission_for_release(extension_root: Path):
+    """release 部署包从 manifest 移除 windows permission（dashboard 监控入口 dev-only，release 剥离）。
+    OPEN_MONITOR（chrome.windows 打开 dashboard）是 dev-only：Hub 按钮 isDev 守卫 + dashboard 目录已剥离，
+    release 不触发它（即便触发也 tabs.create 兜底），故移除其依赖的 windows permission，
+    避免员工安装时出现多余「管理窗口」权限提示。manifest 无 windows 时静默跳过（幂等）。
+    """
+    target = extension_root / 'manifest.json'
+    if not target.exists():
+        print(f'[package] 警告：未找到 {target}，跳过 windows permission 剥离')
+        return
+    manifest = json.loads(target.read_text(encoding='utf-8'))
+    perms = manifest.get('permissions', [])
+    if 'windows' in perms:
+        manifest['permissions'] = [p for p in perms if p != 'windows']
+        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+        print('[package] windows permission 已从 release manifest 移除（dashboard 监控 dev-only）')
+    else:
+        print('[package] release manifest 无 windows permission，跳过')
+
+
 def _disable_build_info_for_release(extension_root: Path):
     """release 部署包关闭 dev 构建时间戳显示 + 注入真实版本号到 build-info.js。
 
@@ -224,6 +244,7 @@ def main():
     _replace_tal_debug_to_false(SETUP_DIR / 'extension')
     _disable_build_info_for_release(SETUP_DIR / 'extension')
     _strip_dashboard_for_release(SETUP_DIR / 'extension')      # 新增：剥离半成品 dashboard
+    _strip_windows_permission_for_release(SETUP_DIR / 'extension')  # 剥离 dashboard 依赖的 windows permission
     _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（native_host/build/build.bat 的 --distpath . 决定落点：native_host/）

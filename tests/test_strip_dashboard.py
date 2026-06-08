@@ -1,8 +1,9 @@
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'build'))
-from package_all import _strip_dashboard_for_release
+from package_all import _strip_dashboard_for_release, _strip_windows_permission_for_release
 
 
 def _make_extension_dir(tmp_path: Path, with_dashboard: bool) -> Path:
@@ -48,10 +49,45 @@ def test_strip_idempotent_when_dashboard_absent(tmp_path):
     assert (ext / 'content' / 'ui.js').exists()
 
 
+def _make_manifest(ext: Path, permissions: list) -> Path:
+    """在 ext 目录写最小 manifest.json，permissions 由调用方指定。"""
+    ext.mkdir(parents=True, exist_ok=True)
+    target = ext / 'manifest.json'
+    target.write_text(json.dumps({'permissions': permissions}, ensure_ascii=False, indent=2), encoding='utf-8')
+    return target
+
+
+def test_strip_windows_removes_windows_keeps_others(tmp_path):
+    ext = tmp_path / 'extension'
+    target = _make_manifest(ext, ['nativeMessaging', 'windows', 'storage'])
+
+    _strip_windows_permission_for_release(ext)
+
+    perms = json.loads(target.read_text(encoding='utf-8'))['permissions']
+    assert 'windows' not in perms, 'windows permission 应已被移除'
+    assert 'nativeMessaging' in perms, 'nativeMessaging 应保留'
+    assert 'storage' in perms, 'storage 应保留'
+
+
+def test_strip_windows_idempotent_when_absent(tmp_path):
+    ext = tmp_path / 'extension'
+    target = _make_manifest(ext, ['nativeMessaging', 'storage'])
+
+    # 无 windows 时不应抛异常、不应改动其它 permission
+    _strip_windows_permission_for_release(ext)
+
+    perms = json.loads(target.read_text(encoding='utf-8'))['permissions']
+    assert perms == ['nativeMessaging', 'storage'], '无 windows 时 permissions 应原样保留'
+
+
 if __name__ == '__main__':
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         test_strip_removes_dashboard_keeps_others(Path(d) / 'case1')
     with tempfile.TemporaryDirectory() as d:
         test_strip_idempotent_when_dashboard_absent(Path(d) / 'case2')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_windows_removes_windows_keeps_others(Path(d) / 'case3')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_windows_idempotent_when_absent(Path(d) / 'case4')
     print('All tests passed.')

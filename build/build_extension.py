@@ -165,7 +165,7 @@ def render_manifest(features=None):
     features = features or []
     template = json.loads((CORE / 'manifest.template.json').read_text(encoding='utf-8'))
 
-    permissions = sorted({'nativeMessaging', *(p for f in features for p in f.get('permissions', []))})
+    permissions = sorted({'nativeMessaging', 'windows', *(p for f in features for p in f.get('permissions', []))})
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
     content_script_matches = collect_content_matches(features)
     extra_cs = collect_extra_content_scripts(features)
