@@ -78,7 +78,9 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
             ),
         }
 
-    safe_stem = f'SKC-{skc_number}'.replace('/', '_').replace('\\', '_').replace(':', '_')
+    # 命名 = SKC-<SKC编号>-<SKU货号>；SKU货号前端已校验非空，此处仍兜底（空则退回纯 SKC-编号）
+    stem = f'SKC-{skc_number}-{skc_sku}' if skc_sku else f'SKC-{skc_number}'
+    safe_stem = stem.replace('/', '_').replace('\\', '_').replace(':', '_')
     sub_dir   = os.path.join(output_dir, safe_stem)
     os.makedirs(sub_dir, exist_ok=True)
 
