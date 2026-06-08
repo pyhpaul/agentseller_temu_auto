@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentSeller · 自动化监控</title>
+<style>
+:root{
+  /* 背景层次（深色盯盘） */
+  --bg-0:#0d1117; --bg-1:#161b22; --bg-2:#1c2128; --bg-3:#21262d;
+  --border:#30363d; --border-muted:#21262d;
+  /* 文字 */
+  --text-0:#e6edf3; --text-1:#8b949e; --text-2:#6e7681;
+  /* 强调 */
+  --accent:#58a6ff; --accent-dim:rgba(88,166,255,.14);
+  /* 状态色（深底跳色） */
+  --st-done:#3fb950; --st-running:#58a6ff; --st-pending:#6e7681;
+  --st-error:#f85149; --st-skipped:#484f58; --st-paused:#d29922;
+  /* 大脑流 kind */
+  --k-review:#58a6ff; --k-diagnose:#e3b341; --k-selfheal:#bc8cff; --k-log:#6e7681;
+  /* 错误三分层（paused橙 / validate黄 已分离，解决橙过载） */
+  --err-read:#db61a2; --err-validate:#e3b341; --err-business:#f85149;
+  /* 尺寸 */
+  --radius:10px; --radius-sm:6px; --radius-xs:4px;
+  --font:"Segoe UI","Microsoft YaHei UI","PingFang SC",-apple-system,BlinkMacSystemFont,system-ui,"Noto Sans SC",sans-serif;
+  --mono:"Cascadia Mono","SF Mono","JetBrains Mono",Consolas,ui-monospace,monospace;
+  --shadow:0 1px 0 rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.2);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); font-size:17px; line-height:1.55; letter-spacing:.005em;
+  color:var(--text-0); background:var(--bg-0);
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  text-rendering:optimizeLegibility; font-variant-numeric:tabular-nums;
+}
+.mono,.batch,.ids,.kv .v,.bevent .ts,.step .seq,.brief,.loc{font-feature-settings:"tnum" 1,"cv05" 1}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:6px;border:2px solid var(--bg-0)}
+::-webkit-scrollbar-thumb:hover{background:#3a4350}
+.ic{width:1em;height:1em;display:inline-block;vertical-align:-.14em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.ic.spin{animation:spin 1.4s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 布局 ── */
+#app{display:grid;grid-template-rows:auto 1fr;height:100vh;overflow:hidden}
+.main{display:grid;grid-template-columns:248px 1fr;height:100%;overflow:hidden}
+
+/* ── 顶栏 ── */
+.topbar{
+  display:flex;align-items:center;gap:14px;height:48px;padding:0 16px;
+  background:linear-gradient(180deg,#1b2230,#161b22);
+  border-bottom:1px solid var(--border);
+}
+.topbar .brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:18px}
+.topbar .brand .logo{
+  width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--accent),#388bfd);font-size:17px;box-shadow:0 0 0 1px rgba(88,166,255,.3)
+}
+.topbar .batch{
+  color:var(--text-1);font-size:16px;font-family:var(--mono);
+  padding:3px 8px;background:var(--bg-3);border-radius:var(--radius-xs);border:1px solid var(--border)
+}
+.topbar .spacer{flex:1}
+.topbar .ctl{
+  display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;font-size:16px;color:var(--text-1);
+  background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:.15s
+}
+.topbar .ctl:hover{background:var(--bg-3);color:var(--text-0);border-color:#3a4350}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--st-done);box-shadow:0 0 8px var(--st-done)}
+.ws-dot.live{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* ── 侧栏 / 内容（占位，后续填充） ── */
+.sidebar{background:var(--bg-1);border-right:1px solid var(--border);overflow-y:auto;padding:12px}
+.content{overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+
+/* ── L1 队列侧栏 ── */
+.side-group{margin-bottom:12px}
+.side-group-title{
+  display:flex;align-items:center;gap:6px;font-size:15px;color:var(--text-2);
+  text-transform:uppercase;letter-spacing:.04em;margin:2px 2px 8px;font-weight:600
+}
+.side-group-title .count{margin-left:auto;font-family:var(--mono)}
+.wf-card{
+  position:relative;padding:10px 12px;border-radius:var(--radius-sm);cursor:pointer;
+  background:var(--bg-2);border:1px solid var(--border);margin-bottom:8px;transition:.15s
+}
+.wf-card:hover{border-color:#3a4350}
+.wf-card.active{background:var(--accent-dim);border-color:var(--accent)}
+.wf-card.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.wf-card .name{font-weight:600;font-size:17px;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-card .meta{display:flex;align-items:center;gap:10px;font-size:15px;color:var(--text-1)}
+.wf-card .st{display:inline-flex;align-items:center;gap:4px}
+.wf-card .st .d{width:7px;height:7px;border-radius:50%}
+.mini-bar{display:flex;gap:2px;margin-top:8px}
+.mini-bar i{height:3px;flex:1;border-radius:2px;background:var(--bg-3)}
+.mini-bar i.done{background:var(--st-done)}
+.mini-bar i.run{background:var(--st-running)}
+.side-empty{padding:9px;text-align:center;font-size:15px;color:var(--text-2);border:1px dashed var(--border-muted);border-radius:var(--radius-sm)}
+.side-new{
+  margin-top:4px;padding:9px;text-align:center;font-size:16px;color:var(--text-2);
+  border:1px dashed var(--border);border-radius:var(--radius-sm);cursor:not-allowed;opacity:.55
+}
+
+/* ── L2 通用卡片 ── */
+.panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius)}
+.panel-head{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border-muted);font-size:16px;font-weight:600;color:var(--text-1)}
+.panel-head .tools{margin-left:auto;display:flex;gap:6px}
+.chip-btn{font-size:15px;color:var(--text-2);padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius-xs);cursor:pointer;background:var(--bg-2)}
+.chip-btn:hover{color:var(--text-0);border-color:#3a4350}
+.l2-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+
+/* ── ① 流程总览条 ── */
+.overview{padding:16px 24px}
+.overview .ttl{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.overview .pname{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.overview .ids{display:flex;gap:16px;font-size:16px;color:var(--text-2);font-family:var(--mono)}
+.overview .ids b{color:var(--text-1);font-weight:500}
+.badge{margin-left:auto;font-size:18px;font-weight:600;padding:6px 15px;border-radius:20px}
+.badge.paused{color:var(--st-paused);background:rgba(210,153,34,.14);border:1px solid rgba(210,153,34,.32)}
+.track{display:flex;align-items:flex-start}
+.node{flex:1;display:flex;flex-direction:column;align-items:center;position:relative}
+.node .dot{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:18px;z-index:1;
+  background:var(--bg-3);border:2px solid var(--st-pending);color:var(--text-2)}
+.node.done .dot{background:var(--st-done);border-color:var(--st-done);color:#0d1117}
+.node.run .dot{background:var(--st-running);border-color:var(--st-running);color:#0d1117;box-shadow:0 0 0 4px var(--accent-dim);animation:pulse 1.8s infinite}
+.node .lbl{font-size:16px;color:var(--text-1);margin-top:11px;text-align:center;line-height:1.3}
+.node.done .lbl,.node.run .lbl{color:var(--text-1)}
+.node .ptag{position:absolute;top:-6px;left:calc(50% + 8px);font-size:15px}
+.node::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:3px;background:var(--border)}
+.node:first-child::before{display:none}
+.node.done::before,.node.run::before{background:var(--st-done)}
+
+/* ── ② 环节列表 ── */
+.steps .panel-body{display:flex;flex-direction:column}
+.step{display:flex;align-items:center;gap:9px;padding:6px 14px;border-bottom:1px solid var(--border-muted);font-size:16px}
+.step:last-child{border-bottom:none}
+.step .ico{width:16px;text-align:center;font-size:16px;flex-shrink:0}
+.step.done .ico{color:var(--st-done)}
+.step.run{background:rgba(88,166,255,.06)}
+.step.run .ico{color:var(--st-running)}
+.step.pending .ico{color:var(--st-pending)}
+.step.error{background:rgba(248,81,73,.07)}
+.step.error .ico{color:var(--st-error)}
+.step.skip{opacity:.5}
+.step .seq{color:var(--text-2);font-family:var(--mono);font-size:15px;width:12px}
+.step .nm{color:var(--text-0)}
+.step.pending .nm,.step.skip .nm{color:var(--text-1)}
+.step .right{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:15px;color:var(--text-2)}
+.step .brief b{color:var(--k-selfheal);font-weight:500}
+.tag{font-size:14px;padding:2px 7px;border-radius:var(--radius-xs);white-space:nowrap}
+.tag.hitl{color:var(--st-paused);background:rgba(210,153,34,.14);border:1px solid rgba(210,153,34,.3)}
+.tag.prod{color:var(--accent);background:var(--accent-dim);cursor:pointer}
+
+/* ── ③ 大脑实时流 ── */
+.brain{display:flex;flex-direction:column;max-height:300px}
+.brain .panel-body{flex:1;overflow-y:auto;padding:4px 0}
+.bevent{display:flex;gap:9px;padding:5px 14px;font-size:16px;border-left:2px solid transparent}
+.bevent .ts{color:var(--text-2);font-family:var(--mono);font-size:14px;flex-shrink:0;padding-top:1px}
+.bevent .body{color:var(--text-1)}
+.bevent .kind{font-weight:600;margin-right:5px}
+.bevent .anchor{color:var(--text-2);font-family:var(--mono);font-size:14px;margin-left:5px;cursor:pointer}
+.bevent.review{border-left-color:var(--k-review)} .bevent.review .kind{color:var(--k-review)}
+.bevent.diagnose{border-left-color:var(--k-diagnose)} .bevent.diagnose .kind{color:var(--k-diagnose)}
+.bevent.selfheal{border-left-color:var(--k-selfheal)} .bevent.selfheal .kind{color:var(--k-selfheal)}
+.bevent.log{border-left-color:var(--border-muted)} .bevent.log .kind{color:var(--k-log)} .bevent.log .body{color:var(--text-2)}
+.brain .foot{padding:7px 14px;border-top:1px solid var(--border-muted);font-size:15px;color:var(--text-2);display:flex;align-items:center;gap:6px}
+.brain .foot .live{width:6px;height:6px;border-radius:50%;background:var(--st-done);animation:pulse 1.6s infinite}
+
+/* ── ④ HITL 待确认 ── */
+.hitl{border-color:rgba(210,153,34,.4)}
+.hitl>.panel-head{color:var(--st-paused);background:rgba(210,153,34,.07)}
+.hitl-card{margin:12px 14px;border:1px solid rgba(210,153,34,.42);border-radius:var(--radius-sm);background:rgba(210,153,34,.05);animation:breathe 2.6s infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(210,153,34,0)}50%{box-shadow:0 0 0 3px rgba(210,153,34,.12)}}
+.hitl-card .h{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-muted);font-weight:600}
+.hitl-card .h .act{color:var(--st-paused)}
+.hitl-card .h .loc{margin-left:auto;font-size:15px;color:var(--text-2);font-family:var(--mono)}
+.kv{padding:8px 12px;display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:16px}
+.kv .k{color:var(--text-2)}
+.kv .v{color:var(--text-0);font-family:var(--mono)}
+.review-note{padding:9px 12px;font-size:15px;color:var(--text-1);border-top:1px dashed var(--border-muted);display:flex;gap:6px;line-height:1.45}
+.review-note .ai{color:var(--k-review);flex-shrink:0}
+.hitl-acts{display:flex;gap:8px;padding:8px 12px 10px}
+.btn{flex:1;padding:8px;border-radius:var(--radius-sm);font-size:16px;font-weight:600;cursor:pointer;border:1px solid transparent;text-align:center;transition:.15s}
+.btn.ok{background:var(--st-done);color:#06210f}
+.btn.ok:hover{filter:brightness(1.12)}
+.btn.edit{background:var(--bg-3);color:var(--text-0);border-color:var(--border)}
+.btn.edit:hover{border-color:#3a4350}
+.btn.no{background:transparent;color:var(--st-error);border-color:rgba(248,81,73,.4)}
+.btn.no:hover{background:rgba(248,81,73,.1)}
+
+/* ── 交互：hover 浮动 + 点击选中高亮 ── */
+.wf-card{transition:transform .16s,box-shadow .16s,background .16s,border-color .16s}
+.wf-card:hover{transform:translateY(-4px);box-shadow:0 14px 32px rgba(0,0,0,.55),0 0 28px rgba(88,166,255,.4);background:var(--bg-3);border-color:#79c0ff}
+.wf-card.active:hover{background:var(--accent-dim);border-color:var(--accent)}
+.step{cursor:pointer;transition:background .13s,box-shadow .13s}
+.step:hover{background:rgba(88,166,255,.22)}
+.step.sel{background:var(--accent-dim);box-shadow:inset 3px 0 0 var(--accent)}
+.bevent{transition:background .13s;cursor:pointer}
+.bevent:hover{background:rgba(88,166,255,.18)}
+.bevent.sel{background:rgba(88,166,255,.1);box-shadow:inset 2px 0 0 var(--accent)}
+.chip-btn,.ctl{transition:transform .15s,background .15s,color .15s,border-color .15s}
+.chip-btn:hover,.ctl:hover{transform:translateY(-2px);border-color:#4a5568}
+.btn{transition:transform .15s,filter .15s,background .15s,border-color .15s,box-shadow .15s}
+.btn:hover{transform:translateY(-2px)}
+.btn.ok:hover{box-shadow:0 5px 14px rgba(63,185,80,.32)}
+.tag.prod{transition:transform .15s,background .15s}
+.tag.prod:hover{transform:translateY(-1px);background:rgba(88,166,255,.22)}
+/* 大板块框体 hover 浮动高亮 */
+.panel{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.panel:hover{transform:translateY(-6px);border-color:#79c0ff;background:#1b2436;box-shadow:0 22px 50px rgba(0,0,0,.6),0 0 0 1px #79c0ff,0 0 44px rgba(88,166,255,.55),inset 0 0 32px rgba(88,166,255,.1)}
+.hitl:hover{border-color:#e0a93b;background:#2a2418;box-shadow:0 22px 50px rgba(0,0,0,.6),0 0 0 1px #e0a93b,0 0 44px rgba(210,153,34,.6),inset 0 0 32px rgba(210,153,34,.12)}
+</style>
+</head>
+<body>
+<svg width='0' height='0' style='position:absolute' aria-hidden='true'><defs>
+<symbol id='ic-box' viewBox='0 0 24 24'><path d='M21 8v8a2 2 0 0 1-1 1.73l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.73l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z'/><path d='m3.3 7 8.7 5 8.7-5'/><path d='M12 22V12'/></symbol>
+<symbol id='ic-brain' viewBox='0 0 24 24'><path d='m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z'/></symbol>
+<symbol id='ic-alert' viewBox='0 0 24 24'><path d='m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z'/><path d='M12 9v4'/><path d='M12 17h.01'/></symbol>
+<symbol id='ic-check' viewBox='0 0 24 24'><path d='M20 6 9 17l-5-5'/></symbol>
+<symbol id='ic-loader' viewBox='0 0 24 24'><path d='M12 2v4M16.2 7.8l2.9-2.9M18 12h4M16.2 16.2l2.9 2.9M12 18v4M4.9 19.1l2.9-2.9M2 12h4M4.9 4.9l2.9 2.9'/></symbol>
+<symbol id='ic-circle' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9'/></symbol>
+<symbol id='ic-slash' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9'/><path d='M8 12h8'/></symbol>
+<symbol id='ic-x' viewBox='0 0 24 24'><path d='M18 6 6 18M6 6l12 12'/></symbol>
+<symbol id='ic-pause' viewBox='0 0 24 24'><path d='M9 5v14M15 5v14'/></symbol>
+<symbol id='ic-pencil' viewBox='0 0 24 24'><path d='M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'/></symbol>
+<symbol id='ic-refresh' viewBox='0 0 24 24'><path d='M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M3 21v-5h5'/></symbol>
+<symbol id='ic-pin' viewBox='0 0 24 24'><path d='M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9A2 2 0 0 1 15 10.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'/></symbol>
+<symbol id='ic-chevron' viewBox='0 0 24 24'><path d='m6 9 6 6 6-6'/></symbol>
+<symbol id='ic-plus' viewBox='0 0 24 24'><path d='M5 12h14M12 5v14'/></symbol>
+</defs></svg>
+<div id="app">
+
+  <!-- ══ 顶栏 ══ -->
+  <header class="topbar">
+    <div class="brand"><span class="logo"><svg class='ic'><use href='#ic-box'/></svg></span>AgentSeller 自动化监控</div>
+    <span class="batch">批次 #B-2406 · 03/08 14:22</span>
+    <div class="spacer"></div>
+    <div class="ctl"><span class="ws-dot live"></span>实时</div>
+    <div class="ctl"><svg class='ic'><use href='#ic-pin'/></svg> 置顶</div>
+    <div class="ctl"><svg class='ic'><use href='#ic-refresh'/></svg> 刷新</div>
+  </header>
+
+  <div class="main">
+    <!-- ══ L1 队列侧栏（后续填充） ══ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="side-group">
+        <div class="side-group-title"><span class="d" style="width:7px;height:7px;border-radius:50%;background:var(--st-running);display:inline-block"></span>进行中 <span class="count">1</span></div>
+        <div class="wf-card active">
+          <div class="name">中正科技保温杯 350ml</div>
+          <div class="meta">
+            <span class="st"><span class="d" style="background:var(--st-paused)"></span>待确认</span>
+            <span>环节 4/8</span>
+          </div>
+          <div class="mini-bar">
+            <i class="done"></i><i class="done"></i><i class="done"></i><i class="run"></i><i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+      </div>
+      <div class="side-group">
+        <div class="side-group-title">待处理 <span class="count">0</span></div>
+        <div class="side-empty">暂无</div>
+      </div>
+      <div class="side-group">
+        <div class="side-group-title">已完成 <span class="count">0</span></div>
+        <div class="side-empty">暂无</div>
+      </div>
+      <div class="side-new"><svg class='ic'><use href='#ic-plus'/></svg> 新建流程（规划中）</div>
+    </aside>
+    <!-- ══ L2 单商品详情（后续填充） ══ -->
+    <section class="content" id="content">
+
+      <!-- ① 流程总览条 -->
+      <div class="panel overview">
+        <div class="ttl">
+          <span class="pname">中正科技保温杯 350ml</span>
+          <span class="badge paused"><svg class='ic'><use href='#ic-pause'/></svg> 待确认 · 62%</span>
+        </div>
+        <div class="ids" style="margin-bottom:18px">
+          <span>SPU <b>6821042</b></span><span>SKC <b>C04A8</b></span><span>SKU <b>SK99021</b></span>
+        </div>
+        <div class="track">
+          <div class="node done"><div class="dot"><svg class='ic'><use href='#ic-check'/></svg></div><div class="lbl">标签生成</div></div>
+          <div class="node done"><div class="dot"><svg class='ic'><use href='#ic-check'/></svg></div><div class="lbl">1688搜图</div></div>
+          <div class="node done"><div class="dot"><svg class='ic'><use href='#ic-check'/></svg></div><div class="lbl">检查发布</div></div>
+          <div class="node run"><div class="dot">4</div><span class="ptag"><svg class='ic'><use href='#ic-pause'/></svg></span><div class="lbl">创建采购单</div></div>
+          <div class="node"><div class="dot">5</div><div class="lbl">价格申报</div></div>
+          <div class="node"><div class="dot">6</div><div class="lbl">打包标签</div></div>
+          <div class="node"><div class="dot">7</div><div class="lbl">自动发货</div></div>
+          <div class="node"><div class="dot">8</div><div class="lbl">销售导出</div></div>
+        </div>
+      </div>
+
+      <div class="l2-cols">
+        <!-- ② 环节列表 -->
+        <div class="panel steps">
+          <div class="panel-head">📋 环节列表</div>
+          <div class="panel-body">
+            <div class="step done"><span class="ico"><svg class='ic'><use href='#ic-check'/></svg></span><span class="seq">1</span><span class="nm">标签生成</span><div class="right"><span class="brief">review:pass</span><span class="tag prod">产物 <svg class='ic'><use href='#ic-chevron'/></svg></span></div></div>
+            <div class="step done"><span class="ico"><svg class='ic'><use href='#ic-check'/></svg></span><span class="seq">2</span><span class="nm">1688搜图</span><div class="right"><span class="brief">review:pass</span></div></div>
+            <div class="step done"><span class="ico"><svg class='ic'><use href='#ic-check'/></svg></span><span class="seq">3</span><span class="nm">检查与发布</span><div class="right"><span class="brief">review:pass</span></div></div>
+            <div class="step run"><span class="ico"><svg class='ic spin'><use href='#ic-loader'/></svg></span><span class="seq">4</span><span class="nm">创建采购单</span><div class="right"><span class="brief"><b>selfheal</b>·重试成功</span><span class="tag hitl"><svg class='ic'><use href='#ic-pause'/></svg> 待确认</span></div></div>
+            <div class="step pending"><span class="ico"><svg class='ic'><use href='#ic-circle'/></svg></span><span class="seq">5</span><span class="nm">价格不调整</span></div>
+            <div class="step pending"><span class="ico"><svg class='ic'><use href='#ic-circle'/></svg></span><span class="seq">6</span><span class="nm">打包标签</span></div>
+            <div class="step pending"><span class="ico"><svg class='ic'><use href='#ic-circle'/></svg></span><span class="seq">7</span><span class="nm">自动发货</span></div>
+            <div class="step skip"><span class="ico"><svg class='ic'><use href='#ic-slash'/></svg></span><span class="seq">8</span><span class="nm">销售清单导出</span><div class="right">已跳过 · 本批不导出</div></div>
+          </div>
+        </div>
+
+        <!-- ③④ 右列 -->
+        <div class="r-col" style="display:flex;flex-direction:column;gap:14px">
+
+          <!-- ③ 大脑实时流 -->
+          <div class="panel brain">
+            <div class="panel-head"><svg class='ic'><use href='#ic-brain'/></svg> 大脑实时流
+              <div class="tools"><span class="chip-btn"><svg class='ic'><use href='#ic-pause'/></svg> 自动滚动</span><span class="chip-btn">折叠 log</span></div>
+            </div>
+            <div class="panel-body">
+              <div class="bevent review"><span class="ts">14:21:02</span><div class="body"><span class="kind">review</span>步骤3 SKU 校验通过，SPU 与目标一致<span class="anchor">#3</span></div></div>
+              <div class="bevent log"><span class="ts">14:21:25</span><div class="body"><span class="kind">log</span>打开采购单页，填充 SPU / 数量 / 供应商<span class="anchor">#4</span></div></div>
+              <div class="bevent diagnose"><span class="ts">14:21:40</span><div class="body"><span class="kind">diagnose</span>付款页金额 ¥128，与采购单核对…匹配<span class="anchor">#4</span></div></div>
+              <div class="bevent selfheal"><span class="ts">14:21:55</span><div class="body"><span class="kind">selfheal</span>selector .pay-btn 失效，fallback 第 2 选择器命中<span class="anchor">#4</span></div></div>
+              <div class="bevent log"><span class="ts">14:22:01</span><div class="body"><span class="kind">log</span>写入 poNo=PO240308021<span class="anchor">#4</span></div></div>
+              <div class="bevent review"><span class="ts">14:22:03</span><div class="body"><span class="kind">review</span>付款前复核：金额 / 仓库 / 供应商一致，提交人工确认<span class="anchor">#4</span></div></div>
+            </div>
+            <div class="foot"><span class="live"></span>实时接收中…</div>
+          </div>
+
+          <!-- ④ HITL 待确认 -->
+          <div class="panel hitl">
+            <div class="panel-head"><svg class='ic'><use href='#ic-pause'/></svg> HITL 待确认<span style="margin-left:5px;color:var(--st-paused)">(1)</span></div>
+            <div class="hitl-card">
+              <div class="h"><span><svg class='ic'><use href='#ic-alert'/></svg></span><span class="act">申请付款</span><span class="loc">步骤4 · 采购</span></div>
+              <div class="kv">
+                <span class="k">金额</span><span class="v">¥128.00</span>
+                <span class="k">收货仓库</span><span class="v">中正科技仓</span>
+                <span class="k">供应商</span><span class="v">义乌恒达贸易</span>
+              </div>
+              <div class="review-note"><span class="ai"><svg class='ic'><use href='#ic-brain'/></svg> 复核</span><span>金额与采购单 PO240308021 一致，仓库匹配收货地，建议确认</span></div>
+              <div class="hitl-acts">
+                <div class="btn ok"><svg class='ic'><use href='#ic-check'/></svg> 确认</div>
+                <div class="btn edit"><svg class='ic'><use href='#ic-pencil'/></svg> 改</div>
+                <div class="btn no"><svg class='ic'><use href='#ic-x'/></svg> 拒绝</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+  </div>
+
+</div>
+<script>
+(function(){
+  function bind(sel){
+    var els=[].slice.call(document.querySelectorAll(sel));
+    els.forEach(function(el){el.addEventListener('click',function(){
+      els.forEach(function(s){s.classList.remove('sel');});
+      el.classList.add('sel');
+    });});
+  }
+  bind('.step'); bind('.bevent');
+})();
+</script>
+</body>
+</html>
