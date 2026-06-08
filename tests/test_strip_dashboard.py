@@ -3,7 +3,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'build'))
-from package_all import _strip_dashboard_for_release, _strip_windows_permission_for_release
+from package_all import (
+    _strip_dashboard_for_release,
+    _strip_windows_permission_for_release,
+    _strip_csp_for_release,
+)
 
 
 def _make_extension_dir(tmp_path: Path, with_dashboard: bool) -> Path:
@@ -80,6 +84,37 @@ def test_strip_windows_idempotent_when_absent(tmp_path):
     assert perms == ['nativeMessaging', 'storage'], '无 windows 时 permissions 应原样保留'
 
 
+def test_strip_csp_removes_csp_keeps_others(tmp_path):
+    ext = tmp_path / 'extension'
+    ext.mkdir(parents=True, exist_ok=True)
+    target = ext / 'manifest.json'
+    target.write_text(json.dumps({
+        'permissions': ['nativeMessaging'],
+        'content_security_policy': {'extension_pages': "script-src 'self'; connect-src 'self' ws://localhost:*"},
+        'version': '1.0.0',
+    }, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    _strip_csp_for_release(ext)
+
+    m = json.loads(target.read_text(encoding='utf-8'))
+    assert 'content_security_policy' not in m, 'CSP 应已被移除'
+    assert m['permissions'] == ['nativeMessaging'], '其它字段应保留'
+    assert m['version'] == '1.0.0', 'version 应保留'
+
+
+def test_strip_csp_idempotent_when_absent(tmp_path):
+    ext = tmp_path / 'extension'
+    ext.mkdir(parents=True, exist_ok=True)
+    target = ext / 'manifest.json'
+    target.write_text(json.dumps({'permissions': ['nativeMessaging']}, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    # 无 CSP 时不应抛异常、不改动其它字段
+    _strip_csp_for_release(ext)
+
+    m = json.loads(target.read_text(encoding='utf-8'))
+    assert m == {'permissions': ['nativeMessaging']}, '无 CSP 时 manifest 应原样保留'
+
+
 if __name__ == '__main__':
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -90,4 +125,8 @@ if __name__ == '__main__':
         test_strip_windows_removes_windows_keeps_others(Path(d) / 'case3')
     with tempfile.TemporaryDirectory() as d:
         test_strip_windows_idempotent_when_absent(Path(d) / 'case4')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_csp_removes_csp_keeps_others(Path(d) / 'case5')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_csp_idempotent_when_absent(Path(d) / 'case6')
     print('All tests passed.')

@@ -131,8 +131,8 @@ def _strip_dashboard_for_release(extension_root: Path):
     dashboard/ 目录（不碰 dev 的 dist/extension/）。Hub「打开监控」入口另在 ui.js 用 isDev 守卫。
 
     幂等：dashboard 目录不存在时静默跳过（如未来彻底移除或本次构建未含 dashboard）。
-    CSP（manifest content_security_policy）保留不动——只放行 ws://localhost，对现有插件零影响，
-    Plan 3 真接 WS 还要用，dashboard 剥离后该放行项在 release 里没人用、无害。
+    CSP（manifest content_security_policy）由 _strip_csp_for_release 单独剥离（dashboard 依赖项，
+    release manifest 与 main 基线零差异）。
     """
     dash = extension_root / 'dashboard'
     if dash.exists():
@@ -164,6 +164,27 @@ def _strip_windows_permission_for_release(extension_root: Path):
         print('[package] windows permission 已从 release manifest 移除（dashboard 监控 dev-only）')
     else:
         print('[package] release manifest 无 windows permission，跳过')
+
+
+def _strip_csp_for_release(extension_root: Path):
+    """release 部署包从 manifest 移除 content_security_policy（dashboard 监控依赖，dev-only）。
+
+    CSP extension_pages（放行 ws://localhost）是 dashboard 监控页 + Plan 3 WS 的依赖，dev-only。
+    release 剥离 dashboard 后该字段无用，移除让 release manifest 与 main 基线零差异
+    （彻底响应「不影响发版内容」）。Plan 3 dashboard 转正纳入发版时再让 CSP 进 release。
+    manifest 无 content_security_policy 时静默跳过（幂等）。
+    """
+    target = extension_root / 'manifest.json'
+    if not target.exists():
+        print(f'[package] 警告：未找到 {target}，跳过 CSP 剥离')
+        return
+    manifest = json.loads(target.read_text(encoding='utf-8'))
+    if 'content_security_policy' in manifest:
+        del manifest['content_security_policy']
+        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+        print('[package] content_security_policy 已从 release manifest 移除（dashboard 监控 dev-only）')
+    else:
+        print('[package] release manifest 无 content_security_policy，跳过')
 
 
 def _disable_build_info_for_release(extension_root: Path):
@@ -245,6 +266,7 @@ def main():
     _disable_build_info_for_release(SETUP_DIR / 'extension')
     _strip_dashboard_for_release(SETUP_DIR / 'extension')      # 新增：剥离半成品 dashboard
     _strip_windows_permission_for_release(SETUP_DIR / 'extension')  # 剥离 dashboard 依赖的 windows permission
+    _strip_csp_for_release(SETUP_DIR / 'extension')                 # 剥离 dashboard 依赖的 CSP（release manifest 与 main 零差异）
     _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（native_host/build/build.bat 的 --distpath . 决定落点：native_host/）
