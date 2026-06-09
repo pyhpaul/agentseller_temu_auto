@@ -623,3 +623,129 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   sendResponse({ ok: true });
 });
 // ── end create_purchase_order ────────────────────────────────────────────────
+
+// ── orchestrator ── 确定性编排器 bg 接线（Plan 2-2a）─────────────────────────
+// Plan 2-1 纯逻辑核心（steps/state-machine/recovery/mutation-queue/engine）接真实 chrome。
+// 发版（D2）：importScripts 纯定义无副作用；唯一触发源是浮层「开始」(2-2c,isDev 守卫,release 不注入)，
+// 故 release 无人发 WF_START；恢复对空 storage noop → orchestrator 在 release 沉睡无副作用。
+importScripts(
+  '../contract.js',
+  'orchestrator/steps.js',
+  'orchestrator/state-machine.js',
+  'orchestrator/recovery.js',
+  'orchestrator/mutation-queue.js',
+  'orchestrator/engine.js',
+);
+
+const ORCH = {
+  contract: self.__AS_DASH_CONTRACT__,
+  steps: self.__AS_ORCH_STEPS__,
+  mq: self.__AS_ORCH_MQ__,
+  engine: self.__AS_ORCH_ENGINE__,
+};
+
+// storage 读写适配：read 经 normalizeSkeleton 兜底（缺失/损坏→emptyBatch）；write 整 skeleton
+function orchRead() {
+  const { STORAGE_KEY, normalizeSkeleton } = ORCH.contract;
+  return chrome.storage.local.get(STORAGE_KEY).then(r => normalizeSkeleton(r[STORAGE_KEY]));
+}
+function orchWrite(skeleton) {
+  return chrome.storage.local.set({ [ORCH.contract.STORAGE_KEY]: skeleton });
+}
+
+const orchQueue = ORCH.mq.makeMutationQueue(orchRead, orchWrite);
+
+// stub stepRunner（2-2a）：模拟 auto 步成功，让骨架端到端可验证。
+// 2-2b 换真实：导航 tab → waitForEl(step.target.readySignal) → 调 feature 命令 → 收结构化回报。
+async function orchStubStepRunner(step) {
+  await new Promise(r => setTimeout(r, 300));   // 模拟耗时
+  console.log(`[orch-stub] 自动步「${step.label}」(feature=${step.feature}) 模拟完成`);
+  return { status: 'done', result: { stub: step.id, feature: step.feature }, error: null };
+}
+
+const orchEngine = ORCH.engine.makeEngine({
+  read: orchRead, queue: orchQueue, stepRunner: orchStubStepRunner, now: () => Date.now(),
+});
+
+// SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
+// 不挂 onStartup——recover 不幂等（rerun 有副作用），靠顶层单次调用覆盖所有实例化场景。
+async function orchRecoverAll() {
+  try {
+    const skeleton = await orchRead();
+    const wf = (skeleton.batch.workflows || []).find(w => w.status === 'running');
+    if (!wf) return;   // 无 running workflow（release 常态）→ noop
+    console.log('[orch] SW 实例化，尝试恢复 workflow', wf.id);
+    await orchEngine.recover(wf.id);
+  } catch (e) { console.warn('[orch] 恢复失败（不影响其他业务）', e); }
+}
+orchRecoverAll();
+
+// 编排器消息入口：WF_START（建+跑）/ WF_HITL_CONFIRM（确认推进）/ WF_HITL_REJECT / WF_ABORT
+let orchWfSeq = 0;
+function orchGenId() { return 'wf_' + Date.now() + '_' + (++orchWfSeq); }
+
+async function orchStartWorkflow(product) {
+  const wf = ORCH.steps.buildInitialWorkflow(product, orchGenId);
+  wf.status = 'running'; wf.startedAt = Date.now();
+  await orchQueue.enqueue(skeleton => {
+    if (!skeleton.batch.id) { skeleton.batch.id = 'batch_' + Date.now(); skeleton.batch.createdAt = Date.now(); }
+    skeleton.batch.workflows.push(wf);
+    skeleton.batch.activeWorkflowId = wf.id;
+    return skeleton;
+  });
+  orchEngine.advance(wf.id);   // 异步推进，不阻塞 ack
+  return wf.id;
+}
+
+async function orchHitlConfirm({ workflowId, result }) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf || wf.status !== 'paused') return undefined;
+    const s = wf.steps[wf.cursor];
+    s.status = 'done';
+    if (result) { s.result = result; Object.assign(wf.product, ORCH.engine.pickProduct(result)); }
+    if (wf.hitl) wf.hitl.status = 'confirmed';
+    wf.status = 'running'; wf.updatedAt = Date.now();
+    return skeleton;
+  });
+  orchEngine.advance(workflowId);   // HITL step 已 done → advance 推进 cursor 到下一步
+}
+
+async function orchSetAborted(workflowId, hitlStatus) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf) return undefined;
+    wf.status = 'aborted';
+    if (hitlStatus && wf.hitl) wf.hitl.status = hitlStatus;
+    wf.updatedAt = Date.now();
+    return skeleton;
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'WF_START') {
+    orchStartWorkflow(msg.data || {})
+      .then(id => sendResponse({ ok: true, workflowId: id }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_HITL_CONFIRM') {
+    orchHitlConfirm(msg.data || {})
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_HITL_REJECT') {
+    orchSetAborted((msg.data || {}).workflowId, 'rejected')
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_ABORT') {
+    orchSetAborted((msg.data || {}).workflowId, null)
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+});
+// ── end orchestrator ─────────────────────────────────────────────────────────
