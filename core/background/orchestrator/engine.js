@@ -25,7 +25,7 @@
   function pickProduct(result) {
     const out = {};
     if (!result) return out;
-    for (const k of ['spuId', 'skc', 'skuNo']) {
+    for (const k of ['spuId', 'skc', 'skuNo', 'url1688', 'orderNo1688', 'poNo']) {
       if (result[k] != null) out[k] = result[k];
     }
     return out;

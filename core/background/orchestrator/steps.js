@@ -35,7 +35,7 @@
     product = product || {};
     return {
       id: idGen(),
-      product: { label: product.label || null, spuId: null, skc: null, skuNo: null },
+      product: { label: product.label || null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null },
       status: 'pending',
       cursor: 0,
       startedAt: null,

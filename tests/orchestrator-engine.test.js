@@ -48,6 +48,18 @@ test('advance：auto 步跑 stub → done + result + product 回填', async () =
   assert.strictEqual(wf0(store).status, 'done');          // 单步且末尾 → complete
 });
 
+test('advance：result 含 url1688/orderNo1688/poNo → product 全回填（CPO 数据流）', async () => {
+  const { engine, store } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a' })]),
+    async () => ({ status: 'done', result: { skuNo: 'SKU1', poNo: 'PO9', url1688: 'https://detail.1688.com/offer/123.html', orderNo1688: 'ORD7' } })
+  );
+  await engine.advance('w1');
+  assert.strictEqual(wf0(store).product.skuNo, 'SKU1');
+  assert.strictEqual(wf0(store).product.poNo, 'PO9');
+  assert.strictEqual(wf0(store).product.url1688, 'https://detail.1688.com/offer/123.html');
+  assert.strictEqual(wf0(store).product.orderNo1688, 'ORD7');
+});
+
 test('advance：多 auto 步连续推进到末尾 done', async () => {
   const { engine, store } = setupEngine(
     mkSkeleton([mkStep({ id: 'a' }), mkStep({ id: 'b' }), mkStep({ id: 'c' })]),

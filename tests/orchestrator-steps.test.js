@@ -33,6 +33,9 @@ test('buildInitialWorkflow: 初始 workflow 结构正确', () => {
   assert.strictEqual(wf.cursor, 0);
   assert.strictEqual(wf.product.label, '保温杯');
   assert.strictEqual(wf.product.spuId, null);                      // 渐进填充，初始 null
+  assert.strictEqual(wf.product.url1688, null);                    // CPO create_sku 输入（比价/下单步回填）
+  assert.strictEqual(wf.product.orderNo1688, null);                // CPO create_po 输入（下单步回填）
+  assert.strictEqual(wf.product.poNo, null);                       // CPO create_po 产出
   assert.strictEqual(wf.steps.length, 13);
   assert.ok(wf.steps.every(s => s.status === 'pending'));
   assert.strictEqual(wf.steps[0].committing, false);
