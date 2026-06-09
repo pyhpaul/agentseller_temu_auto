@@ -10,7 +10,7 @@
 
   // 取 contract：node 走 require；浏览器走全局（contract.js 先于 store.js 加载）
   const contract = nodeRequire
-    ? nodeRequire('../contract.js')
+    ? nodeRequire('../../contract.js')
     : (typeof window !== 'undefined' ? window.__AS_DASH_CONTRACT__ : self.__AS_DASH_CONTRACT__);
   const { emptyBatch, normalizeSkeleton } = contract;
 

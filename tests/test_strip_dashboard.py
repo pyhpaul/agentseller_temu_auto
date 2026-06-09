@@ -53,6 +53,17 @@ def test_strip_idempotent_when_dashboard_absent(tmp_path):
     assert (ext / 'content' / 'ui.js').exists()
 
 
+def test_strip_dashboard_keeps_root_contract(tmp_path):
+    """contract.js 提到 dist 根级后，strip dashboard 不应删它（release SW importScripts 依赖）。"""
+    ext = _make_extension_dir(tmp_path, with_dashboard=True)
+    (ext / 'contract.js').write_text('// shared contract', encoding='utf-8')
+
+    _strip_dashboard_for_release(ext)
+
+    assert not (ext / 'dashboard').exists(), 'dashboard/ 应被删'
+    assert (ext / 'contract.js').exists(), '根级 contract.js 不应被删（SW importScripts 依赖）'
+
+
 def _make_manifest(ext: Path, permissions: list) -> Path:
     """在 ext 目录写最小 manifest.json，permissions 由调用方指定。"""
     ext.mkdir(parents=True, exist_ok=True)
@@ -122,11 +133,13 @@ if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as d:
         test_strip_idempotent_when_dashboard_absent(Path(d) / 'case2')
     with tempfile.TemporaryDirectory() as d:
-        test_strip_windows_removes_windows_keeps_others(Path(d) / 'case3')
+        test_strip_dashboard_keeps_root_contract(Path(d) / 'case3')
     with tempfile.TemporaryDirectory() as d:
-        test_strip_windows_idempotent_when_absent(Path(d) / 'case4')
+        test_strip_windows_removes_windows_keeps_others(Path(d) / 'case4')
     with tempfile.TemporaryDirectory() as d:
-        test_strip_csp_removes_csp_keeps_others(Path(d) / 'case5')
+        test_strip_windows_idempotent_when_absent(Path(d) / 'case5')
     with tempfile.TemporaryDirectory() as d:
-        test_strip_csp_idempotent_when_absent(Path(d) / 'case6')
+        test_strip_csp_removes_csp_keeps_others(Path(d) / 'case6')
+    with tempfile.TemporaryDirectory() as d:
+        test_strip_csp_idempotent_when_absent(Path(d) / 'case7')
     print('All tests passed.')

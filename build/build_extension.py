@@ -61,6 +61,21 @@ def copy_dashboard_assets():
     print(f'[build] dashboard/ → dist/extension/dashboard/  ({n} files)')
 
 
+def copy_core_root_files():
+    """拷贝 core/ 根级共享文件（contract.js 等）→ dist/extension/。
+    这些是 bg + dashboard 共用的契约模块（不属 background/content/popup/dashboard 任一子目录），
+    单独拷到 dist 根级；SW importScripts('../contract.js')、dashboard <script src="../contract.js"> 共用。
+    """
+    for name in ['contract.js']:
+        src = CORE / name
+        if not src.exists():
+            continue
+        dst = DIST / name
+        shutil.copy2(src, dst)
+        _inject_source_url(dst, str(src.relative_to(ROOT)))
+        print(f'[build] {name} → dist/extension/{name}')
+
+
 def scan_features():
     """扫描 features/*/feature.json，返回 feature 元数据列表。"""
     features = []
@@ -189,6 +204,7 @@ def render_manifest(features=None):
 def build_all():
     clean_dist()
     copy_core_assets()
+    copy_core_root_files()          # ← 新增：拷 core 根级共享 contract.js
     copy_dashboard_assets()
     emit_build_info()
     features = scan_features()
