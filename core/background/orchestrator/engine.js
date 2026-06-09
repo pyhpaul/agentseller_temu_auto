@@ -126,6 +126,7 @@
         await mutateWorkflow(workflowId, w => {
           const s = w.steps[w.cursor];
           s.status = 'pending'; s.committing = false; s.error = null;
+          w.updatedAt = now();
         });
         await advance(workflowId);
       } else if (decision.action === 'ask-hitl') {

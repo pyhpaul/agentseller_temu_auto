@@ -693,7 +693,7 @@ async function orchStartWorkflow(product) {
     skeleton.batch.activeWorkflowId = wf.id;
     return skeleton;
   });
-  orchEngine.advance(wf.id);   // 异步推进，不阻塞 ack
+  orchEngine.advance(wf.id).catch(e => console.warn('[orch] advance 异常', e));   // 异步推进，不阻塞 ack
   return wf.id;
 }
 
@@ -708,7 +708,7 @@ async function orchHitlConfirm({ workflowId, result }) {
     wf.status = 'running'; wf.updatedAt = Date.now();
     return skeleton;
   });
-  orchEngine.advance(workflowId);   // HITL step 已 done → advance 推进 cursor 到下一步
+  orchEngine.advance(workflowId).catch(e => console.warn('[orch] advance 异常', e));   // HITL step 已 done → advance 推进 cursor 到下一步
 }
 
 async function orchSetAborted(workflowId, hitlStatus) {
