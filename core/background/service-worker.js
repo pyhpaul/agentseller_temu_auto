@@ -663,8 +663,59 @@ async function orchStubStepRunner(step) {
   return { status: 'done', result: { stub: step.id, feature: step.feature }, error: null };
 }
 
+// ── CPO adapter（create_sku / create_po）─────────────────────────────────────
+// CPO 自管 tab（cpoRun/cpoRun2 内部 chrome.tabs.create）：adapter 不导航/不 waitForEl，
+// 直接 await（两者 async、await 到终态才返回、done/error 都写 cpo_state.phaseN 正常返回不 throw），
+// 再读 cpo_state 桥接回 engine 的 {status,result,error}。cpo_state(CPO 私有)与 as_workflow_state(编排器)并存。
+
+// 标记/清除当前 cursor step 的 committing（不可逆提交点保护，spec §4.2/§7；走 orchQueue 串行化）
+function orchMarkCommitting(workflowId, value) {
+  return orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf) return undefined;
+    wf.steps[wf.cursor].committing = value;
+    return skeleton;
+  });
+}
+
+// create_sku（Phase1，△半可逆）：product → CPO_START 入参（cpoRun 内部校验 serial/skuNo/spuId）→ 读 phase1
+async function orchAdapterCreateSku(step, wf) {
+  const { url1688, skc, skuNo, spuId } = (wf && wf.product) || {};
+  if (!url1688) return { status: 'error', error: { category: 'validate', code: 'MISSING_URL1688', message: '缺 1688 链接（比价/下单步未回填 url1688）', recoverable: false } };
+  await cpoRun({ url1688, skc, skuNo, spuId });
+  const { cpo_state } = await chrome.storage.local.get('cpo_state');
+  const p1 = (cpo_state && cpo_state.phase1) || {};
+  if (p1.status === 'done') return { status: 'done', result: { skuNo: (p1.collected && p1.collected.skuNo) || skuNo || null }, error: null };
+  return { status: 'error', error: { category: 'business', code: 'CPO_P1_FAILED', message: p1.label || '建店小秘 SKU 失败', recoverable: false } };
+}
+
+// create_po（Phase2，✗强不可逆）：committing 包裹 → product.orderNo1688 → CPO_START_PHASE2(autoSave 全自动) → 读 phase2
+async function orchAdapterCreatePo(step, wf) {
+  const orderNo1688 = (wf && wf.product && wf.product.orderNo1688) || '';
+  if (!orderNo1688) return { status: 'error', error: { category: 'validate', code: 'MISSING_ORDER_NO', message: '缺 1688 订单号（下单步未回填 orderNo1688）', recoverable: false } };
+  await orchMarkCommitting(wf.id, true);   // 不可逆提交点前标记；正常路径 engine 收尾清 committing，回收路径留 true→恢复转人工
+  await cpoRun2({ orderNo1688, autoSave: true, repurchase: false, warehouse: 'default' }, null);
+  const { cpo_state } = await chrome.storage.local.get('cpo_state');
+  const p2 = (cpo_state && cpo_state.phase2) || {};
+  if (p2.status === 'done') return { status: 'done', result: { poNo: (p2.collected2 && p2.collected2.poNo) || null }, error: null };
+  return { status: 'error', error: { category: 'business', code: 'CPO_P2_FAILED', message: p2.label || '创建采购单失败', recoverable: false } };
+}
+
+// adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
+const ORCH_ADAPTERS = {
+  create_sku: orchAdapterCreateSku,
+  create_po: orchAdapterCreatePo,
+  // publish / gen_label / pack_label / ship 暂留 stub，后续 plan 逐个换真 adapter
+};
+
+// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
+async function orchRealStepRunner(step, wf) {
+  const adapter = ORCH_ADAPTERS[step.id];
+  return adapter ? adapter(step, wf) : orchStubStepRunner(step);
+}
+
 const orchEngine = ORCH.engine.makeEngine({
-  read: orchRead, queue: orchQueue, stepRunner: orchStubStepRunner, now: () => Date.now(),
+  read: orchRead, queue: orchQueue, stepRunner: orchRealStepRunner, now: () => Date.now(),
 });
 
 // SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
