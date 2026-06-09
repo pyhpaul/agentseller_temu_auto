@@ -213,6 +213,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ connected: nativePort !== null });
   }
 
+  if (msg.type === 'OPEN_MONITOR') {
+    const url = chrome.runtime.getURL('dashboard/dashboard.html');
+    // 已开则聚焦，未开则新建独立窗口（popup 型，可置顶盯盘）。失败兜底退化为 tab。
+    (async () => {
+      try {
+        const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['popup', 'normal'] });
+        for (const w of wins) {
+          const hit = (w.tabs || []).find(t => t.url === url);
+          if (hit) {
+            await chrome.windows.update(w.id, { focused: true });
+            sendResponse({ success: true, focused: true });
+            return;
+          }
+        }
+        await chrome.windows.create({ url, type: 'popup', width: 1280, height: 860 });
+        sendResponse({ success: true, created: true });
+      } catch (e) {
+        try { await chrome.tabs.create({ url }); sendResponse({ success: true, fallbackTab: true }); }
+        catch (e2) { sendResponse({ success: false, error: String(e2?.message || e2) }); }
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === 'IMG_SEARCH_START') {
     if (isImgSearchCapturing) {
       sendResponse({ ok: false, reason: 'already-capturing' });

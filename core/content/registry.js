@@ -86,5 +86,16 @@
       if (ui.getState().view === 'fab') ui.showHub(true);
       else ui.showHub(false);
     },
+    // 打开监控 dashboard（独立窗口）。content 不能直接 chrome.windows.create，
+    // 发 OPEN_MONITOR 给 service worker 处理（SW 跨窗口存活、有 windows 权限）。
+    openMonitor: async () => {
+      if (!chrome?.runtime?.id) { window.__AgentSellerUtils.showToast('插件已重载，请刷新页面后重试', 'err'); return; }
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'OPEN_MONITOR' });
+        if (!resp?.success) throw new Error(resp?.error || '打开监控失败');
+      } catch (e) {
+        window.__AgentSellerUtils.showToast('打开监控失败：' + (e?.message || e), 'err');
+      }
+    },
   };
 })();
