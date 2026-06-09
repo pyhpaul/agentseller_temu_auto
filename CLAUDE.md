@@ -19,6 +19,12 @@ agentseller_temu/
 │   │   ├── registry.js              # feature 注册中心 + window.AgentSeller 公开 API
 │   │   └── core.js                  # 装配入口（manifest 内排在最后一个 core 文件）
 │   ├── popup/{popup.html, popup.js}
+│   ├── dashboard/                   # 监控 dashboard 扩展页（ES module，独立窗口打开；非 content script 注入；dev-only，release 剥离）
+│   │   ├── dashboard.{html,css,js}  # 壳 + 深色 tokens(:root) + ES module 装配入口
+│   │   ├── contract.js              # storage 契约常量(STORAGE_KEY/SCHEMA_VERSION/emptyBatch/normalizeSkeleton，UMD 双模式)
+│   │   ├── state/{store,storage-source,ws-source}.js  # store 合并骨架(storage)+血肉(ws)；storage-source 接真实 as_workflow_state；ws-source 当前 mock
+│   │   ├── components/*.js          # topbar/queue-list/overview-bar/step-list/brain-stream/hitl-queue/error-chip/dom/select-active
+│   │   └── mock/mock-data.js        # 开发态渲染验证用 mock 骨架 + 大脑流 + HITL 详情
 │   └── icons/icon{16,48,128}.png
 ├── native_host/                     # 顶层共享 Python Native Host（所有 feature 共用唯一 host com.temu.label_host）
 │   ├── main.py                      # 薄入口：Native Messaging 协议 IO + DISPATCH 表按 action 分发
@@ -95,8 +101,11 @@ window.AgentSeller = {
   sendNative(action, data),               // 透传到 service worker → native host
   openFeature(fid),                       // 程序化展开 Panel + 切到指定 feature view（reload 自动续跑场景常用）
   openHub(),                              // 程序化展开 Panel 到 Hub 网格（不切 feature view；网格矮、少挡页面内容）
+  openMonitor(),                          // 独立窗口打开监控 dashboard（发 OPEN_MONITOR 给 SW；dev-only，isDev 守卫）
 };
 ```
+
+**监控 dashboard（自动化监控系统 Plan 1）**：`core/dashboard/` 是独立扩展页（`chrome-extension://<id>/dashboard/dashboard.html`），ES module 加载，深色盯盘 UI（视觉真源 `ui-prototype/dashboard.html`）。数据层 `store.js` 合并两路：`storage-source` 订阅真实 `chrome.storage.local['as_workflow_state']`（spec §4.1 权威骨架，background 唯一写入、dashboard 只读）+ `ws-source`（当前 mock 回放大脑流，真实 WS client 留 Plan 3）。组件只认 store、骨架全量重渲、大脑流增量 append。加载顺序：classic 脚本 `contract.js`→`store.js`→`select-active.js`（挂 `window.__AS_DASH_*` 全局）先于 module `dashboard.js`。`manifest.template.json` 的 `content_security_policy.extension_pages` 放行 `connect-src ws://localhost:*` 供 Plan 3 用。Hub「打开监控」入口经 `OPEN_MONITOR` message → service worker `chrome.windows.create` 独立窗口打开。契约/优先级见 `docs/superpowers/specs/2026-06-08-automation-monitor-and-data-contract-design.md`。
 
 **构建信息注入**：build 时 `build_extension.py` 生成 `dist/extension/content/build-info.js`，注入 `window.__AS_BUILD_INFO__ = { ts, isDev: true, version: 'dev' }`。Panel 标题栏：
 - `isDev=true`：显示 `dev:<ts>` 灰色小字（判断 Chrome 是否真 reload 了新版）
@@ -188,6 +197,10 @@ python build/package_all.py                    # extension + EXE + install.bat +
 ```
 
 `build_extension.py` 同时给每个 .js 文件末尾注入 `//# sourceURL=<src 相对路径>`，DevTools 的 Sources 面板和 console 日志按源码路径展示，调试体验与"chrome 直接加载源目录"等价。
+
+**测试命令**：
+- JS 单测：`node --test tests/*.test.js`（version-cmp + dashboard-store，共 21 用例）。⚠️ **不要用 `node --test tests/`**（整目录会把 pytest 的 `tests/test_strip_dashboard.py` 当 JS 加载解析失败）。
+- Python 单测：`python3 -m pytest tests/`（发版剥离逻辑 + build 逻辑，共 19 用例）。
 
 ## 新增 Feature 标准工作流（worktree 友好）
 
@@ -359,6 +372,8 @@ Inno Setup 一键 installer：
 - **Linux 上跑 `package_all.py` 会跳过 setup.exe 这一步并打印警告，其他流程不变**
 - installer 在 `[Run]` 段直接用 PowerShell + `reg.exe` 完成 native host 注册（等价于 install.bat 但不调用原 .bat，避免 `pause` 阻塞），Finish 页弹出引导对话框并提供「打开 chrome://extensions」按钮
 - 卸载时 `[UninstallRun]` 自动清理 HKCU 注册表项
+
+**dashboard 发版隔离（dev-only）**：dashboard 是开发中的监控系统（Plan 1），dev 构建带它供本地验证，但**员工发版包剥离**。`package_all.py` 拼装部署目录后三个剥离函数（均幂等）：`_strip_dashboard_for_release`（删 `dashboard/` 目录）、`_strip_windows_permission_for_release`（manifest 移除 `windows` permission——OPEN_MONITOR 的 `chrome.windows` 依赖）、`_strip_csp_for_release`（manifest 移除 `content_security_policy`）。Hub「打开监控」按钮用 `window.__AS_BUILD_INFO__.isDev` 守卫，release（isDev=false）不注入。**结果：release manifest 与 main 基线零差异**。dashboard 未来「转正」纳入发版：删 `package_all.py` 三个剥离调用 + 去 ui.js 的 isDev 守卫即可。
 
 Release 版会自动把 feature 内 `const TAL_DEBUG = true;` 替换为 `false;`（关闭调试面板）。
 
