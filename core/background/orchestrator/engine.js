@@ -1,0 +1,152 @@
+// core/background/orchestrator/engine.js
+// 编排引擎：注入 read/queue/stepRunner/now，实现 advance 单步推进 + recover SW 恢复。
+// 纯逻辑+注入（无 chrome 直接依赖），可 node 测。消费 state-machine.decideNext + recovery.decideRecovery。spec §2.2/§4.2。
+(function (root, factory) {
+  const api = factory(typeof require === 'function' ? require : null);
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (typeof self !== 'undefined') self.__AS_ORCH_ENGINE__ = api;
+})(typeof self !== 'undefined' ? self : this, function (nodeRequire) {
+  'use strict';
+
+  // 取 Plan 2-1 模块：node require / SW 全局（importScripts 已挂 self.__AS_ORCH_*）
+  const sm = nodeRequire ? nodeRequire('./state-machine.js') : self.__AS_ORCH_SM__;
+  const rec = nodeRequire ? nodeRequire('./recovery.js') : self.__AS_ORCH_RECOVERY__;
+  const { decideNext } = sm;
+  const { decideRecovery } = rec;
+
+  const MAX_LOOP = 100;   // advance 循环上限防御（13 步 + cursor 推进正常 < 30 轮）
+
+  function findWorkflow(skeleton, workflowId) {
+    const list = (skeleton && skeleton.batch && skeleton.batch.workflows) || [];
+    return list.find(w => w.id === workflowId) || null;
+  }
+
+  // 从 step.result 提取要回填 workflow.product 的字段（渐进填充 spuId/skc/skuNo）
+  function pickProduct(result) {
+    const out = {};
+    if (!result) return out;
+    for (const k of ['spuId', 'skc', 'skuNo']) {
+      if (result[k] != null) out[k] = result[k];
+    }
+    return out;
+  }
+
+  // HITL step → workflow.hitl 摘要（首版无大脑，精简；targetUrl 供浮层「前往」，2-2b 补 step.target）
+  function buildHitl(step) {
+    return {
+      action: step.label, stepId: step.id,
+      keyValues: {}, reviewedBrief: '',
+      editable: false, fieldType: null, options: null,
+      targetUrl: (step.target && step.target.url) || null,
+      status: 'pending',
+    };
+  }
+
+  function makeEngine(deps) {
+    const { read, queue, stepRunner } = deps;
+    const now = deps.now || (() => null);
+
+    // 改 skeleton 里某 workflow（走 queue 串行化；workflow 不存在则跳过写）
+    function mutateWorkflow(workflowId, fn) {
+      return queue.enqueue(skeleton => {
+        const wf = findWorkflow(skeleton, workflowId);
+        if (!wf) return undefined;
+        fn(wf);
+        return skeleton;
+      });
+    }
+
+    // 单步推进循环：读快照 → decideNext → 落地副作用 → 直到卡住（pause/complete/error/noop）
+    async function advance(workflowId) {
+      for (let guard = 0; guard < MAX_LOOP; guard++) {
+        const wf = findWorkflow(await read(), workflowId);
+        const decision = decideNext(wf);
+        switch (decision.kind) {
+          case 'run-auto': {
+            const step = wf.steps[wf.cursor];                      // 本轮快照的 step 定义
+            await mutateWorkflow(workflowId, w => {
+              const s = w.steps[w.cursor];
+              s.status = 'running'; s.startedAt = now(); s.error = null;   // checkpoint：占位防重入
+            });
+            let res;
+            try {
+              res = await stepRunner(step, wf);                    // 调 feature（2-2a 是 stub）— 长操作，在 queue 外
+            } catch (e) {
+              res = { status: 'error', error: { category: 'read', code: 'STEP_THREW', message: String((e && e.message) || e), recoverable: false } };
+            }
+            await mutateWorkflow(workflowId, w => {
+              const s = w.steps[w.cursor];
+              s.committing = false; s.endedAt = now();
+              if (res && res.status === 'done') {
+                s.status = 'done'; s.result = res.result || null; s.error = null;
+                Object.assign(w.product, pickProduct(res.result));  // 渐进填充
+              } else {
+                s.status = 'error';
+                s.error = (res && res.error) || { category: 'business', code: 'UNKNOWN', message: '步骤失败', recoverable: false };
+                w.status = 'error';
+              }
+              w.updatedAt = now();
+            });
+            continue;
+          }
+          case 'pause-hitl': {
+            await mutateWorkflow(workflowId, w => {
+              w.steps[w.cursor].status = 'paused';
+              w.status = 'paused';
+              w.hitl = buildHitl(w.steps[w.cursor]);
+              w.updatedAt = now();
+            });
+            return;                                                // 不驻留，等人确认
+          }
+          case 'advance-cursor': {
+            await mutateWorkflow(workflowId, w => { w.cursor += 1; w.updatedAt = now(); });
+            continue;
+          }
+          case 'complete': {
+            await mutateWorkflow(workflowId, w => { w.status = 'done'; w.hitl = null; w.updatedAt = now(); });
+            return;
+          }
+          case 'error': {
+            await mutateWorkflow(workflowId, w => { w.status = 'error'; w.updatedAt = now(); });
+            return;
+          }
+          default:                                                 // noop
+            return;
+        }
+      }
+      console.warn('[orch] advance 达循环上限 MAX_LOOP，疑似状态机异常', workflowId);
+    }
+
+    // SW 唤醒恢复：对 running workflow 的 cursor step 跑 decideRecovery（spec §4.2）
+    async function recover(workflowId) {
+      const wf = findWorkflow(await read(), workflowId);
+      if (!wf || wf.status !== 'running') return { action: 'none' };
+      const decision = decideRecovery(wf.steps[wf.cursor]);
+      if (decision.action === 'rerun') {
+        await mutateWorkflow(workflowId, w => {
+          const s = w.steps[w.cursor];
+          s.status = 'pending'; s.committing = false; s.error = null;
+        });
+        await advance(workflowId);
+      } else if (decision.action === 'ask-hitl') {
+        await mutateWorkflow(workflowId, w => {
+          const s = w.steps[w.cursor];
+          s.status = 'paused'; w.status = 'paused';
+          w.hitl = {
+            action: '恢复确认：' + s.label, stepId: s.id,
+            keyValues: {}, reviewedBrief: '',
+            prompt: '这步可能已执行，请确认：已完成→跳过 / 未完成→重试',
+            editable: false, fieldType: 'recovery', options: ['已完成', '未完成'],
+            targetUrl: (s.target && s.target.url) || null, status: 'pending',
+          };
+          w.updatedAt = now();
+        });
+      }
+      return decision;
+    }
+
+    return { advance, recover };
+  }
+
+  return { makeEngine, findWorkflow, pickProduct, buildHitl };
+});
