@@ -46,3 +46,12 @@ test('buildInitialWorkflow: 缺 product.label 不抛、label=null', () => {
   const wf = buildInitialWorkflow({}, () => 'w1');
   assert.strictEqual(wf.product.label, null);
 });
+
+test('buildInitialWorkflow: target 字段透传到 step（pack_label 有 / HITL 步无）', () => {
+  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
+  const pack = wf.steps.find(s => s.id === 'pack_label');
+  assert.strictEqual(pack.target.url, 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list');
+  assert.strictEqual(pack.target.readySignal, '[class*="shipping-list_choose"]');
+  const sel = wf.steps.find(s => s.id === 'select_product');
+  assert.strictEqual(sel.target, null);                            // 未声明 target 的步透传为 null（不是 undefined）
+});

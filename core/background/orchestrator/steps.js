@@ -26,7 +26,8 @@
     { id: 'create_po',        label: '创建采购单',            type: 'auto', feature: 'create_purchase_order', reversible: false, domain: 'dianxiaomi.com' },
     { id: 'wait_payment',     label: '等财务付款',            type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com' },
     { id: 'wait_arrival',     label: '等到货',                type: 'hitl', feature: null,                   reversible: null,  domain: 'kuajingmaihuo.com' },
-    { id: 'pack_label',       label: '打印打包标签',          type: 'auto', feature: 'packing_label',         reversible: true,  domain: 'kuajingmaihuo.com' },
+    { id: 'pack_label',       label: '打印打包标签',          type: 'auto', feature: 'packing_label',         reversible: true,  domain: 'seller.kuajingmaihuo.com',
+      target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[class*="shipping-list_choose"]' } },
     { id: 'ship',             label: '确认发货',              type: 'auto', feature: 'auto_ship',             reversible: false, domain: 'kuajingmaihuo.com' },
   ];
 
@@ -42,7 +43,7 @@
       updatedAt: null,
       steps: STEP_DEFS.map(d => ({
         id: d.id, label: d.label, feature: d.feature, type: d.type,
-        reversible: d.reversible, domain: d.domain,
+        reversible: d.reversible, domain: d.domain, target: d.target || null,
         status: 'pending', startedAt: null, endedAt: null,
         result: null, brainBrief: '(确定性)', note: null, committing: false, error: null,
       })),
