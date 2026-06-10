@@ -756,11 +756,44 @@ async function orchAdapterCreatePo(step, wf) {
   return { status: 'error', error: { category: 'business', code: 'CPO_P2_FAILED', message: p2.label || '创建采购单失败', recoverable: false } };
 }
 
+// ── packing_label adapter（pack_label,可逆无 committing）─────────────────────
+// 无处理器 feature:adapter 主动 导航→等就绪→发命令(fire-forget)→轮询 pl_state。复用通用 helper。
+async function orchAdapterPackLabel(step, wf) {
+  const target = step.target || {};
+  const url = target.url || 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list';
+  // 1. 清旧 pl_state(防读到上次残留终态)
+  await chrome.storage.local.set({ pl_state: { status: 'idle', updatedAt: Date.now() } });
+  // 2. 导航 + 等就绪(前台 active 防失焦不渲染)
+  let tabId;
+  try {
+    tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'PACK_NAV_FAILED', message: '打包标签页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+  }
+  // 3. 发命令(fire-forget:content 立即 ack started,后台自驱跑)
+  let ack;
+  try {
+    ack = await orchSendStepCommand(tabId, 'PL_START_BATCH', {});
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'PACK_CMD_FAILED', message: '打包命令未送达:' + String(e?.message || e), recoverable: true } };
+  }
+  if (ack && ack.started === false) {
+    return { status: 'error', error: { category: 'validate', code: 'PACK_NO_TARGET', message: ack.error || '无可打印的待打包商品', recoverable: false } };
+  }
+  // 4. 轮询 pl_state 终态(content 自驱跑完写,不受 SW 5min await 限)
+  const st = await orchPollState('pl_state', { timeoutMs: 8 * 60 * 1000, intervalMs: 3000 });
+  if (st.status === 'done') {
+    return { status: 'done', result: { savedCount: st.ok || 0, saveDir: st.saveDir || null, files: st.files || [], failedCount: st.failedCount || 0 }, error: null };
+  }
+  return { status: 'error', error: { category: st.errorCategory || 'business', code: st.code || 'PACK_BATCH_FAILED', message: st.error || st.message || '打包标签失败', recoverable: false } };
+}
+
 // adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
 const ORCH_ADAPTERS = {
   create_sku: orchAdapterCreateSku,
   create_po: orchAdapterCreatePo,
-  // publish / gen_label / pack_label / ship 暂留 stub，后续 plan 逐个换真 adapter
+  pack_label: orchAdapterPackLabel,
+  // publish / gen_label / ship 暂留 stub，后续 plan 逐个换真 adapter
 };
 
 // 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
