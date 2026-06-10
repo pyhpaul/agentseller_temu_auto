@@ -637,6 +637,11 @@ importScripts(
   'orchestrator/engine.js',
 );
 
+// WS 通道架子（2-2c-2）：加载 WsClient 类（挂 self.__AS_WS__）；**不自启**——
+// 架子阶段无大脑 server，startWsClient 留 Plan 3 在合适时机调（如 WF_START）。
+// release：随 background/ 进包但顶层不连 → 沉睡 dead code 无害（同 orchestrator/OPEN_MONITOR）。
+importScripts('ws-client.js');
+
 const ORCH = {
   contract: self.__AS_DASH_CONTRACT__,
   steps: self.__AS_ORCH_STEPS__,
