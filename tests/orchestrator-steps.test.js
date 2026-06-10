@@ -62,3 +62,10 @@ test('buildInitialWorkflow: ship step 带 target（续刀 auto_ship）', () => {
   assert.strictEqual(ship.target.url, 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list');
   assert.strictEqual(ship.target.readySignal, '[data-testid="beast-core-table-body-tr"]');
 });
+
+test('buildInitialWorkflow: gen_label step 带 target（续刀 auto_gen_label）', () => {
+  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
+  const gl = wf.steps.find(s => s.id === 'gen_label');
+  assert.strictEqual(gl.target.url, 'https://seller.temu.com/goods/label');
+  assert.strictEqual(gl.target.readySignal, 'tr[data-testid="beast-core-table-body-tr"]');
+});
