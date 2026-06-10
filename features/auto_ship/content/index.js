@@ -643,6 +643,60 @@
     }
   }
 
+  // ── 编排器命令入口（与人工「开始/单步」并存,不自驱）──────────────────────
+  // 命令 AUTO_SHIP_RUN_ONE：处理待装箱发货 tab 扫到的下一个未处理单(一次一单)。
+  // 编排器调用=无人盯 → 强制 autoConfirm 跳 askConfirmShip 弹窗(否则卡永不 resolve 的 Promise)。
+  function asStepError(category, code, message, recoverable) {
+    return { category, code, message, recoverable, suggestion: null };
+  }
+  // 发货后等该单从待装箱发货列表消失(=后端受理、表格刷新)。超时返 false(降级不抛)。
+  async function waitOrderGone(orderNo, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 8000);
+    while (Date.now() < deadline) {
+      await ensureOnPendingTab();
+      const live = await scanOrderNos();
+      if (!live.includes(orderNo)) return true;
+      await U.sleep(600);
+    }
+    return false;
+  }
+  async function asHandleRunOne() {
+    // 1. 就绪等待(fresh tab handler 铁律:首行 waitForEl)
+    try { await U.waitForEl(SEL.bodyRow, 12000); }
+    catch (e) { return { status: 'error', error: asStepError('read', 'SHIP_LIST_NOT_READY', '读取失败：发货单列表 12s 内未渲染（' + e.message + '）', true) }; }
+    if (run.active) return { status: 'error', error: asStepError('business', 'SHIP_BUSY', '业务：已有发货任务在跑', true) };
+    run.active = true;
+    const prevAutoConfirm = run.autoConfirm;
+    run.autoConfirm = true;   // 编排器=无人盯,强制全自动确认(跳 askConfirmShip)
+    try {
+      const orderNo = await scanForPick();
+      if (!orderNo) return { status: 'done', result: { shipped: false, reason: 'NO_PENDING', orderNo: null }, error: null };
+      let r;
+      try {
+        r = await processOrder(orderNo);
+      } catch (err) {
+        try { await closeEditPage(); } catch (e2) { console.warn('[auto_ship] 清理残留弹窗失败', e2); }
+        run.processed.add(orderNo);
+        const cat = (err && err._cat) === 'data' ? 'validate' : (err && err._cat) === 'biz' ? 'business' : 'read';
+        return { status: 'error', error: asStepError(cat, 'SHIP_FAILED', (err && err.message) || String(err), cat !== 'business') };
+      }
+      run.processed.add(orderNo);
+      if (r.kind === 'local') return { status: 'done', result: { shipped: false, reason: 'LOCAL_WAREHOUSE', orderNo }, error: null };
+      if (r.kind === 'cancelled') return { status: 'error', error: asStepError('business', 'SHIP_CANCELLED', '业务：发货被取消', true) };
+      // r.kind === 'shipped'：确认发货已点(含 popover 二次确认)。补「行消失」确认(弹窗操作生效铁律)。
+      run.lastShipped = orderNo;
+      const gone = await waitOrderGone(orderNo, 8000);
+      return { status: 'done', result: { shipped: true, orderNo, waybillNo: null, vanished: gone }, error: null };
+    } finally {
+      run.active = false; run.autoConfirm = prevAutoConfirm; clearRowHighlight();
+    }
+  }
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== 'AUTO_SHIP_RUN_ONE') return;   // 只接管本命令,其余放行
+    asHandleRunOne().then(sendResponse).catch((e) => sendResponse({ status: 'error', error: asStepError('read', 'HANDLER_THREW', String((e && e.message) || e), false) }));
+    return true;   // 异步通道
+  });
+
   AS.registerFeature({
     id: 'auto_ship',
     icon: '📦',
