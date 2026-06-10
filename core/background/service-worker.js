@@ -859,6 +859,40 @@ async function orchAdapterGenLabel(step, wf) {
   return { status: 'error', error: { category: st.category || 'read', code: st.code || 'AGL_FAILED', message: st.message || '标签生成流程失败', recoverable: true } };
 }
 
+// ── check_and_publish adapter（publish,✗不可逆·复用上游编辑页 tab）──────────────
+// 数据流死结:wf.product 无店小秘商品 URL 锚点 → 不导航,query 找 collect_dxm 留的编辑页 tab。
+// 直接回报(检查+发布同 tab,无跨页);committing 发命令前粗标(检查 block 也转人工=填表缺口本需人工)。
+async function orchAdapterPublish(step, wf) {
+  // 1. 找上游编辑页 tab(url 含 dianxiaomi + edit;不导航,无 URL 锚点)
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ url: '*://*.dianxiaomi.com/*' });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'PUBLISH_TAB_QUERY_FAILED', message: 'tab 查询失败:' + String(e?.message || e), recoverable: true } };
+  }
+  const editTab = (tabs || []).find(t => /edit/i.test(t.url || ''));
+  if (!editTab) {
+    return { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持编辑页打开)', recoverable: true } };
+  }
+  // 2. 激活编辑页 tab(前台防 Ant dropdown 后台 tab 不展开)
+  try {
+    await chrome.tabs.update(editTab.id, { active: true });
+    await new Promise(res => setTimeout(res, 500));
+  } catch (e) {
+    console.warn('[orch][publish] 激活编辑页 tab 失败,继续尝试', e);
+  }
+  // 3. ★不可逆提交点:发命令前标 committing(粗粒度;检查 block 也标→恢复转人工=填表本需人工,无副作用)
+  await orchMarkCommitting(wf.id, true);
+  // 4. 发命令,直接回报(检查+发布同 tab,无跨页/无 storage)
+  let resp;
+  try {
+    resp = await orchSendStepCommand(editTab.id, 'CAP_PUBLISH', {}, { timeoutMs: 60000 });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'PUBLISH_CMD_FAILED', message: '发布命令未送达:' + String(e?.message || e), recoverable: false } };
+  }
+  return resp || { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_RESP', message: '发布命令无响应', recoverable: false } };
+}
+
 // adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
 const ORCH_ADAPTERS = {
   create_sku: orchAdapterCreateSku,
@@ -866,7 +900,7 @@ const ORCH_ADAPTERS = {
   pack_label: orchAdapterPackLabel,
   ship: orchAdapterShip,
   gen_label: orchAdapterGenLabel,
-  // publish 暂留 stub，后续 plan 换真 adapter
+  publish: orchAdapterPublish,
 };
 
 // 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
