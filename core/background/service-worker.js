@@ -663,6 +663,61 @@ async function orchStubStepRunner(step) {
   return { status: 'done', result: { stub: step.id, feature: step.feature }, error: null };
 }
 
+// ── 通用 adapter 基建（无命令处理器 feature 接入；后续 ship/gen_label 复用）──────────────
+// CPO 自管 tab、adapter 直接 await；其余 feature 无处理器,adapter 要主动:
+// 导航 tab(orchNavigateAndWait)→ 发命令(orchSendStepCommand)→ 长任务轮询 storage 终态(orchPollState)。
+
+// 导航到 url(前台 active 防失焦不渲染)→ 等 tab complete → executeScript 轮询 readySignal → 返回 tabId
+// ⚠ readySignal 检查依赖 manifest host_permissions 含目标域(scripting 权限 CPO cpoCloseTab 已在用);
+//   executeScript 失败(权限/页面未就绪)→ false 继续轮询,超时才抛——content handler 首行 waitForEl 再兜一层。
+async function orchNavigateAndWait(url, readySignal, { tabTimeoutMs = 30000, readyTimeoutMs = 30000 } = {}) {
+  const tab = await chrome.tabs.create({ url, active: true });
+  await cpoWaitTabComplete(tab.id, tabTimeoutMs);
+  if (!readySignal) return tab.id;
+  const deadline = Date.now() + readyTimeoutMs;
+  while (Date.now() < deadline) {
+    const hit = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, func: sel => !!document.querySelector(sel), args: [readySignal],
+    }).then(arr => !!(arr && arr[0] && arr[0].result)).catch(() => false);
+    if (hit) return tab.id;
+    await new Promise(res => setTimeout(res, 300));
+  }
+  throw new Error('readySignal 超时: ' + readySignal);
+}
+
+// 向 tab 发命令(content 未就绪重试)。不套 CPO 的 resp.ok===false→throw(CPO 私有协议),
+// 直接返回 resp 由 adapter 自行解读({ok,started}/{status,...})。timeoutMs 可配(ship 单单长)。
+async function orchSendStepCommand(tabId, type, data, { timeoutMs = 30000, retries = 25 } = {}) {
+  let lastErr;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await Promise.race([
+        chrome.tabs.sendMessage(tabId, { type, data }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('命令超时: ' + type)), timeoutMs)),
+      ]);
+    } catch (e) {
+      lastErr = e;
+      if (!/Receiving end does not exist|Could not establish connection/.test(String(e?.message || e))) throw e;
+      await new Promise(r => setTimeout(r, 200));   // content 还没注入,等等再试
+    }
+  }
+  throw lastErr || new Error('命令无法送达: ' + type);
+}
+
+// 轮询 chrome.storage.local[key] 到终态(status==='done'|'error')。fire-forget 长任务用:
+// content 自驱跑、SW 只观察 storage(不受单条 message 通道/SW 5min await 限)。
+// onTick 给需要的 feature 在中途标 committing(pack_label 可逆不用)。超时返回 error 终态。
+async function orchPollState(key, { timeoutMs, intervalMs = 2000, onTick } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const obj = (await chrome.storage.local.get(key))[key] || {};
+    if (onTick) await onTick(obj);
+    if (obj.status === 'done' || obj.status === 'error') return obj;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return { status: 'error', code: 'POLL_TIMEOUT', message: key + ' 轮询超时' };
+}
+
 // ── CPO adapter（create_sku / create_po）─────────────────────────────────────
 // CPO 自管 tab（cpoRun/cpoRun2 内部 chrome.tabs.create）：adapter 不导航/不 waitForEl，
 // 直接 await（两者 async、await 到终态才返回、done/error 都写 cpo_state.phaseN 正常返回不 throw），
