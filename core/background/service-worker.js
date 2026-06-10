@@ -788,12 +788,36 @@ async function orchAdapterPackLabel(step, wf) {
   return { status: 'error', error: { category: st.errorCategory || 'business', code: st.code || 'PACK_BATCH_FAILED', message: st.error || st.message || '打包标签失败', recoverable: false } };
 }
 
+// ── auto_ship adapter（ship,✗强不可逆）─────────────────────────────────────
+// 无处理器 feature:adapter 导航→等就绪→committing 包裹→直接回报(单单 30-60s,非 fire-forget)。
+async function orchAdapterShip(step, wf) {
+  const target = step.target || {};
+  const url = target.url || 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list';
+  let tabId;
+  try {
+    tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'SHIP_NAV_FAILED', message: '发货页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+  }
+  // ★强不可逆提交点:发命令前标 committing(粗粒度取安全;正常 engine 收尾清,回收留 true→转人工不自动重发)
+  await orchMarkCommitting(wf.id, true);
+  let resp;
+  try {
+    resp = await orchSendStepCommand(tabId, 'AUTO_SHIP_RUN_ONE', {}, { timeoutMs: 180000, retries: 25 });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'SHIP_CMD_FAILED', message: '发货命令未送达:' + String(e?.message || e), recoverable: false } };
+  }
+  // content 回 {status,result,error},直接透传给 engine(advance 据 status 落地、清 committing)
+  return resp || { status: 'error', error: { category: 'read', code: 'SHIP_NO_RESP', message: '发货命令无响应', recoverable: false } };
+}
+
 // adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
 const ORCH_ADAPTERS = {
   create_sku: orchAdapterCreateSku,
   create_po: orchAdapterCreatePo,
   pack_label: orchAdapterPackLabel,
-  // publish / gen_label / ship 暂留 stub，后续 plan 逐个换真 adapter
+  ship: orchAdapterShip,
+  // publish / gen_label 暂留 stub，后续 plan 逐个换真 adapter
 };
 
 // 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
