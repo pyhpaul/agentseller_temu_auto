@@ -55,3 +55,10 @@ test('buildInitialWorkflow: target 字段透传到 step（pack_label 有 / HITL 
   const sel = wf.steps.find(s => s.id === 'select_product');
   assert.strictEqual(sel.target, null);                            // 未声明 target 的步透传为 null（不是 undefined）
 });
+
+test('buildInitialWorkflow: ship step 带 target（续刀 auto_ship）', () => {
+  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
+  const ship = wf.steps.find(s => s.id === 'ship');
+  assert.strictEqual(ship.target.url, 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list');
+  assert.strictEqual(ship.target.readySignal, '[data-testid="beast-core-table-body-tr"]');
+});

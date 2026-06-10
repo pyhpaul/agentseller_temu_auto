@@ -28,7 +28,8 @@
     { id: 'wait_arrival',     label: '等到货',                type: 'hitl', feature: null,                   reversible: null,  domain: 'kuajingmaihuo.com' },
     { id: 'pack_label',       label: '打印打包标签',          type: 'auto', feature: 'packing_label',         reversible: true,  domain: 'seller.kuajingmaihuo.com',
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[class*="shipping-list_choose"]' } },
-    { id: 'ship',             label: '确认发货',              type: 'auto', feature: 'auto_ship',             reversible: false, domain: 'kuajingmaihuo.com' },
+    { id: 'ship',             label: '确认发货',              type: 'auto', feature: 'auto_ship',             reversible: false, domain: 'kuajingmaihuo.com',
+      target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[data-testid="beast-core-table-body-tr"]' } },
   ];
 
   // idGen 注入（纯逻辑测试要确定性，不在模块内调 Date.now/random）。
