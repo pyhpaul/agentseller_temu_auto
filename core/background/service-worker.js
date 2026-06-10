@@ -968,6 +968,21 @@ async function orchSetAborted(workflowId, hitlStatus) {
   });
 }
 
+// 重试：重置当前 cursor step→pending（清 error/committing）+ wf→running + advance（spec §6.2）。
+// 仅 recoverable 错误在 overlay 有[重试]入口（error chip 守卫），故清 committing 安全：
+// 不可逆步骤失败均 recoverable:false → 无重试入口，不会被本函数重发。
+async function orchRetry(workflowId) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf) return undefined;
+    const step = wf.steps[wf.cursor];
+    if (step) { step.status = 'pending'; step.error = null; step.committing = false; }
+    wf.status = 'running'; wf.updatedAt = Date.now();
+    return skeleton;
+  });
+  await orchEngine.advance(workflowId);
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'WF_START') {
     orchStartWorkflow(msg.data || {})
@@ -989,6 +1004,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'WF_ABORT') {
     orchSetAborted((msg.data || {}).workflowId, null)
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_RETRY') {
+    orchRetry((msg.data || {}).workflowId)
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
