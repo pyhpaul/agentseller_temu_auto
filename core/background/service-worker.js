@@ -811,13 +811,62 @@ async function orchAdapterShip(step, wf) {
   return resp || { status: 'error', error: { category: 'read', code: 'SHIP_NO_RESP', message: '发货命令无响应', recoverable: false } };
 }
 
+// ── auto_gen_label adapter（gen_label,✗强不可逆·跨页自驱）─────────────────────
+// content 跨 4 页自驱、SW 无法 await：fire-forget+轮询 agl_state（同 pack_label）。
+// committing 用 onTick 在 content 报告"合规提交"阶段标（比 ship 发命令前粗标精准）。
+async function orchAdapterGenLabel(step, wf) {
+  const target = step.target || {};
+  const url = target.url || 'https://seller.temu.com/goods/label';
+  // 1. 清旧 agl_state(防读到上次残留终态)
+  await chrome.storage.local.remove('agl_state');
+  // 2. 导航条码页 + 等表格行就绪(前台 active 防失焦不渲染)
+  let tabId;
+  try {
+    tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'AGL_NAV_FAILED', message: '条码管理页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+  }
+  // 3. 发命令(fire-forget:content 立即 ack started,后台跑 Phase1+跨页自驱)
+  let ack;
+  try {
+    ack = await orchSendStepCommand(tabId, 'AGL_GEN_LABEL', { skc: (wf && wf.product && wf.product.skc) || null });
+  } catch (e) {
+    return { status: 'error', error: { category: 'read', code: 'AGL_CMD_FAILED', message: '标签生成命令未送达:' + String(e?.message || e), recoverable: true } };
+  }
+  if (ack && ack.started === false) {
+    const reasonMap = {
+      NO_PATHS: '模板/输出路径未配置(请先在 feature view 设置一次,localStorage 持久)',
+      NO_SKC: '缺 SKC(product.skc 为空,上游 HITL 未回填)',
+      ROW_NOT_FOUND: '条码管理页未找到该 SKC 对应商品行',
+      NO_SKC_SKU: '该商品无 SKC货号,无法生成标签',
+    };
+    return { status: 'error', error: { category: 'validate', code: 'AGL_NOT_STARTED', message: reasonMap[ack.reason] || ('未启动:' + ack.reason), recoverable: true } };
+  }
+  // 4. 轮询 agl_state 终态;onTick 在 content 报 committing 阶段时一次性标记
+  let committed = false;
+  const st = await orchPollState('agl_state', {
+    timeoutMs: 10 * 60 * 1000, intervalMs: 3000,
+    onTick: async (obj) => {
+      if (!committed && obj && obj.phase === 'committing') {
+        await orchMarkCommitting(wf.id, true);
+        committed = true;
+      }
+    },
+  });
+  if (st.status === 'done') {
+    return { status: 'done', result: st.result || {}, error: null };
+  }
+  return { status: 'error', error: { category: st.category || 'read', code: st.code || 'AGL_FAILED', message: st.message || '标签生成流程失败', recoverable: true } };
+}
+
 // adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
 const ORCH_ADAPTERS = {
   create_sku: orchAdapterCreateSku,
   create_po: orchAdapterCreatePo,
   pack_label: orchAdapterPackLabel,
   ship: orchAdapterShip,
-  // publish / gen_label 暂留 stub，后续 plan 逐个换真 adapter
+  gen_label: orchAdapterGenLabel,
+  // publish 暂留 stub，后续 plan 换真 adapter
 };
 
 // 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
