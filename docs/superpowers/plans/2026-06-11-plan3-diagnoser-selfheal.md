@@ -232,8 +232,9 @@ def test_read_transient_retry():
 
 
 def test_read_structural_escalate():
-    # read + 模型判结构性（规则式非 timeout）→ escalate
-    d = diagnose(_err(message="selector not found"), {"retryCount": 0}, MockModel())
+    # read + 模型判结构性（规则式：整条 user content 不含 timeout）→ escalate
+    # 注意 code 也要避开 TIMEOUT —— MockModel 看整条 user content（含 code）小写后是否含 timeout
+    d = diagnose(_err(message="selector not found", code="NOT_FOUND"), {"retryCount": 0}, MockModel())
     assert d["action"] == "escalate"
 
 
