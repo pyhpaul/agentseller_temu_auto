@@ -28,10 +28,10 @@ function mkStep(over) {
     reversible: false, committing: false, result: null, error: null, target: null,
   }, over);
 }
-function setupEngine(skeleton, stepRunner) {
+function setupEngine(skeleton, stepRunner, onStepSettled) {
   const store = fakeStore(skeleton);
   const queue = makeMutationQueue(store.read, store.write);
-  const engine = makeEngine({ read: store.read, queue, stepRunner, now: () => 1 });
+  const engine = makeEngine({ read: store.read, queue, stepRunner, now: () => 1, onStepSettled });
   return { engine, store };
 }
 const wf0 = (store) => store.peek().batch.workflows[0];
@@ -152,4 +152,78 @@ test('recover：workflow 非 running → none（无中断）', async () => {
   const { engine } = setupEngine(mkSkeleton([mkStep({ status: 'done' })], { status: 'done' }), async () => ({}));
   const d = await engine.recover('w1');
   assert.strictEqual(d.action, 'none');
+});
+
+test('onStepSettled：每步落地后被调（auto 步 done 通知，hitl 步不调）', async () => {
+  const calls = [];
+  const { engine } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a' }), mkStep({ id: 'h', type: 'hitl' })]),
+    async () => ({ status: 'done', result: {} }),
+    (wfId, step, res) => calls.push({ id: step.id, status: res.status })
+  );
+  await engine.advance('w1');
+  assert.strictEqual(calls.length, 1);                       // 只 a 是 auto（h 是 hitl 不跑 stepRunner）
+  assert.deepStrictEqual(calls[0], { id: 'a', status: 'done' });
+});
+
+test('onStepSettled：throw 步也通知（覆盖第一刀缺口）', async () => {
+  const calls = [];
+  const { engine } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a' })]),
+    async () => { throw new Error('boom'); },
+    (wfId, step, res) => calls.push(res)
+  );
+  await engine.advance('w1');
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].status, 'error');
+  assert.strictEqual(calls[0].error.code, 'STEP_THREW');     // throw 被 catch 包成 error 后通知
+});
+
+test('applyDiagnosis：retry → step 重置 pending + retryCount+1 + 续跑', async () => {
+  let runs = 0;
+  const { engine, store } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a', status: 'error', error: { category: 'read', recoverable: true }, retryCount: 0 })],
+      { status: 'error' }),
+    async () => { runs++; return { status: 'done', result: {} }; }
+  );
+  await engine.applyDiagnosis('w1', { stepId: 'a', action: 'retry', reason: '瞬时' });
+  assert.strictEqual(runs, 1);                               // 重跑了
+  assert.strictEqual(wf0(store).steps[0].status, 'done');    // 重跑成功
+  assert.strictEqual(wf0(store).steps[0].retryCount, 1);     // +1
+});
+
+test('applyDiagnosis：escalate → 转 paused HITL + reason', async () => {
+  const { engine, store } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a', status: 'error', error: { category: 'validate', recoverable: true }, retryCount: 0 })],
+      { status: 'error' }),
+    async () => ({ status: 'done' })
+  );
+  await engine.applyDiagnosis('w1', { stepId: 'a', action: 'escalate', reason: '需人工' });
+  assert.strictEqual(wf0(store).steps[0].status, 'paused');
+  assert.strictEqual(wf0(store).status, 'paused');
+  assert.ok(wf0(store).hitl.reviewedBrief.includes('需人工'));
+});
+
+test('applyDiagnosis：红线—recoverable:false 的 retry 被强制 escalate（不重跑）', async () => {
+  let runs = 0;
+  const { engine, store } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a', status: 'error', error: { category: 'read', recoverable: false }, retryCount: 0 })],
+      { status: 'error' }),
+    async () => { runs++; return { status: 'done' }; }
+  );
+  await engine.applyDiagnosis('w1', { stepId: 'a', action: 'retry', reason: '大脑误判' });
+  assert.strictEqual(runs, 0);                               // 不可逆绝不重跑
+  assert.strictEqual(wf0(store).steps[0].status, 'paused');  // 强制转人工
+});
+
+test('applyDiagnosis：红线—retryCount 达上限的 retry 被强制 escalate（不重跑）', async () => {
+  let runs = 0;
+  const { engine, store } = setupEngine(
+    mkSkeleton([mkStep({ id: 'a', status: 'error', error: { category: 'read', recoverable: true }, retryCount: 2 })],
+      { status: 'error' }),
+    async () => { runs++; return { status: 'done' }; }
+  );
+  await engine.applyDiagnosis('w1', { stepId: 'a', action: 'retry', reason: '超限仍重试' });
+  assert.strictEqual(runs, 0);                               // 达上限不重跑
+  assert.strictEqual(wf0(store).steps[0].status, 'paused');
 });

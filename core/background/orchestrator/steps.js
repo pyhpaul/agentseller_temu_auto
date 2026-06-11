@@ -47,7 +47,7 @@
         id: d.id, label: d.label, feature: d.feature, type: d.type,
         reversible: d.reversible, domain: d.domain, target: d.target || null,
         status: 'pending', startedAt: null, endedAt: null,
-        result: null, brainBrief: '(确定性)', note: null, committing: false, error: null,
+        result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0,
       })),
       hitl: null,
       tmpTabs: [],

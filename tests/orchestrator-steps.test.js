@@ -69,3 +69,8 @@ test('buildInitialWorkflow: gen_label step 带 target（续刀 auto_gen_label）
   assert.strictEqual(gl.target.url, 'https://seller.temu.com/goods/label');
   assert.strictEqual(gl.target.readySignal, 'tr[data-testid="beast-core-table-body-tr"]');
 });
+
+test('buildInitialWorkflow: step 带 retryCount=0（Plan 3 self-heal 重试上限）', () => {
+  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
+  assert.ok(wf.steps.every(s => s.retryCount === 0));
+});

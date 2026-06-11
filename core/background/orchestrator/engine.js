@@ -15,6 +15,7 @@
   const { decideRecovery } = rec;
 
   const MAX_LOOP = 100;   // advance 循环上限防御（13 步 + cursor 推进正常 < 30 轮）
+  const MAX_RETRY = 2;    // self-heal 重试上限红线（spec §6；与 brain/diagnoser MAX_RETRY 对齐）
 
   function findWorkflow(skeleton, workflowId) {
     const list = (skeleton && skeleton.batch && skeleton.batch.workflows) || [];
@@ -45,6 +46,7 @@
   function makeEngine(deps) {
     const { read, queue, stepRunner } = deps;
     const now = deps.now || (() => null);
+    const onStepSettled = deps.onStepSettled || (() => {});   // Plan 3：每步落地后通知（上报 STEP_RESULT），默认 noop
 
     // 改 skeleton 里某 workflow（走 queue 串行化；workflow 不存在则跳过写）
     function mutateWorkflow(workflowId, fn) {
@@ -87,6 +89,7 @@
               }
               w.updatedAt = now();
             });
+            onStepSettled(workflowId, step, res);   // Plan 3：通知（上报 STEP_RESULT 带 error+retryCount）；含 throw（res 已被 catch 包成 error）
             continue;
           }
           case 'pause-hitl': {
@@ -146,7 +149,38 @@
       return decision;
     }
 
-    return { advance, recover };
+    // Plan 3：应用大脑诊断决策（STATE_PATCH）。红线兜底（防大脑发错）后 retry / escalate。spec §6。
+    async function applyDiagnosis(workflowId, patch) {
+      const wf = findWorkflow(await read(), workflowId);
+      if (!wf) return;
+      const step = wf.steps[wf.cursor];
+      if (!step || step.id !== patch.stepId) return;   // 只对当前 cursor step 生效
+      let action = patch.action;
+      const err = step.error || {};
+      // 红线兜底：不可逆 / 超上限 强制 escalate（即使大脑说 retry）
+      if (action === 'retry' && (err.recoverable === false || (step.retryCount || 0) >= MAX_RETRY)) {
+        action = 'escalate';
+      }
+      if (action === 'retry') {
+        await mutateWorkflow(workflowId, w => {
+          const s = w.steps[w.cursor];
+          s.status = 'pending'; s.error = null; s.committing = false;
+          s.retryCount = (s.retryCount || 0) + 1;
+          w.status = 'running'; w.updatedAt = now();
+        });
+        await advance(workflowId);
+      } else {
+        await mutateWorkflow(workflowId, w => {
+          const s = w.steps[w.cursor];
+          s.status = 'paused'; w.status = 'paused';
+          w.hitl = buildHitl(s);
+          w.hitl.reviewedBrief = (patch.reason || '') + '（大脑转人工）';
+          w.updatedAt = now();
+        });
+      }
+    }
+
+    return { advance, recover, applyDiagnosis };
   }
 
   return { makeEngine, findWorkflow, pickProduct, buildHitl };
