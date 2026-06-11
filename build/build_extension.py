@@ -61,6 +61,21 @@ def copy_dashboard_assets():
     print(f'[build] dashboard/ → dist/extension/dashboard/  ({n} files)')
 
 
+def copy_core_root_files():
+    """拷贝 core/ 根级共享文件（contract.js 等）→ dist/extension/。
+    这些是 bg + dashboard 共用的契约模块（不属 background/content/popup/dashboard 任一子目录），
+    单独拷到 dist 根级；SW importScripts('../contract.js')、dashboard <script src="../contract.js"> 共用。
+    """
+    for name in ['contract.js']:
+        src = CORE / name
+        if not src.exists():
+            continue
+        dst = DIST / name
+        shutil.copy2(src, dst)
+        _inject_source_url(dst, str(src.relative_to(ROOT)))
+        print(f'[build] {name} → dist/extension/{name}')
+
+
 def scan_features():
     """扫描 features/*/feature.json，返回 feature 元数据列表。"""
     features = []
@@ -165,13 +180,16 @@ def render_manifest(features=None):
     features = features or []
     template = json.loads((CORE / 'manifest.template.json').read_text(encoding='utf-8'))
 
-    permissions = sorted({'nativeMessaging', 'windows', *(p for f in features for p in f.get('permissions', []))})
+    # storage 由 core 显式声明：orchestrator bg + overlay content script 都依赖 storage.local/onChanged，
+    # 不靠 feature.json 偶然聚合带入（避免「未来删 feature 致 core 组件静默失效」）。同 windows（dashboard 依赖）。
+    permissions = sorted({'nativeMessaging', 'windows', 'storage', *(p for f in features for p in f.get('permissions', []))})
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
     content_script_matches = collect_content_matches(features)
     extra_cs = collect_extra_content_scripts(features)
     # build-info.js 必须最先注入，让 ui.js 能读到 window.__AS_BUILD_INFO__
     content_scripts_js = (
-        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js', 'content/core.js']
+        # overlay.js（编排消费端 HITL 浮层）插 registry 后 core 前：归入 core 体系；自驱 IIFE 不依赖加载顺序
+        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js', 'content/overlay.js', 'content/core.js']
         + [f'features/{f["id"]}/{f["content_script"]}' for f in sorted(features, key=lambda x: x.get('order', 999))]
     )
 
@@ -189,6 +207,7 @@ def render_manifest(features=None):
 def build_all():
     clean_dist()
     copy_core_assets()
+    copy_core_root_files()          # ← 新增：拷 core 根级共享 contract.js
     copy_dashboard_assets()
     emit_build_info()
     features = scan_features()

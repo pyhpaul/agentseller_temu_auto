@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createStore } = require('../core/dashboard/state/store.js');
-const { SCHEMA_VERSION, emptyBatch } = require('../core/dashboard/contract.js');
+const { SCHEMA_VERSION, emptyBatch } = require('../core/contract.js');
 
 function sampleBatch() {
   return {

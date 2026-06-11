@@ -4,7 +4,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;          // node 单测
-  if (typeof window !== 'undefined') window.__AS_DASH_CONTRACT__ = api;                // 浏览器全局兜底
+  if (typeof self !== 'undefined') self.__AS_DASH_CONTRACT__ = api;                    // 浏览器(window===self) + SW(self) 全局
   root.__AS_DASH_CONTRACT_FACTORY__ = factory;                                        // 便于 ES export 重用
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';

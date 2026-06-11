@@ -684,6 +684,41 @@
     renderInternal(viewEl);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 编排器桥接（orch）：命令处理器 CAP_PUBLISH。检查+发布同 tab、直接回报（无跨页/无 storage）。
+  // 填表缺口降级：检查 block→validate 错误（含哪些字段）→转人工。复用 runChecks/bucketize/clickPublishImmediate。
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function capHandlePublish() {
+    if (!isEditPage()) {
+      return { status: 'error', error: { category: 'read', code: 'CAP_NOT_EDIT_PAGE', message: '当前 tab 非店小秘编辑页（URL 不含 edit）', recoverable: true } };
+    }
+    let buckets;
+    try {
+      const { results } = runChecks();
+      buckets = bucketize(results);
+    } catch (e) {
+      return { status: 'error', error: { category: 'read', code: 'CAP_CHECK_THREW', message: '合规检查异常：' + ((e && e.message) || e), recoverable: true } };
+    }
+    if (buckets.blocks.length) {
+      const names = buckets.blocks.map(b => b.rule.name).join('、');
+      return { status: 'error', error: { category: 'validate', code: 'CAP_CHECK_BLOCKED', message: '合规检查未过（' + buckets.blocks.length + ' 阻断）：' + names + '。需人工修正/填表后重试', recoverable: true } };
+    }
+    try {
+      await clickPublishImmediate();
+    } catch (e) {
+      return { status: 'error', error: { category: 'read', code: 'CAP_PUBLISH_FAILED', message: '立即发布失败：' + ((e && e.message) || e), recoverable: false } };
+    }
+    return { status: 'done', result: { published: true, warns: buckets.warns.map(w => w.rule.name), skipped: buckets.skippeds.length }, error: null };
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== 'CAP_PUBLISH') return;
+    capHandlePublish()
+      .then(sendResponse)
+      .catch((e) => sendResponse({ status: 'error', error: { category: 'read', code: 'CAP_HANDLER_THREW', message: String((e && e.message) || e), recoverable: false } }));
+    return true;  // 异步 sendResponse
+  });
+
   // ─── 注册 ────────────────────────────────────────────────────────────
   window.AgentSeller.registerFeature({
     id: 'check_and_publish',

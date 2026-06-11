@@ -258,24 +258,13 @@
     });
   }
 
-  // ── 滚动扫描批量引擎（虚拟列表：从顶滚到底，边滚边处理可见选中商品，按 key 去重）──────
-  async function onStart() {
-    const dir = getSavePath();
-    if (!dir) { AS.showToast('请先设置保存文件夹', 'warn'); return; }
-
-    // 开始前确认已选数量
-    const selCount = getSelectedCount();
-    if (selCount === 0) { AS.showToast('请先勾选要打印的商品', 'warn'); return; }
-    const msg = selCount == null
-      ? '未能读取页面已选数量，仍要开始打印吗？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）'
-      : `当前已选中 ${selCount} 个商品，确认开始打印？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）`;
-    if (!(await plConfirm(msg))) return;
-
-    setRunning(true);
+  // 纯批量引擎（从 onStart 抽取,去 UI 依赖;人工 onStart 与 onMessage 命令入口共用）。
+  // 复用 collectPrintTargets/printAndCapture/resolveUniquePath/savePdf,DOM 逻辑零改;新增 files 收集。
+  async function runBatchPrint({ dir, onProgress }) {
     ctrl('start');
     const container = findScrollContainer();
     const processed = new Set();
-    let ok = 0; const fails = [];
+    let ok = 0; const fails = []; const files = [];
     if (PL_DIAG) console.log('[PL-DIAG] 滚动容器 h=', container.scrollHeight, 'client=', container.clientHeight);
     try {
       container.scrollTop = 0;
@@ -286,7 +275,7 @@
         if (fresh.length) {
           const t = fresh[0];
           processed.add(t.key);
-          setStatus(`打印中…已完成 ${ok}${fails.length ? `，失败 ${fails.length}` : ''}`);
+          if (onProgress) onProgress(ok, fails.length);
           if (PL_DIAG) console.log(`[PL-DIAG] >>> key=${t.key} qty="${t.qty}" track="${t.trackingRaw}"`);
           try {
             const info = window.__PLNaming.parseTrackingInfo(t.trackingRaw);
@@ -294,7 +283,7 @@
             const bytes = await printAndCapture(t.btn, 8000);
             const path = await resolveUniquePath(dir, baseName);
             await savePdf(path, bytes);
-            ok += 1;
+            files.push(path); ok += 1;
           } catch (err) {
             if (PL_DIAG) console.log('[PL-DIAG] 失败', t.key, err.message);
             fails.push(`${t.key || '?'}(${t.qty || '?'}): ${err.message}`);
@@ -309,9 +298,32 @@
       }
     } finally {
       ctrl('stop');
-      setRunning(false);
       if (PL_DIAG) console.log('[PL-DIAG] === 完成 处理 key 数:', processed.size, '成功:', ok, '失败:', fails.length);
     }
+    return { ok, fails, files, processedCount: processed.size };
+  }
+
+  // ── 滚动扫描批量引擎（虚拟列表：从顶滚到底，边滚边处理可见选中商品，按 key 去重）──────
+  async function onStart() {
+    const dir = getSavePath();
+    if (!dir) { AS.showToast('请先设置保存文件夹', 'warn'); return; }
+
+    // 开始前确认已选数量
+    const selCount = getSelectedCount();
+    if (selCount === 0) { AS.showToast('请先勾选要打印的商品', 'warn'); return; }
+    const msg = selCount == null
+      ? '未能读取页面已选数量，仍要开始打印吗？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）'
+      : `当前已选中 ${selCount} 个商品，确认开始打印？\n\n（会自动滚动列表逐个打印并保存到预设文件夹）`;
+    if (!(await plConfirm(msg))) return;
+
+    setRunning(true);
+    let r;
+    try {
+      r = await runBatchPrint({ dir, onProgress: (ok, nf) => setStatus(`打印中…已完成 ${ok}${nf ? `，失败 ${nf}` : ''}`) });
+    } finally {
+      setRunning(false);
+    }
+    const { ok, fails } = r;
     const total = ok + fails.length;
     if (fails.length) console.warn('[PL] 失败明细:', fails);
     // 对账：实际处理数 < 开始时「已选」数 → 有漏（取不到单号/够不到的行），显式告警而非静默
@@ -330,6 +342,45 @@
       AS.showToast(`全部完成：${ok} 个`, 'success');
     }
   }
+
+  // ── 编排器命令入口（fire-forget:bg 发 PL_START_BATCH → 立即 ack;content 后台跑完写 pl_state）──
+  // 与人工「开始打印」并存。长批量逼近 SW 5min,故不让 bg 一直 await,完成信号走 storage。
+  const PL_STATE_KEY = 'pl_state';
+  async function plSetState(patch) {
+    const cur = (await chrome.storage.local.get(PL_STATE_KEY))[PL_STATE_KEY] || {};
+    await chrome.storage.local.set({ [PL_STATE_KEY]: { ...cur, ...patch, updatedAt: Date.now() } });
+  }
+  async function plHandleStartBatch(data) {
+    // 1. 就绪等待（fresh tab handler 铁律:首行 waitForEl;节点出现≠可交互由 collectPrintTargets 兜）
+    try { await U.waitForEl('tr[data-testid="beast-core-table-body-tr"]', document, 15000); }
+    catch (e) { return { ok: true, started: false, error: '读取失败:待打包订单表格 15s 未出现(' + e.message + ')' }; }
+    // 2. 保存路径（D3:自动化态优先 data.saveDir,回退用户曾手动设的 localStorage）
+    const dir = (data && data.saveDir) || getSavePath();
+    if (!dir) return { ok: true, started: false, error: '数据校验:未设置标签保存文件夹' };
+    // 3. 校验有目标（D4:扫已勾选;无目标报错不静默全打）
+    const targets = collectPrintTargets().filter((t) => t.key);
+    if (!targets.length) return { ok: true, started: false, error: '数据校验:无选中的待打包商品' };
+    // 4. fire-forget:写 running,不 await runBatchPrint,立即 ack;后台跑完写终态
+    await plSetState({ status: 'running', total: targets.length, ok: 0, files: [], saveDir: dir });
+    runBatchPrint({ dir }).then(async (r) => {
+      const status = r.ok > 0 && !r.fails.length ? 'done' : 'error';   // 自动化无人盯:部分失败=漏发,报 error
+      await plSetState({
+        status, ok: r.ok, files: r.files, failedCount: r.fails.length, fails: r.fails, saveDir: dir,
+        errorCategory: status === 'error' ? 'business' : null,
+        error: status === 'error'
+          ? (r.fails.length ? '部分失败:' + r.fails.join('; ') : '未打印任何标签(扫描到 0 个可打商品)')
+          : null,
+      });
+    }).catch(async (e) => {
+      await plSetState({ status: 'error', errorCategory: 'business', error: String(e?.message || e) });
+    });
+    return { ok: true, started: true };
+  }
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== 'PL_START_BATCH') return;   // 只接管本命令,其余放行
+    plHandleStartBatch(msg.data).then(sendResponse).catch((e) => sendResponse({ ok: true, started: false, error: String(e?.message || e) }));
+    return true;   // 异步通道
+  });
 
   AS.registerFeature({
     id: 'packing_label',

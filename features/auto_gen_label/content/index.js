@@ -1083,7 +1083,7 @@
     const flow = getCFlow();
     if (!flow?.active || flow.step !== 1) return;
     try { await runStep1(flow); }
-    catch (e) { U.showToast('步骤1失败: ' + e.message, 'err'); clearCFlow(); }
+    catch (e) { U.showToast('步骤1失败: ' + e.message, 'err'); aglReportError(aglCatFromMsg(e.message), 'AGL_STEP1_FAILED', e.message); clearCFlow(); }
   }
 
   // 读当前搜索类型下拉的选中值（SPU / SKC）；供诊断和写后读校验用
@@ -1211,10 +1211,10 @@
     if (!flow?.active) return;
     if (flow.step === 2) {
       try { await runStep2(flow); }
-      catch (e) { U.showToast('步骤2失败: ' + e.message, 'err'); clearCFlow(); clearImgFlow(); }
+      catch (e) { U.showToast('步骤2失败: ' + e.message, 'err'); aglReportError(aglCatFromMsg(e.message), 'AGL_STEP2_FAILED', e.message); clearCFlow(); clearImgFlow(); }
     } else if (flow.step === 3) {
       try { await runStep3(getCFlow()); }
-      catch (e) { U.showToast('步骤3失败: ' + e.message, 'err'); clearCFlow(); clearImgFlow(); }
+      catch (e) { U.showToast('步骤3失败: ' + e.message, 'err'); aglReportError(aglCatFromMsg(e.message), 'AGL_STEP3_FAILED', e.message); clearCFlow(); clearImgFlow(); }
     }
   }
 
@@ -1388,6 +1388,7 @@
     const confirmBtn = drawer.closest('.rocket-drawer')
       ?.querySelector('.rocket-drawer-footer button.rocket-btn-primary');
     if (!confirmBtn) throw new Error('未找到确认按钮');
+    await aglReportPhase('committing');  // 合规提交=首个写数据点；adapter onTick 据此标 committing
     confirmBtn.click();
 
     const continueToPhase3 = flow.continueToPhase3;
@@ -1409,6 +1410,7 @@
     await U.sleep(1200);
     const uploadOk = await checkComplianceColumnAllSuccess(flow.spuId);
     if (!uploadOk) {
+      aglReportError('validate', 'AGL_COMPLIANCE_UPLOAD_FAILED', '商品合规信息上传失败，请人工处理');
       clearCFlow();
       U.showToast('②❌ 商品合规信息上传失败，请人工处理', 'err');
       return;
@@ -1529,7 +1531,7 @@
     const flow = getImgFlow();
     if (!flow?.active) return;
     try { await runImgSearch(flow); }
-    catch (e) { U.showToast('主图上传失败: ' + e.message, 'err'); clearImgFlow(); }
+    catch (e) { U.showToast('主图上传失败: ' + e.message, 'err'); aglReportError(aglCatFromMsg(e.message), 'AGL_IMG_FAILED', e.message); clearImgFlow(); }
   }
 
   // ── 搜索商品并点修改按钮 ─────────────────────────────────────────────────
@@ -1607,6 +1609,7 @@
     console.log('[TAL] 上传并识别已点击');
 
     await U.sleep(1000);
+    await aglReportDone({ spuId: flow.spuId || null, labelPng: flow.labelPngPath || null });
     clearImgFlow();
     U.showToast('③ 主图上传完成 ✓', 'ok');
   }
@@ -1714,6 +1717,97 @@
     refreshPathsUI();
     refreshProductUI();
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 编排器桥接（orch）：content 跨页自驱、SW adapter 无法 await。
+  // 命令入口 fire-forget 启动 Phase1+自驱；三收尾点写 chrome.storage.local['agl_state']；adapter 轮询。
+  // gating：talOrch=1 才写（手动点 button 不污染 agl_state）。
+  // ═══════════════════════════════════════════════════════════════════════════
+  function aglIsOrch() {
+    try { return localStorage.getItem('talOrch') === '1'; } catch { return false; }
+  }
+  function aglClearOrch() {
+    try { localStorage.removeItem('talOrch'); } catch (e) { console.warn('[TAL][orch] 清 talOrch 失败', e); }
+  }
+  // 错误分层：content 既有 throw 用「数据校验:」前缀标 validate，其余按 read（DOM 没找到/超时）。
+  function aglCatFromMsg(msg) {
+    return /数据校验/.test(String(msg || '')) ? 'validate' : 'read';
+  }
+  async function aglWriteState(obj) {
+    try { await chrome.storage.local.set({ agl_state: { ...obj, updatedAt: Date.now() } }); }
+    catch (e) { console.warn('[TAL][orch] 写 agl_state 失败', e); }
+  }
+  async function aglReportDone(result) {
+    if (!aglIsOrch()) return;
+    await aglWriteState({ status: 'done', phase: 'done', result: result || {} });
+    aglClearOrch();
+  }
+  async function aglReportError(category, code, message) {
+    if (!aglIsOrch()) return;
+    await aglWriteState({ status: 'error', phase: 'error', category, code, message: String(message || '') });
+    aglClearOrch();
+  }
+  async function aglReportPhase(phase) {
+    if (!aglIsOrch()) return;
+    await aglWriteState({ status: 'running', phase });
+  }
+
+  // 命令入口：编排器发 AGL_GEN_LABEL 触发。无人选行 → data.skc 反查；路径缺 → 不启动报 reason。
+  // fire-forget：立即 ack started；Phase1 后台 IIFE 在条码页跑，done 后 location.href 跳 Phase2，
+  // 之后 content 自驱（onPageChange → checkAndRunStep1...），三收尾点写 agl_state。
+  async function aglHandleGenLabel(data) {
+    const { templatePath, outputDir } = getPaths();
+    if (!templatePath || !outputDir) return { ok: true, started: false, reason: 'NO_PATHS' };
+    const skc = data && data.skc;
+    if (!skc) return { ok: true, started: false, reason: 'NO_SKC' };
+    const row = findRowBySkc(skc);
+    if (!row) return { ok: true, started: false, reason: 'ROW_NOT_FOUND' };
+    const rowData = extractRowData(row);
+    if (!rowData || !rowData.skcSku) return { ok: true, started: false, reason: 'NO_SKC_SKU' };
+
+    // 清旧自驱状态 + 置 orch gating + 初态
+    clearCFlow();
+    clearImgFlow();
+    try { localStorage.setItem('talOrch', '1'); } catch (e) { console.warn('[TAL][orch] 置 talOrch 失败', e); }
+    await aglWriteState({ status: 'running', phase: 'phase1' });
+
+    // fire-forget：Phase1 在条码页同 tab 跑，成功后 location.href 跳转启动 Phase2/3 自驱
+    (async () => {
+      try {
+        const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
+        U.ensureExtensionAlive();
+        const result = await sendNative('PROCESS_LABEL', {
+          skcNumber: skcNumber || rowData.skcNumber,
+          skcSku: rowData.skcSku,
+          barcodePngB64, templatePath, outputDir, widthRatio: getWidthRatio(),
+        });
+        if (!result?.success) throw new Error(result?.error || '标签生成失败');
+        if (result.output_png) {
+          localStorage.setItem('talLabelPng', result.output_png);
+          localStorage.setItem('talLabelSkc', rowData.skcNumber || '');
+        }
+        setCFlow({
+          active: true, step: 1,
+          skcNumber: rowData.skcNumber, skcSku: rowData.skcSku,
+          spuId: null, continueToPhase3: true,
+        });
+        // 编排无用户手势：location.href 同 tab 跳（非 window.open，避免弹窗拦截）
+        window.location.href = '/govern/compliant-live-photos';
+      } catch (err) {
+        await aglReportError(aglCatFromMsg(err?.message), 'AGL_PHASE1_FAILED', err?.message || err);
+      }
+    })();
+
+    return { ok: true, started: true };
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.type !== 'AGL_GEN_LABEL') return;
+    aglHandleGenLabel(msg.data || {})
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: true, started: false, reason: 'HANDLER_THREW', error: String((e && e.message) || e) }));
+    return true;  // 异步 sendResponse
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 注册到 core
