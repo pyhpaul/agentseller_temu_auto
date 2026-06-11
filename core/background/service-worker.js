@@ -645,6 +645,14 @@ importScripts('ws-client.js');
 // 第一刀 handlers 空（入站 STATE_PATCH 诊断决策留第二刀）。
 const orchWsClient = self.__AS_WS__.startWsClient({
   onStatus: s => console.log('[orch-ws]', s),
+  handlers: {
+    // 大脑诊断决策落地（spec §5/§6）：仍由 bg 写 storage；applyDiagnosis 含红线兜底。
+    // orchEngine 在下方定义——此为运行时回调（收到消息才执行），届时 orchEngine 已初始化，闭包延迟引用安全。
+    STATE_PATCH: (data) => {
+      orchEngine.applyDiagnosis(data.workflowId, data)
+        .catch(e => console.warn('[orch-ws] applyDiagnosis 失败', e));
+    },
+  },
 });
 
 const ORCH = {
@@ -914,22 +922,25 @@ const ORCH_ADAPTERS = {
 };
 
 // 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）。
-// Plan 3 第一刀：step 执行后向大脑上报 STEP_RESULT（fire-forget；大脑离线则 send 返回 false、try 兜底）。
+// STEP_RESULT 上报移到 engine onStepSettled（覆盖 throw + 带 retryCount，Plan 3 第二刀）。
 async function orchRealStepRunner(step, wf) {
   const adapter = ORCH_ADAPTERS[step.id];
-  const res = adapter ? await adapter(step, wf) : await orchStubStepRunner(step);
-  try {
-    if (orchWsClient) orchWsClient.send('STEP_RESULT', {
-      workflowId: wf.id, stepId: step.id,
-      status: (res && res.status) || null,
-      error: (res && res.error) || null,
-    });
-  } catch (e) { console.debug('[orch-ws] STEP_RESULT 发送忽略', e); }
-  return res;
+  return adapter ? adapter(step, wf) : orchStubStepRunner(step);
 }
 
 const orchEngine = ORCH.engine.makeEngine({
   read: orchRead, queue: orchQueue, stepRunner: orchRealStepRunner, now: () => Date.now(),
+  // Plan 3 第二刀：每步落地后上报 STEP_RESULT（带 retryCount，含 throw 包装的 error）。fire-forget。
+  onStepSettled: (workflowId, step, res) => {
+    try {
+      if (orchWsClient) orchWsClient.send('STEP_RESULT', {
+        workflowId, stepId: step.id,
+        status: (res && res.status) || null,
+        error: (res && res.error) || null,
+        retryCount: step.retryCount || 0,
+      });
+    } catch (e) { console.debug('[orch-ws] STEP_RESULT 发送忽略', e); }
+  },
 });
 
 // SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
