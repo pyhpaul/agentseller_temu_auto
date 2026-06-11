@@ -637,10 +637,15 @@ importScripts(
   'orchestrator/engine.js',
 );
 
-// WS 通道架子（2-2c-2）：加载 WsClient 类（挂 self.__AS_WS__）；**不自启**——
-// 架子阶段无大脑 server，startWsClient 留 Plan 3 在合适时机调（如 WF_START）。
-// release：随 background/ 进包但顶层不连 → 沉睡 dead code 无害（同 orchestrator/OPEN_MONITOR）。
+// WS 通道（Plan 3 第一刀起自启）：加载 WsClient 类（挂 self.__AS_WS__）。
 importScripts('ws-client.js');
+
+// bg ws-client 自启：连大脑 localhost:8787。createWsClient onopen 自动发 HELLO{role:bg} + PING 保活。
+// 连不上（dev 未起大脑 / release 无大脑）→ 指数退避重连（架子已有），不影响 bg 其他功能。
+// 第一刀 handlers 空（入站 STATE_PATCH 诊断决策留第二刀）。
+const orchWsClient = self.__AS_WS__.startWsClient({
+  onStatus: s => console.log('[orch-ws]', s),
+});
 
 const ORCH = {
   contract: self.__AS_DASH_CONTRACT__,
@@ -908,10 +913,19 @@ const ORCH_ADAPTERS = {
   publish: orchAdapterPublish,
 };
 
-// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
+// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）。
+// Plan 3 第一刀：step 执行后向大脑上报 STEP_RESULT（fire-forget；大脑离线则 send 返回 false、try 兜底）。
 async function orchRealStepRunner(step, wf) {
   const adapter = ORCH_ADAPTERS[step.id];
-  return adapter ? adapter(step, wf) : orchStubStepRunner(step);
+  const res = adapter ? await adapter(step, wf) : await orchStubStepRunner(step);
+  try {
+    if (orchWsClient) orchWsClient.send('STEP_RESULT', {
+      workflowId: wf.id, stepId: step.id,
+      status: (res && res.status) || null,
+      error: (res && res.error) || null,
+    });
+  } catch (e) { console.debug('[orch-ws] STEP_RESULT 发送忽略', e); }
+  return res;
 }
 
 const orchEngine = ORCH.engine.makeEngine({
