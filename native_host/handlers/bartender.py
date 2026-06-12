@@ -78,15 +78,22 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
             ),
         }
 
-    # 命名 = SKC-<SKC编号>-<SKU货号>；SKU货号前端已校验非空，此处仍兜底（空则退回纯 SKC-编号）
-    stem = f'SKC-{skc_number}-{skc_sku}' if skc_sku else f'SKC-{skc_number}'
-    safe_stem = stem.replace('/', '_').replace('\\', '_').replace(':', '_')
-    sub_dir   = os.path.join(output_dir, safe_stem)
+    # 命名规则改进：
+    # 文件夹：SKC ID - SKC货号基础部分（如 12345-CLI319）
+    #        SKC货号可能含属性（如 CLI319-White-2pcs），此处提取基础部分（CLI319）
+    # 文件：SKU货号完整形式（如 CLI319-White-2pcs）
+    skc_sku_base = skc_sku.split('-')[0] if skc_sku else ''
+    folder_name = f'{skc_number}-{skc_sku_base}' if skc_sku_base else str(skc_number)
+    folder_safe = folder_name.replace('/', '_').replace('\\', '_').replace(':', '_')
+    sub_dir = os.path.join(output_dir, folder_safe)
     os.makedirs(sub_dir, exist_ok=True)
 
-    out_pdf        = os.path.join(sub_dir, f'{safe_stem}.pdf')
-    out_raw_png    = os.path.join(sub_dir, f'{safe_stem}-raw.png')
-    out_jpeg_final = os.path.join(sub_dir, f'{safe_stem}.jpeg')
+    file_stem = skc_sku if skc_sku else f'label-{skc_number}'
+    file_safe = file_stem.replace('/', '_').replace('\\', '_').replace(':', '_')
+
+    out_pdf        = os.path.join(sub_dir, f'{file_safe}.pdf')
+    out_raw_png    = os.path.join(sub_dir, f'{file_safe}-raw.png')
+    out_jpeg_final = os.path.join(sub_dir, f'{file_safe}.jpeg')
 
     png_path = _save_b64_png(barcode_png_b64, skc_number)
     try:
