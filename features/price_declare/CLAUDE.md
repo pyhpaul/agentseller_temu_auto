@@ -47,7 +47,7 @@ Hub 面板设置项：
 
 **流程**：处理完一条行后，切 tab 触发 Temu React 重新请求列表数据，等目标行从 `findPendingRows()` 消失才继续，最多切 5 次，5 次后 fallback reload。
 
-**同步判断 key**：优先用 `SPU ID:SKC ID` 组合（`readSKUKey(row)`），不可读时降级到 HJD。
+**同步判断 key**：优先用 `SPU ID:SKC ID` 组合（`readProductKey(row)`，商品唯一 key，非 SKU 变体级），不可读时降级到 HJD。
 
 **注意**：「行消失」不等于「Temu 后端真完成」。多 SKU 场景下 Temu 后端**异步分批处理**同 SPU+SKC 的调价单，React 可能先把部分行从 DOM 移除（误信号「已消失」），但实际后端还在处理，下一次 confirm 会被拒（数据对不上）。所以 `triggerRefresh` 内行消失判断前的 sleep 设到 2000ms，配合多信号兜底降低误判。
 
