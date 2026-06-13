@@ -209,6 +209,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'OPEN_FOLDER') {
+    sendToNativeHost({
+      action: 'open_folder',
+      path: msg.data.path
+    })
+      .then(result => sendResponse({ success: true, result }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (msg.type === 'GET_STATUS') {
     sendResponse({ connected: nativePort !== null });
   }
