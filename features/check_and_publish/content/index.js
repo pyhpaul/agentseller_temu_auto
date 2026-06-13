@@ -187,6 +187,7 @@
     return { value: null, el: null, source: null };
   }
 
+  // 取变种表的 variationSku 输入框值数组；此字段即规范定义的「SKU货号」（含属性的变体完整货号）。
   function getVariationSkuField() {
     const els = [...document.querySelectorAll('input[name="variationSku"]')];
     return {
@@ -398,7 +399,7 @@
         };
         grab('标题', ctx.fields.title?.value);
         grab('描述', ctx.fields.description?.value);
-        (ctx.fields.variationSku?.value || []).forEach((s, i) => grab(`SKU#${i + 1}`, s));
+        (ctx.fields.variationSku?.value || []).forEach((s, i) => grab(`SKU货号#${i + 1}`, s));
         if (reports.length) {
           return { pass: false, reason: '含中文标点（店小秘官方：会导致发布失败）', hits: reports };
         }
@@ -423,7 +424,7 @@
     },
     {
       id: 'sku_no_chinese',
-      name: 'SKU 不能含中文/中文标点',
+      name: 'SKU货号 不能含中文/中文标点',
       field: 'variationSku',
       severity: 'block',
       check(ctx) {

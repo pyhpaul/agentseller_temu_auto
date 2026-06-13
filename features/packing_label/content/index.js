@@ -150,7 +150,8 @@
 
   // ── 商品枚举 ──────────────────────────────────────────────────────────────
   // 表格 rowspan 分组结构：一个物流分组 = 含 checkbox 的首 tr + 后续无 checkbox 的同组 tr，
-  // 每个 tr 对应一个商品。分组级单元格（checkbox / 物流单号 / 分组操作列）用 rowspan 合并在首 tr。
+  // 每个 tr 对应一个商品变体(SKU)；同 SKC 多 SKU 共享分组级物流单号。
+  // 分组级单元格（checkbox / 物流单号 / 分组操作列）用 rowspan 合并在首 tr。
 
   function extractTrackingRaw(tr) {
     const spans = Array.from(tr.querySelectorAll('a[data-testid="beast-core-button-link"] span'));
@@ -178,7 +179,7 @@
     return m ? m[0] : '';
   }
 
-  // 当前 DOM 里选中分组下每个商品 → {btn, key, trackingRaw（分组级物流单号）, qty（商品级发货数量）}
+  // 当前 DOM 里选中分组下每个 SKU → {btn, key, trackingRaw（分组级物流单号，多 tr 共享）, qty（商品级发货数量）}
   function collectPrintTargets() {
     const trs = Array.from(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]'));
     const targets = [];

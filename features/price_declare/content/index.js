@@ -673,11 +673,11 @@
     if (type === 'single') {
       await A.fillReason(modal, state.settings.reason)
       await A.clickConfirm(modal)
-      log('info', '单SKU 已确认', hjd)
+      log('info', '单调价单 已确认', hjd)
     } else if (type === 'multi') {
       await A.selectAllNoAdjust(modal)
       await A.clickConfirm(modal)
-      log('info', '多SKU 已确认', hjd)
+      log('info', '多调价单 已确认', hjd)
     } else {
       const e = new Error('UnknownModalType')
       e.code = 'UnknownModalType'
@@ -918,7 +918,7 @@
             if (skuKey) {
               const sameKeyRows = S.findPendingRows().filter(r => S.readSKUKey(r) === skuKey)
               sameKeyRows.forEach(r => { const h = S.readHJD(r); if (h) skippedHJDs.add(h) })
-              log('warn', `跳过 SKU=${skuKey} 共 ${sameKeyRows.length} 条调价单（confirm 被拒）`)
+              log('warn', `跳过商品 ${skuKey} 共 ${sameKeyRows.length} 条调价单（confirm 被拒）`)
             } else if (hjd) {
               skippedHJDs.add(hjd)
               log('warn', `跳过 HJD=${hjd}（confirm 被拒，无 SKU key 降级）`)
