@@ -28,7 +28,7 @@ python3 -m brain                            # 前台跑，监听 ws://localhost:
 
 ```bash
 node --test tests/*.test.js          # 预期 87 pass（⚠ 必须 *.test.js，整目录会把 pytest .py 当 JS 失败）
-python3 -m pytest tests/             # 预期 49 pass
+python3 -m pytest tests/             # 预期 51 pass
 ```
 
 ---
