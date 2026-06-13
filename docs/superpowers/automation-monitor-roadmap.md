@@ -16,6 +16,11 @@
 |------|------|
 | 设计 spec(架构 / 数据契约 / UI 规范 / 集成点 / 待对齐风险) | `docs/superpowers/specs/2026-06-08-automation-monitor-and-data-contract-design.md` |
 | Plan 1 实施清单(9 Task / 55 Step / DoD) | `docs/superpowers/plans/2026-06-08-dashboard-monitor-landing.md` |
+| Plan 2 spec(确定性编排骨架:13 步 + 状态机 + HITL) | `docs/superpowers/specs/2026-06-09-automation-orchestrator-deterministic-skeleton-design.md` |
+| Plan 3 spec(model-agnostic LLM 大脑) | `docs/superpowers/specs/2026-06-10-plan3-llm-brain-design.md` |
+| Plan 3 各刀 plan + 验证说明 | `docs/superpowers/plans/2026-06-1*-plan3-*.md` + `docs/superpowers/2026-06-1*-plan3-*-verification.md` |
+| HITL 回填 plan + 验证 | `docs/superpowers/plans/2026-06-13-orchestrator-hitl-fill-l3.md` + `docs/superpowers/2026-06-13-hitl-fill-l3-verification.md` |
+| **chrome e2e 验证清单(L0-L4,当前待跑)** | `docs/superpowers/2026-06-13-l3-chrome-e2e-checklist.md` |
 | dashboard 运行时结构 + 发版隔离机制 + openMonitor API | 根 `CLAUDE.md`「监控 dashboard」段 +「dashboard 发版隔离」段 |
 | UI 视觉真源(自包含单文件,浏览器可直接开) | `ui-prototype/dashboard.html` |
 
@@ -23,12 +28,14 @@
 
 | Plan | 范围 | 状态 |
 |------|------|------|
-| **Plan 1** | dashboard 落地:监控 UI + 数据层(store 合并 storage 骨架 + mock WS 血肉)+ 接真实 `as_workflow_state` + Hub 入口 | ✅ 代码完成 · Chrome 端到端验证 OK(2026-06-09)· 合入 main |
-| **Plan 2** | storage 写入层 + 业务页就地 HITL 浮层(只读 storage,绕 CSP) | 待写 spec/plan |
-| **Plan 3** | WebSocket client(扩展 background ↔ localhost WS)+ 大脑事件端到端 + MV3 SW 保活实测 | 待写 spec/plan |
-| **Plan 4** | 编排大脑(外部 Claude Agent SDK 进程)+ 现有 feature 改造为「可调用工具」 | 待写 spec/plan |
+| **Plan 1** | dashboard 落地:监控 UI + 数据层(store 合并 storage 骨架 + mock WS 血肉)+ 接真实 `as_workflow_state` + Hub 入口 | ✅ 合入 main(PR #52/#53) · Chrome 端到端验证 OK(2026-06-09) |
+| **Plan 2** | 确定性编排骨架:bg 事件驱动状态机串 13 原子步(6 AUTO feature adapter + 7 HITL 人工卡点)+ 业务页 HITL 浮层(只读 storage 绕 CSP)+ WS 架子(不自启) | ✅ 合入 main(PR #54,--no-ff) · chrome e2e 延后到大脑搭完一起验 |
+| **Plan 3** | model-agnostic LLM 大脑:WS 端到端管道 + 诊断器 self-heal(两红线+三分层) + overlay WF_START 启动入口 + 换模型验证 + 发版隔离 D(ws 按需连) | ✅ 四刀 + 收尾全合入 main(PR #57,--no-ff) |
+| **HITL 回填打通 L3** | 激活回填型 HITL(步2 collect_dxm 填 skc / 步5 compare_1688 填 url1688 / 步6 order_1688 填 orderNo1688)→ 下游 AUTO 步拿到数据,打通端到端数据流 | ✅ 合入 main(PR #58 + 收尾 #59) · 子 agent review APPROVE |
 
-> Plan 2-4 范围为暂定方向,以后续各自 spec 为准。
+> **当前唯一剩 = chrome e2e 端到端验证**(task #30,照 `docs/superpowers/2026-06-13-l3-chrome-e2e-checklist.md` 跑,需起大脑 `python3 -m brain` + 测试商品 + 授权)——解锁发版的关卡,⚠ 验证通过前不推 tag。
+> **后续刀**(spec §12,需 chrome e2e 验证基础 + brainstorming + 用户定优先级,勿在未验证基础上盲目摞):多变种 per-SKU 契约、大脑回填、不可逆复核、可偏离。
+> 注:原「Plan 4 = 编排大脑(Claude Agent SDK)」已被 Plan 3 取代——model-agnostic 颠覆「锁定单一家」决策(spec §11.1:编排框架自建模型无关 + LLM 后端可插拔 LiteLLM/OpenAI-compat)。
 
 ## 工作流隔离策略(2026-06-09 定)
 
