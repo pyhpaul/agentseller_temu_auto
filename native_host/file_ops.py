@@ -165,3 +165,22 @@ def pick_folder(msg: dict) -> dict:
     if not path:
         return {'success': False, 'error': '用户取消'}
     return {'success': True, 'path': path}
+
+
+def open_folder(msg: dict) -> dict:
+    """用系统资源管理器打开文件夹（Windows os.startfile）。出参 {success} 或 {success: False, error}。
+
+    auto_gen_label 标签生成后可选「自动打开输出文件夹」用。非致命能力：
+    路径不存在/非 Windows/打开失败都只返回 error，调用方 silent 兜底不影响主流程。
+    """
+    path = msg.get('path', '')
+    if not path or not os.path.isdir(path):
+        return {'success': False, 'error': f'文件夹不存在: {path}'}
+    startfile = getattr(os, 'startfile', None)  # Windows-only API
+    if startfile is None:
+        return {'success': False, 'error': '当前系统不支持打开文件夹（仅 Windows）'}
+    try:
+        startfile(path)
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    return {'success': True}

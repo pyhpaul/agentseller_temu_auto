@@ -122,6 +122,25 @@
     return (stored > 0 && stored <= 1) ? stored : 0.45;
   }
 
+  // 「生成后自动打开文件夹」开关（feature 面板勾选，localStorage 持久化）
+  function shouldOpenFolderAfter() {
+    return localStorage.getItem('talOpenFolderAfter') === '1';
+  }
+
+  // 勾选时用资源管理器打开标签输出的 SKC 子文件夹。非致命：失败只 warn 不中断主流程。
+  // 同 SKC 多 SKU 在同一文件夹，取首个标签的 dirname 即可；多 SKC 仅打开第一个。
+  async function maybeOpenOutputFolder(labelPaths) {
+    if (!shouldOpenFolderAfter()) return;
+    const firstPng = labelPaths?.[0]?.pngPath;
+    if (!firstPng) return;
+    const folder = firstPng.replace(/[\\/][^\\/]*$/, '');  // 去掉末尾文件名，得 SKC 子文件夹
+    try {
+      await sendNative('OPEN_FOLDER', { path: folder });
+    } catch (e) {
+      console.warn('[TAL] 打开输出文件夹失败（非致命）:', e?.message || e);
+    }
+  }
+
   function setProducts(products) {
     fstate.products = products || [];
     refreshProductUI();
@@ -355,6 +374,8 @@
       }
       await U.sleep(800);
 
+      await maybeOpenOutputFolder(labelPaths);
+
       // Phase 2：启动第一个商品的合规流程（同 SKC 共享，用任一 SKU 的 skcNumber 即可）
       const first = fstate.products[0];
       setCFlow({
@@ -415,6 +436,7 @@
       localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
       localStorage.setItem('talLabelSkc', fstate.products[0].skcNumber || '');
       refreshProductUI();
+      await maybeOpenOutputFolder(labelPaths);
       setStatus(`调试完成 ✓ ratio=${ratio}`, 'ok');
     } catch (err) {
       setStatus(`调试出错: ${err.message}`, 'err');
@@ -1760,6 +1782,10 @@
           <span class="tal-path-k">输出</span>
           <span class="tal-path-v" id="tal-path-output-v"></span>
         </div>
+        <label class="tal-opt-row" for="tal-opt-openfolder" style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="tal-opt-openfolder">
+          <span>生成后自动打开文件夹</span>
+        </label>
       </div>
       <div class="tal-card">
         <div class="tal-card-title">当前商品</div>
@@ -1791,6 +1817,13 @@
     document.getElementById('tal-clear').addEventListener('click', clearSelection);
     document.getElementById('tal-path-template').addEventListener('click', onPickTemplate);
     document.getElementById('tal-path-output').addEventListener('click', onPickOutputDir);
+    const openFolderChk = document.getElementById('tal-opt-openfolder');
+    if (openFolderChk) {
+      openFolderChk.checked = shouldOpenFolderAfter();
+      openFolderChk.addEventListener('change', e => {
+        localStorage.setItem('talOpenFolderAfter', e.target.checked ? '1' : '0');
+      });
+    }
     if (TAL_DEBUG) {
       document.getElementById('tal-btn-debug').addEventListener('click', onRunPhase1Only);
       document.getElementById('tal-debug-ratio').addEventListener('change', e => {

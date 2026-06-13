@@ -279,6 +279,14 @@ const { output_pdf, output_png } = result;
 | `READ_FILE` | path | data (base64) |
 | `READ_FILE_SIZE` | path | size |
 | `READ_FILE_CHUNK` | path / offset / length | data (base64) |
+| `OPEN_FOLDER` | path | success（生成后「自动打开文件夹」开关用；Windows `os.startfile`，非致命） |
+
+## 生成后自动打开文件夹（开关）
+
+feature 面板「当前设置」卡片有「生成后自动打开文件夹」勾选框（localStorage `talOpenFolderAfter`，`'1'` 开）。
+勾选时，Phase 1 标签全部生成成功后，用资源管理器打开输出的 SKC 子文件夹（取首个标签 `pngPath` 的 dirname，
+同 SKC 多 SKU 共目录；多 SKC 仅打开第一个）。`onRunAllPhases`（完整流程）和 `onRunPhase1Only`（调试）
+都接 `maybeOpenOutputFolder`。失败只 `console.warn` 不中断主流程（非 Windows / 路径异常 → native 返回 error）。
 
 ## Temu 弹窗结构（条码管理页）
 

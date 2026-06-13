@@ -70,6 +70,7 @@ DISPATCH = {
     'get_installed_version': _get_installed_version,
     'pick_file': file_ops.pick_file,
     'pick_folder': file_ops.pick_folder,
+    'open_folder': file_ops.open_folder,
     'read_file': file_ops.read_file,
     'read_file_size': file_ops.read_file_size,
     'read_file_chunk': file_ops.read_file_chunk,
