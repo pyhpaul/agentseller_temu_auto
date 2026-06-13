@@ -32,12 +32,17 @@
     return out;
   }
 
-  // HITL step → workflow.hitl 摘要（首版无大脑，精简；targetUrl 供浮层「前往」，2-2b 补 step.target）
+  // HITL step → workflow.hitl 摘要。带 hitlSpec.fields 的步为回填型（editable+fields），否则纯确认。
+  // recovery 的 hitl 在 recover 内直接构造、不走这（其 editable=false 语义不变）。targetUrl 供浮层「前往」。
   function buildHitl(step) {
+    const spec = step.hitlSpec || null;
+    const fields = (spec && Array.isArray(spec.fields)) ? spec.fields : [];
     return {
       action: step.label, stepId: step.id,
       keyValues: {}, reviewedBrief: '',
-      editable: false, fieldType: null, options: null,
+      editable: fields.length > 0,
+      fieldType: null, options: null,   // 保留兼容（recovery 直构造不依赖这两）
+      fields,
       targetUrl: (step.target && step.target.url) || null,
       status: 'pending',
     };
