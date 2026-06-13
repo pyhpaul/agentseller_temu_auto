@@ -647,10 +647,28 @@ importScripts(
   'orchestrator/engine.js',
 );
 
-// WS 通道架子（2-2c-2）：加载 WsClient 类（挂 self.__AS_WS__）；**不自启**——
-// 架子阶段无大脑 server，startWsClient 留 Plan 3 在合适时机调（如 WF_START）。
-// release：随 background/ 进包但顶层不连 → 沉睡 dead code 无害（同 orchestrator/OPEN_MONITOR）。
+// WS 通道（Plan 3）：加载 WsClient 类（挂 self.__AS_WS__）。importScripts 纯定义无副作用。
 importScripts('ws-client.js');
+
+// bg ws-client 按需连（Plan 3 收尾·发版隔离 D）：不在 SW 顶层自启，改由首个 WF_* 消息触发
+// orchEnsureWs（幂等）。触发源 = 浮层「开始」(isDev 守卫,release 不注入) → release 无 WF_* →
+// 永不连 → ws 沉睡（与 orchestrator「无人发 WF_START 即沉睡」同一隔离机制，无需 package_all 剥离）。
+// ⚠ 绝不在 SW 顶层 / orchRecoverAll 调 orchEnsureWs——那会让 release 也连，破坏隔离。
+let orchWsClient = null;
+function orchEnsureWs() {
+  if (orchWsClient) return;   // 幂等：已连（或重连中）则跳过
+  orchWsClient = self.__AS_WS__.startWsClient({
+    onStatus: s => console.log('[orch-ws]', s),
+    handlers: {
+      // 大脑诊断决策落地（spec §5/§6）：仍由 bg 写 storage；applyDiagnosis 含红线兜底。
+      // orchEngine 在下方定义——运行时回调（收到消息才执行），届时已初始化，闭包延迟引用安全。
+      STATE_PATCH: (data) => {
+        orchEngine.applyDiagnosis(data.workflowId, data)
+          .catch(e => console.warn('[orch-ws] applyDiagnosis 失败', e));
+      },
+    },
+  });
+}
 
 const ORCH = {
   contract: self.__AS_DASH_CONTRACT__,
@@ -918,7 +936,8 @@ const ORCH_ADAPTERS = {
   publish: orchAdapterPublish,
 };
 
-// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）
+// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）。
+// STEP_RESULT 上报移到 engine onStepSettled（覆盖 throw + 带 retryCount，Plan 3 第二刀）。
 async function orchRealStepRunner(step, wf) {
   const adapter = ORCH_ADAPTERS[step.id];
   return adapter ? adapter(step, wf) : orchStubStepRunner(step);
@@ -926,6 +945,17 @@ async function orchRealStepRunner(step, wf) {
 
 const orchEngine = ORCH.engine.makeEngine({
   read: orchRead, queue: orchQueue, stepRunner: orchRealStepRunner, now: () => Date.now(),
+  // Plan 3 第二刀：每步落地后上报 STEP_RESULT（带 retryCount，含 throw 包装的 error）。fire-forget。
+  onStepSettled: (workflowId, step, res) => {
+    try {
+      if (orchWsClient) orchWsClient.send('STEP_RESULT', {
+        workflowId, stepId: step.id,
+        status: (res && res.status) || null,
+        error: (res && res.error) || null,
+        retryCount: step.retryCount || 0,
+      });
+    } catch (e) { console.debug('[orch-ws] STEP_RESULT 发送忽略', e); }
+  },
 });
 
 // SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
@@ -999,6 +1029,8 @@ async function orchRetry(workflowId) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // 任何 WF_* 操作前确保 ws 已连（按需连·发版隔离 D：release 无 WF_* → 不连 → 沉睡）。
+  if (msg && typeof msg.type === 'string' && msg.type.startsWith('WF_')) orchEnsureWs();
   if (msg.type === 'WF_START') {
     orchStartWorkflow(msg.data || {})
       .then(id => sendResponse({ ok: true, workflowId: id }))

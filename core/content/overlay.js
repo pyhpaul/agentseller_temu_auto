@@ -6,15 +6,12 @@
   const STORAGE_KEY = 'as_workflow_state';
   const TOTAL_STEPS = 13;
   let root = null;
+  let composing = false;                       // 空态启动入口本地 UI 状态（是否展开 label 输入框）
+  const VIEW = window.__AS_OVERLAY_VIEW__;     // 视图决策纯逻辑（overlay-view.js，content 顺序保证先加载）
 
   function send(type, data) {
     try { chrome.runtime.sendMessage({ type, data }); }
     catch (e) { console.warn('[overlay] sendMessage 失败', e); }
-  }
-  // 首版单 workflow：取 running/paused/error 那个（done/aborted 不显示）
-  function activeWorkflow(batch) {
-    const wfs = (batch && batch.workflows) || [];
-    return wfs.find(w => w && ['running', 'paused', 'error'].includes(w.status)) || null;
   }
 
   function injectStyles() {
@@ -118,9 +115,51 @@
     });
   }
 
+  // 空态启动入口（无 active workflow + dev）：默认「开始流水线」按钮 → 点击展开 label 输入框 → 发 WF_START。spec §8。
+  function renderIdle() {
+    injectStyles();
+    const el = ensureRoot();
+    if (composing) {
+      el.innerHTML =
+        `<div style="margin-bottom:6px;font-weight:600;">开始流水线</div>` +
+        `<input class="aso-field" id="aso-start-label" type="text" placeholder="商品 label（必填）"/>` +
+        `<div><button class="aso-btn aso-btn-ok" data-act="start-go">开始</button>` +
+        `<button class="aso-btn aso-btn-no" data-act="start-cancel">取消</button></div>`;
+      bindIdleActions(el);
+      const input = el.querySelector('#aso-start-label');
+      if (input) input.focus();
+    } else {
+      el.innerHTML = `<button class="aso-btn aso-btn-go" data-act="start-open">▶ 开始流水线</button>`;
+      bindIdleActions(el);
+    }
+    el.classList.add('show');
+  }
+
+  function bindIdleActions(el) {
+    el.querySelectorAll('[data-act]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const act = btn.dataset.act;
+        if (act === 'start-open') { composing = true; renderIdle(); }
+        else if (act === 'start-cancel') { composing = false; renderIdle(); }
+        else if (act === 'start-go') {
+          const input = el.querySelector('#aso-start-label');
+          const label = VIEW.normalizeStartLabel(input ? input.value : '');
+          if (!label) { if (input) input.focus(); return; }   // label 必填，空则不发
+          send('WF_START', { label });
+          composing = false;   // 等 storage 驱动切到 active 进度条；过渡先回按钮态
+          renderIdle();
+        }
+      });
+    });
+  }
+
   function render(batch) {
-    const wf = activeWorkflow(batch);
-    if (!wf) { hide(); return; }
+    const decision = VIEW.decideOverlayView(batch, window.__AS_BUILD_INFO__);
+    if (decision.view === 'hidden') { composing = false; hide(); return; }   // release 沉睡 / 无入口
+    if (decision.view === 'idle') { renderIdle(); return; }                  // dev 空态 → 启动入口
+    // 'active'：有运行中 workflow → 进度 / HITL / error（Plan 2 现状）
+    composing = false;
+    const wf = decision.workflow;
     injectStyles();
     const el = ensureRoot();
     const step = wf.steps[wf.cursor] || {};
