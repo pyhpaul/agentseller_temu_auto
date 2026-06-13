@@ -346,10 +346,16 @@
       localStorage.setItem('talLabelSkc', fstate.products[0].skcNumber || '');
       refreshProductUI();
 
-      setStatus(`① 全部标签生成完成 ✓ (${total} 个)，启动合规填写...`, 'ok');
+      // 多 SKC fail-soft：合规/主图按 SKC 共享，自动流程只覆盖第一个 SKC 的全部 SKU
+      const uniqueSkcs = [...new Set(fstate.products.map(p => p.skcNumber))];
+      if (uniqueSkcs.length > 1) {
+        setStatus(`① 标签生成完成 ✓ (${total} 个 / ${uniqueSkcs.length} 个 SKC)。自动流程仅处理第一个 SKC 的全部 SKU，其余 SKC 请分别选择后再执行`, 'ok');
+      } else {
+        setStatus(`① 全部标签生成完成 ✓ (${total} 个)，启动合规填写...`, 'ok');
+      }
       await U.sleep(800);
 
-      // Phase 2：启动第一个商品的合规流程
+      // Phase 2：启动第一个商品的合规流程（同 SKC 共享，用任一 SKU 的 skcNumber 即可）
       const first = fstate.products[0];
       setCFlow({
         active: true, step: 1,
@@ -1483,10 +1489,14 @@
 
     const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]');
     const skcNumber = flow.skcNumber;
-    const labelPath = labelPaths.find(p => p.skcNumber === skcNumber)?.pngPath;
-    if (labelPath && skcNumber) {
+    // 同 SKC 下所有 SKU 的标签：合规/主图槽位按 SKC 共享，Phase 3 把这些标签连续上传到同一组槽位
+    const skcLabels = labelPaths.filter(p => p.skcNumber === skcNumber);
+    if (skcLabels.length > 0 && skcNumber) {
       await U.sleep(800);
-      setImgFlow({ active: true, skcNumber, skcSku: flow.skcSku, spuId: flow.spuId, labelPngPath: labelPath });
+      setImgFlow({
+        active: true, skcNumber, skcSku: flow.skcSku, spuId: flow.spuId,
+        labelPngPaths: skcLabels.map(p => ({ skcSku: p.skcSku, pngPath: p.pngPath })),
+      });
       window.location.href = '/govern/compliant-live-photos';
     } else {
       U.showToast('③ 标签文件不存在，请重新执行完整流程', 'err');
@@ -1654,12 +1664,25 @@
     }
     await U.sleep(600);
 
-    // 通过 Native Host 分块读取标签图（避免单消息超过 Chrome Native Messaging 1MB 上限）
-    const bytes = await readFileChunked(flow.labelPngPath);
-    const filename = flow.labelPngPath.split(/[\\/]/).pop() || 'label.png';
+    // 多 SKU：读取该 SKC 下所有标签文件，连续上传到同一组槽位（合规/主图按 SKC 共享）。
+    // 兼容旧 imgFlow（残留的单数 labelPngPath 字段）。
+    const labelItems = (Array.isArray(flow.labelPngPaths) && flow.labelPngPaths.length)
+      ? flow.labelPngPaths
+      : (flow.labelPngPath ? [{ skcSku: flow.skcSku, pngPath: flow.labelPngPath }] : []);
+    if (!labelItems.length) throw new Error('读取失败：imgFlow 缺少标签文件路径，已中止');
+
+    const files = [];
+    for (let i = 0; i < labelItems.length; i++) {
+      const item = labelItems[i];
+      U.showToast(`主图插入：读取标签 (${i + 1}/${labelItems.length})...`, 'info');
+      // 通过 Native Host 分块读取标签图（避免单消息超过 Chrome Native Messaging 1MB 上限）
+      const bytes = await readFileChunked(item.pngPath);
+      const filename = item.pngPath.split(/[\\/]/).pop() || `label-${i + 1}.png`;
+      files.push({ bytes, filename });
+    }
 
     U.showToast('主图插入：定位标签图槽位...', 'info');
-    const uploaded = await uploadToLabelSlots(drawer, bytes, filename);
+    const uploaded = await uploadToLabelSlots(drawer, files);
     if (!uploaded) throw new Error('数据校验：当前编辑抽屉内未找到标签图上传位置');
 
     // 等待上传组件处理文件
@@ -1672,13 +1695,14 @@
     console.log('[TAL] 上传并识别已点击');
 
     await U.sleep(1000);
-    await aglReportDone({ spuId: flow.spuId || null, labelPng: flow.labelPngPath || null });
+    await aglReportDone({ spuId: flow.spuId || null, labelCount: files.length });
     clearImgFlow();
-    U.showToast('③ 主图上传完成 ✓', 'ok');
+    U.showToast(`③ 主图上传完成 ✓（${files.length} 个标签）`, 'ok');
   }
 
-  // 找所有「标签图」类型上传按钮，优先空白槽位（计数为 0），全有则上传全部
-  async function uploadToLabelSlots(drawer, bytes, filename) {
+  // 找「标签图」上传槽位，把所有 SKU 标签一次性注入其 multiple input（同 SKC 共用一组槽位）。
+  // sample 实测：标签图 input 带 multiple，等价用户在文件框多选 N 个文件。
+  async function uploadToLabelSlots(drawer, files) {
     // 严格限定在当前编辑 drawer 内查找，绝不用 document 全局（否则会命中列表页其他商品行的槽位 → 错行上传）
     const allBtns = Array.from(drawer.querySelectorAll('.rocket-upload[role="button"]'));
     const labelBtns = allBtns.filter(btn =>
@@ -1688,21 +1712,16 @@
     console.log('[TAL] (drawer 内) 标签图 upload 按钮数量:', labelBtns.length);
     if (!labelBtns.length) return false;
 
-    // 空白槽位：计数器为 (0/N)
+    // 优先空白槽位（计数器 (0/N)），无空白则取第一个；把全部文件注入这一个 multiple input
     const emptyBtns = labelBtns.filter(btn => {
       const m = btn.textContent.match(/\((\d+)\/\d+\)/);
       return !m || parseInt(m[1]) === 0;
     });
-    const targets = emptyBtns.length > 0 ? emptyBtns : labelBtns;
-    console.log('[TAL] 目标槽位数量:', targets.length, '(空白:', emptyBtns.length, ')');
-
-    for (const btn of targets) {
-      const fileInput = btn.querySelector('input[type="file"]');
-      if (fileInput) {
-        console.log('[TAL] 注入文件到 input:', fileInput.id || '(无id)');
-        await injectFileToInput(fileInput, bytes, filename);
-      }
-    }
+    const target = emptyBtns[0] || labelBtns[0];
+    const fileInput = target.querySelector('input[type="file"]');
+    if (!fileInput) return false;
+    console.log(`[TAL] 注入 ${files.length} 个标签到 input:`, fileInput.id || '(无id)', '(空白槽位:', emptyBtns.length, ')');
+    await injectFilesToInput(fileInput, files);
     return true;
   }
 
@@ -1712,13 +1731,15 @@
     return 'image/png';
   }
 
-  // 将字节数据注入 input[type=file] 并触发上传
-  async function injectFileToInput(fileInput, bytes, filename) {
-    const mime = mimeFromName(filename);
-    const blob = new Blob([bytes], { type: mime });
-    const file = new File([blob], filename, { type: mime, lastModified: Date.now() });
+  // 将多个文件一次性注入 input[type=file]（multiple）并触发一次 change，等价用户多选上传。
+  // files: [{ bytes, filename }, ...]；单文件时数组长度为 1，行为与旧单文件注入一致。
+  async function injectFilesToInput(fileInput, files) {
     const dt = new DataTransfer();
-    dt.items.add(file);
+    for (const { bytes, filename } of files) {
+      const mime = mimeFromName(filename);
+      const blob = new Blob([bytes], { type: mime });
+      dt.items.add(new File([blob], filename, { type: mime, lastModified: Date.now() }));
+    }
     fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     await U.sleep(500);
