@@ -172,8 +172,9 @@
       .filter((a) => { const td = a.closest('td'); return td && !td.textContent.includes('运单'); })[0] || null;
   }
 
-  // 商品去重 key：备货单号/发货单号/包裹单号（虚拟列表重渲染时防重复打）。
-  function productKey(tr) {
+  // 订单/批次去重 key：备货单号/发货单号/包裹单号（虚拟列表重渲染时防重复打）。
+  // 注意这是单号级去重，不是商品编号——一个发货批次可含多个 SKU 行。
+  function orderBatchKey(tr) {
     const t = tr.textContent || '';
     const m = t.match(/WB\d+/) || t.match(/FH\d+/) || t.match(/PC\d+/);
     return m ? m[0] : '';
@@ -190,7 +191,7 @@
       if (!group || !group.checked) continue;
       const btn = findProductPrintBtn(tr);
       if (!btn) continue;
-      targets.push({ btn, key: productKey(tr), trackingRaw: group.tracking, qty: extractQty(tr) });
+      targets.push({ btn, key: orderBatchKey(tr), trackingRaw: group.tracking, qty: extractQty(tr) });
     }
     return targets;
   }
