@@ -77,7 +77,7 @@
   }
 
   // ── 表格扫描（rowspan 分组：每 SKC 组首行含商品信息格；SKU 行/合计行没有）──
-  function collectPageGroups() {
+  function collectPageRows() {
     const trs = Array.from(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]'));
     const groups = [];
     for (const tr of trs) {
@@ -109,7 +109,7 @@
   // 点 next 后激活页码立即变、数据 4-5s 后才到（端到端实测），含页码的签名会提前放行，
   // 导致扫到旧数据（重复采集）。相邻页 SKC 集合必不同，内容变化才是数据就绪的真信号。
   function pageSignature() {
-    const g = collectPageGroups();
+    const g = collectPageRows();
     return (g[0] ? g[0].skc : '') + '|' + (g.length ? g[g.length - 1].skc : '') + '|' + g.length;
   }
 
@@ -273,7 +273,7 @@
       if (total != null && curTotal != null && curTotal !== total) {
         throw mkErr('data', '采集中结果总数从 ' + total + ' 变为 ' + curTotal + '（筛选条件被修改？），为防数据混杂中止，请勿在采集中操作页面');
       }
-      const groups = collectPageGroups();
+      const groups = collectPageRows();
       if (!groups.length) throw mkErr('read', '第 ' + page + ' 页未扫描到任何商品组（表格选择器失效或页面异常）');
       rawGroups += groups.length;
       for (const g of groups) {

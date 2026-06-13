@@ -65,16 +65,80 @@ features/auto_gen_label/
 
 ## Phase 1：标签生成
 
-**触发**：条码管理页选商品行 → 点 feature view 的"开始执行"按钮。
+**触发**：条码管理页选商品行（支持多选） → 点 feature view 的"开始执行"按钮。
 
 **流程**：
 
-1. 点商品行的"查看条码" → 弹出 modal 含 `<canvas id="canvas">`
-2. 用 `computeCanvasStats` 轮询采样 canvas 中央像素（白底 >30% + 黑条 >5%）判断绘制就绪 + 二次确认
-3. `canvas.toDataURL('image/png')` 取条形码 base64
-4. `sendNative('PROCESS_LABEL', {...})` 发给 native_host
-5. Native host 调 BarTender SDK 生成 PDF + PNG 到用户选的输出目录
-6. 成功后 PNG 路径存 localStorage `talLabelPng`，触发 Phase 2 启动（跳页 + setCFlow）
+1. 点击商品行进行选择（支持多选，见下文「多SKU支持」）
+2. 每个选中的商品：
+   - 点"查看条码" → 弹出 modal 含 `<canvas id="canvas">`
+   - 用 `computeCanvasStats` 轮询采样 canvas 中央像素（白底 >30% + 黑条 >5%）判断绘制就绪 + 二次确认
+   - `canvas.toDataURL('image/png')` 取条形码 base64
+   - `sendNative('PROCESS_LABEL', {...})` 发给 native_host
+3. Native host 调 BarTender SDK 为每个商品生成 PDF + PNG 到用户选的输出目录
+4. 成功后所有标签路径存 localStorage `talLabelPaths`（数组，见下文「数据结构」），触发 Phase 2 启动（跳页 + setCFlow）
+
+### 多SKU支持
+
+**选择方式**：
+- **普通点击**：排他选择该商品（清除其他SKC的商品，但同SKC内支持多行/多SKU并选）
+- **Ctrl/Cmd+点击**：多SKC多选（添加到选择列表而不清除其他SKC）
+
+**核心约束（业务确认）**：同一 SKC 下的多个 SKU，**合规信息（Phase 2）和主图槽位（Phase 3）都是 SKC/SPU 级别共享的**。所以：
+- Phase 1：为每个 SKU 货号各生成一个独立标签文件
+- Phase 2：按 SKC/SPU 只填**一次**合规信息（不是每 SKU 一次）
+- Phase 3：在同一组主图「标签图」槽位里，把该 SKC 下**所有** SKU 的标签**连续上传**（标签图 input 带 `multiple`，一次性多文件注入）
+
+**生成逻辑**：
+- `fstate.products` 存储选中的商品数组：`[{ skcNumber: '12345', skcSku: 'CLI319-White-2pcs' }, ...]`
+- `onRunAllPhases` 逐个商品循环调用 native host，为每个SKU货号生成独立的标签文件
+- Phase 2 用第一个商品的 skcNumber 启动（同 SKC 共享，任一 SKU 的 skcNumber 等价）
+- Phase 2→3 transition：从 `talLabelPaths` filter 出该 skcNumber 下**所有** SKU 标签，存入 `imgFlow.labelPngPaths`
+- Phase 3：读取 `labelPngPaths` 全部文件 → 一次 `DataTransfer` 多文件注入标签图槽位
+
+**多 SKC 边界（fail-soft）**：Ctrl/Cmd+点击可跨 SKC 多选，但合规/主图按 SKC 共享，自动流程**只覆盖第一个 SKC 的全部 SKU**。检测到多个 SKC 时 setStatus 明确提示"其余 SKC 请分别选择后再执行"——不阻断、不偷偷错处理。其余 SKC 的标签已生成在磁盘，用户重新选该 SKC 行再执行即可。
+
+**典型用途**：同一SKC有多个颜色/尺寸规格（多SKU货号）时，一次点击全选这个SKC的所有变种，自动生成所有规格的标签，Phase 3 一次性把这些标签连续传到该商品的标签图槽位。
+
+### 文件命名改进（v1.5.0）
+
+**输出目录结构变化**：
+
+| 项 | 旧版 | 新版 | 例 |
+|----|------|------|-----|
+| 文件夹 | `SKC-{skc_number}-{skc_sku}` | `{skc_id}-{skc_sku_base}` | `12345-CLI319` |
+| PDF 文件 | `SKC-{skc_number}-{skc_sku}.pdf` | `{skc_sku}.pdf` | `CLI319-White-2pcs.pdf` |
+| PNG 文件 | `SKC-{skc_number}-{skc_sku}.jpeg` | `{skc_sku}.jpeg` | `CLI319-White-2pcs.jpeg` |
+
+**背景**：
+- SKC货号可能含属性（如 `CLI319-White-2pcs`），但文件夹名应该精简（避免过深的目录树）
+- 文件命名按 SKU货号完整形式，便于识别具体的商品规格
+
+### 数据结构
+
+**localStorage 改动**：
+
+| Key | 旧版 | 新版 |
+|-----|------|------|
+| `talLabelPng` | 单个字符串路径 | ~~删除~~ |
+| `talLabelPaths` | ~~无~~ | 数组 `[{skcNumber, skcSku, pngPath}, ...]`（Phase 1 全量写入） |
+| `talLabelSkc` | 存 SKC 编号 | 存第一个选中商品的 SKC 编号 |
+| `talImgFlow.labelPngPath` | 单个路径 | ~~改为 labelPngPaths 数组~~（保留旧字段读取兼容） |
+| `talImgFlow.labelPngPaths` | ~~无~~ | `[{skcSku, pngPath}, ...]`（该 SKC 下全部 SKU 标签，Phase 3 连续上传） |
+
+**格式示例**：
+```json
+localStorage.talLabelPaths = [
+  { "skcNumber": "12345", "skcSku": "CLI319-White-2pcs", "pngPath": "D:\\Labels\\12345-CLI319\\CLI319-White-2pcs.jpeg" },
+  { "skcNumber": "12345", "skcSku": "CLI319-White-3pcs", "pngPath": "D:\\Labels\\12345-CLI319\\CLI319-White-3pcs.jpeg" }
+]
+```
+
+**数据流**：
+- Phase 1：所有选中 SKU 的标签写入 `talLabelPaths`（全量，含跨 SKC）
+- Phase 2→3 transition：`talLabelPaths.filter(p => p.skcNumber === flow.skcNumber)` 取该 SKC 全部 SKU → `imgFlow.labelPngPaths`
+- Phase 3 `runImgUpload`：遍历 `labelPngPaths` 分块读取每个标签 → `injectFilesToInput` 一次性多文件注入标签图 multiple input
+- 向后兼容：`runImgUpload` 仍读旧 `labelPngPath` 单数字段（残留 imgFlow 不至于报错）
 
 ### BarTender 2022 SDK
 
@@ -83,8 +147,25 @@ features/auto_gen_label/
 - DLL 路径：`C:\Program Files\Seagull\BarTender 2022\Seagull.BarTender.Print.dll`
 - 模板 SubStrings 名称（经实测确认，.NET API 用 `SubStrings` 而非 `NamedSubStrings`）：
   - `具名条形码`：值为本地 PNG 文件路径（条形码图片）
-  - `具名序列号`：值为 SKC货号字符串
+  - `具名序列号`：值为 SKC货号字符串（如 `CLI319-White-2pcs`，由 content script 传入）
 - 条形码从弹窗 `<canvas id="canvas">` 直接捕获为 PNG base64，解码后写入临时文件再传入
+
+**文件命名算法**（v1.5.0 改进）：
+```python
+# 提取 SKC货号基础部分（不含属性）
+# skc_sku 格式如 "CLI319-White-2pcs"，取第一段 "CLI319"
+skc_sku_base = skc_sku.split('-')[0] if skc_sku else ''
+
+# 文件夹：SKC ID - SKC货号基础部分（如 "12345-CLI319"）
+folder_name = f'{skc_number}-{skc_sku_base}' if skc_sku_base else str(skc_number)
+
+# 文件：SKU货号完整形式（含属性，如 "CLI319-White-2pcs"）
+file_stem = skc_sku if skc_sku else f'label-{skc_number}'
+
+# 输出：folder_name/file_stem.pdf 等
+```
+
+**背景**：分离了文件夹（结构化）和文件名（内容化），让输出目录更清晰，同一 SKC 的多个 SKU 集中在一个文件夹。
 
 **经实测确认的完整调用（pythonnet 3.0）**：
 
@@ -166,11 +247,11 @@ engine.Stop()
 3. 强校验目标 SPU 行（同 Phase 2 Step 2）
 4. 点匹配行"修改/上传"前**断言该行 SPU==目标**；点击后 `waitForDrawerOpen` 拿可见 drawer，**未打开即中止**（不退回列表页全局查找）
 5. **drawer 内身份二次确认**：`drawer.querySelector('#spuId')` == 目标 SPU，不符中止（防点错行/rowspan 错位传错商品）
-6. 通过 native_host 分块读取标签 PNG（`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
+6. 通过 native_host **逐个**分块读取该 SKC 下所有 SKU 标签 PNG（`imgFlow.labelPngPaths` 数组，`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
 7. **在 drawer 内**定位"标签图"上传按钮（`drawer.querySelectorAll('.rocket-upload[role="button"]')` 内 `<span>标签图</span>`，**禁止 `document` 全局**——曾因全局查找把标签图传到列表页其他商品行，见根 `CLAUDE.md`「数据正确性」§3）
-8. 优先空白槽位（计数器显示 `(0/N)`），全有则上传全部
-9. `injectFileToInput` 用 DataTransfer + File 构造对象赋值 `input.files` + dispatch change 事件
-10. 点"上传并识别"按钮提交
+8. 取第一个空白槽位（计数器 `(0/N)`），无空白则取第一个槽位
+9. `injectFilesToInput` 把**所有** SKU 标签 File 加进一个 `DataTransfer`，一次性赋值 `input.files`（标签图 input 带 `multiple`）+ dispatch 一次 change —— 等价用户在文件框多选 N 个文件
+10. 点"上传并识别"按钮提交（一次提交全部标签）
 
 ## Native Messaging 协议
 
@@ -198,6 +279,14 @@ const { output_pdf, output_png } = result;
 | `READ_FILE` | path | data (base64) |
 | `READ_FILE_SIZE` | path | size |
 | `READ_FILE_CHUNK` | path / offset / length | data (base64) |
+| `OPEN_FOLDER` | path | success（生成后「自动打开文件夹」开关用；Windows `os.startfile`，非致命） |
+
+## 生成后自动打开文件夹（开关）
+
+feature 面板「当前设置」卡片有「生成后自动打开文件夹」勾选框（localStorage `talOpenFolderAfter`，`'1'` 开）。
+勾选时，Phase 1 标签全部生成成功后，用资源管理器打开输出的 SKC 子文件夹（取首个标签 `pngPath` 的 dirname，
+同 SKC 多 SKU 共目录；多 SKC 仅打开第一个）。`onRunAllPhases`（完整流程）和 `onRunPhase1Only`（调试）
+都接 `maybeOpenOutputFolder`。失败只 `console.warn` 不中断主流程（非 Windows / 路径异常 → native 返回 error）。
 
 ## Temu 弹窗结构（条码管理页）
 

@@ -101,7 +101,7 @@
 
   // 读行的 SPU ID + SKC ID 组合作为商品唯一 key
   // 同一商品的多条调价单（多 SKU 场景）共享相同 key，确认后一起消失
-  function readSKUKey(row) {
+  function readProductKey(row) {
     const ps = row.querySelectorAll('p')
     let spuId = null, skcId = null
     for (const p of ps) {
@@ -229,7 +229,7 @@
     findPendingRows,
     findNoAdjustLink,
     readHJD,
-    readSKUKey,
+    readProductKey,
     findActiveModal,
     detectModalType,
     findReasonTextarea,
@@ -673,11 +673,11 @@
     if (type === 'single') {
       await A.fillReason(modal, state.settings.reason)
       await A.clickConfirm(modal)
-      log('info', '单SKU 已确认', hjd)
+      log('info', '单调价单 已确认', hjd)
     } else if (type === 'multi') {
       await A.selectAllNoAdjust(modal)
       await A.clickConfirm(modal)
-      log('info', '多SKU 已确认', hjd)
+      log('info', '多调价单 已确认', hjd)
     } else {
       const e = new Error('UnknownModalType')
       e.code = 'UnknownModalType'
@@ -709,13 +709,13 @@
     await A.reloadPage()
   }
 
-  // targetSKUKey: SPU+SKC 组合 key（优先），多 SKU 场景下等所有关联行消失
+  // targetProductKey: SPU+SKC 组合 key（优先），多 SKU 场景下等所有关联行消失
   // targetHJD: fallback，SKU key 读取失败时用 HJD 判断
-  async function triggerRefresh(reason, targetHJD, targetSKUKey) {
+  async function triggerRefresh(reason, targetHJD, targetProductKey) {
     state.stats.processedSinceRefresh = 0
     await persist({ lastAction: 'refresh', reloadReason: reason })
 
-    const label = targetSKUKey ? `SKU(${targetSKUKey})` : `HJD(${targetHJD ?? '?'})`
+    const label = targetProductKey ? `商品(${targetProductKey})` : `HJD(${targetHJD ?? '?'})`
     log('info', `触发刷新，等待 ${label} 相关行消失`)
 
     const MAX_TAB_ATTEMPTS = 5
@@ -733,8 +733,8 @@
       // 优先用 SKU key 判断（多 SKU 场景：等所有相同 SPU+SKC 的行消失）
       // 降级用 HJD 判断（SKU key 读取失败时）
       const pendingRows = S.findPendingRows()
-      const stillPresent = targetSKUKey
-        ? pendingRows.some(r => S.readSKUKey(r) === targetSKUKey)
+      const stillPresent = targetProductKey
+        ? pendingRows.some(r => S.readProductKey(r) === targetProductKey)
         : targetHJD
           ? pendingRows.some(r => S.readHJD(r) === targetHJD)
           : false
@@ -879,7 +879,7 @@
 
         const targetHJD = S.readHJD(rows[0])
         // 优先用 SPU+SKC key 判断同步：多 SKU 场景下所有关联行共享同一 key
-        const targetSKUKey = S.readSKUKey(rows[0])
+        const targetProductKey = S.readProductKey(rows[0])
         try {
           await processOneRow(rows[0])
           state.snapshot.fallbackReloadCount = 0  // 成功处理一行 = mainLoop 已恢复正常，重置 fallback 计数
@@ -912,13 +912,13 @@
           // ConfirmModalStuck：Temu 拒绝该 confirm（多 SKU 弹「数据对不上」等），不暂停，跳过整组同 SPU+SKC 继续
           // 限流：连续 N 次失败才暂停（防异常状态下死循环）
           if (kind === 'ConfirmModalStuck') {
-            const skuKey = S.readSKUKey(rows[0])
+            const productKey = S.readProductKey(rows[0])
             const hjd = S.readHJD(rows[0])
             // 多 SKU 共享同 SPU+SKC 调价单：一条拒绝 = 整组都是脏数据，全跳过避免再触发
-            if (skuKey) {
-              const sameKeyRows = S.findPendingRows().filter(r => S.readSKUKey(r) === skuKey)
+            if (productKey) {
+              const sameKeyRows = S.findPendingRows().filter(r => S.readProductKey(r) === productKey)
               sameKeyRows.forEach(r => { const h = S.readHJD(r); if (h) skippedHJDs.add(h) })
-              log('warn', `跳过 SKU=${skuKey} 共 ${sameKeyRows.length} 条调价单（confirm 被拒）`)
+              log('warn', `跳过商品 ${productKey} 共 ${sameKeyRows.length} 条调价单（confirm 被拒）`)
             } else if (hjd) {
               skippedHJDs.add(hjd)
               log('warn', `跳过 HJD=${hjd}（confirm 被拒，无 SKU key 降级）`)
@@ -949,7 +949,7 @@
         }
 
         await checkpoint()
-        await triggerRefresh('per_row', targetHJD, targetSKUKey)
+        await triggerRefresh('per_row', targetHJD, targetProductKey)
 
         if (state.mode === MODES.STEPPING) {
           setMode(MODES.PAUSED)

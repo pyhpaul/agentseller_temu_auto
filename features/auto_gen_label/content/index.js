@@ -10,7 +10,7 @@
   const TAL_DEBUG = true;
 
   // ── feature 内部状态 ──
-  const fstate = { product: null };  // { skcNumber, skcSku }
+  const fstate = { products: [] };  // 多SKU支持：[{ skcNumber, skcSku }, ...]
   let rowObserver = null;
   let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
 
@@ -122,40 +122,76 @@
     return (stored > 0 && stored <= 1) ? stored : 0.45;
   }
 
-  function setProduct(product) {
-    fstate.product = product;
+  // 「生成后自动打开文件夹」开关（feature 面板勾选，localStorage 持久化）
+  function shouldOpenFolderAfter() {
+    return localStorage.getItem('talOpenFolderAfter') === '1';
+  }
+
+  // 勾选时用资源管理器打开标签输出的 SKC 子文件夹。非致命：失败只 warn 不中断主流程。
+  // 同 SKC 多 SKU 在同一文件夹，取首个标签的 dirname 即可；多 SKC 仅打开第一个。
+  async function maybeOpenOutputFolder(labelPaths) {
+    if (!shouldOpenFolderAfter()) return;
+    const firstPng = labelPaths?.[0]?.pngPath;
+    if (!firstPng) return;
+    const folder = firstPng.replace(/[\\/][^\\/]*$/, '');  // 去掉末尾文件名，得 SKC 子文件夹
+    try {
+      await sendNative('OPEN_FOLDER', { path: folder });
+    } catch (e) {
+      console.warn('[TAL] 打开输出文件夹失败（非致命）:', e?.message || e);
+    }
+  }
+
+  function setProducts(products) {
+    fstate.products = products || [];
     refreshProductUI();
-    if (product) setStatus('已选商品，可执行流程');
+    if (fstate.products.length > 0) {
+      setStatus(`已选 ${fstate.products.length} 个商品，可执行流程`);
+    }
   }
 
   function clearSelection() {
-    // 先清 product 再刷 highlight：findRowBySkc(null) 会 return null，refreshRowHighlight 全清 .tal-selected
-    setProduct(null);
+    setProducts([]);
     refreshRowHighlight();
+  }
+
+  function toggleProduct(product) {
+    // 同 SKC 的行点击时做排他选择；不同 SKC 时做多选
+    const sameSkc = fstate.products.filter(p => p.skcNumber === product.skcNumber);
+    const different = fstate.products.filter(p => p.skcNumber !== product.skcNumber);
+    const alreadySelected = sameSkc.some(p => p.skcSku === product.skcSku);
+
+    if (alreadySelected) {
+      // 已选则取消
+      setProducts([...different, ...sameSkc.filter(p => p.skcSku !== product.skcSku)]);
+    } else {
+      // 未选则添加到同 SKC 分组
+      setProducts([...different, ...sameSkc, product]);
+    }
   }
 
   function refreshProductUI() {
     const empty = document.getElementById('tal-product-empty');
     const info  = document.getElementById('tal-product-info');
     if (!empty) return;
-    if (!fstate.product) {
+    if (fstate.products.length === 0) {
       empty.style.display = 'block';
       if (info) info.style.display = 'none';
     } else {
       empty.style.display = 'none';
       if (info) {
         info.style.display = 'block';
-        document.getElementById('tal-val-sku').textContent = fstate.product.skcSku;
-        document.getElementById('tal-val-skc').textContent = fstate.product.skcNumber;
+        const first = fstate.products[0];
+        document.getElementById('tal-val-sku').textContent = `${fstate.products.length} 件商品`;
+        document.getElementById('tal-val-skc').textContent = fstate.products.map(p => p.skcSku).join(', ');
       }
     }
-    // 标签文件行
-    const labelPng = localStorage.getItem('talLabelPng');
+    // 标签文件行：显示已生成的标签数量
+    const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]');
     const labelRow = document.getElementById('tal-label-row');
     const labelVal = document.getElementById('tal-val-label');
     if (labelRow && labelVal) {
-      if (labelPng) {
-        labelVal.textContent = labelPng.split('\\').pop().split('/').pop();
+      if (labelPaths.length > 0) {
+        labelVal.textContent = `${labelPaths.length} 个标签已生成`;
         labelRow.style.display = 'flex';
       } else {
         labelRow.style.display = 'none';
@@ -166,7 +202,7 @@
     if (!btn) return;
     const { templatePath, outputDir } = getPaths();
     const pathsMissing = !templatePath || !outputDir;
-    const productMissing = !fstate.product;
+    const productMissing = fstate.products.length === 0;
     const wrongPage = !isBarcodeManagementPage();
     const disabled = pathsMissing || productMissing || wrongPage;
     btn.disabled = disabled;
@@ -196,8 +232,9 @@
     if (clickDelegationBound) return;
     clickDelegationBound = true;
     // 在 document 上绑一个全局 click listener（event delegation），
-    // 避免 React 复用/替换 row 节点时 listener 丢失（旧 bindRows 用 attribute
-    // idempotency 不可靠的根因修复）
+    // 避免 React 复用/替换 row 节点时 listener 丢失。支持多SKU选择：
+    // - 普通点击：排他选择（清除其他SKC的，同SKC内多选）
+    // - Ctrl/Cmd+点击：多SKC多选
     document.addEventListener('click', e => {
       const row = e.target.closest('tr[data-testid="beast-core-table-body-tr"]');
       if (!row) return;
@@ -205,8 +242,21 @@
       const data = extractRowData(row);
       if (!data) { setStatus('未能读取该行数据', 'err'); return; }
       if (!data.skcSku) { setStatus('该商品没有 SKC货号，标签生成需要 SKC货号，请选择其他商品', 'err'); return; }
-      if (data.skcNumber === fstate.product?.skcNumber) clearSelection();
-      else selectRow(data);
+
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl/Cmd+Click：多SKC多选
+        toggleProduct(data);
+      } else {
+        // 普通Click：排他选择（清除不同SKC的，但同SKC可多选）
+        const differentSkc = fstate.products.filter(p => p.skcNumber !== data.skcNumber);
+        const sameSkc = fstate.products.filter(p => p.skcNumber === data.skcNumber);
+        const alreadySelected = sameSkc.some(p => p.skcSku === data.skcSku);
+        if (alreadySelected) {
+          setProducts([...differentSkc, ...sameSkc.filter(p => p.skcSku !== data.skcSku)]);
+        } else {
+          setProducts([...differentSkc, ...sameSkc, data]);
+        }
+      }
     });
   }
 
@@ -221,16 +271,16 @@
     rowObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  function selectRow(product) {
-    setProduct(product);
-    refreshRowHighlight();
-  }
 
   function refreshRowHighlight() {
     // tal-selected 是本 feature 专属 class（tal- 前缀 = Temu Auto Label 命名空间），其他 feature 不应共用
     document.querySelectorAll('tr.tal-selected').forEach(r => r.classList.remove('tal-selected'));
-    const row = findRowBySkc(fstate.product?.skcNumber);
-    if (row) row.classList.add('tal-selected');
+    for (const product of fstate.products) {
+      const row = findRowBySkc(product.skcNumber);
+      if (row && !row.classList.contains('tal-selected')) {
+        row.classList.add('tal-selected');
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -266,8 +316,7 @@
   // Phase 1：标签生成
   // ═══════════════════════════════════════════════════════════════════════════
   async function onRunAllPhases() {
-    const row = findRowBySkc(fstate.product?.skcNumber);
-    if (!fstate.product || !row) return;
+    if (fstate.products.length === 0) return;
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
@@ -276,34 +325,59 @@
     const btn = document.getElementById('tal-btn-auto');
     btn.disabled = true;
     try {
-      // Phase 1：生成标签
-      setStatus('① 正在捕获条码...', 'loading');
-      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
-      setStatus('① 标签生成中，请稍候...', 'loading');
-      U.ensureExtensionAlive();
-      const result = await sendNative('PROCESS_LABEL', {
-        skcNumber: skcNumber || fstate.product.skcNumber,
-        skcSku: fstate.product.skcSku,
-        barcodePngB64,
-        templatePath,
-        outputDir,
-        widthRatio: getWidthRatio(),
-      });
-      if (!result?.success) throw new Error(result?.error || '标签生成失败');
-      const outputPng = result?.output_png;
-      if (outputPng) {
-        localStorage.setItem('talLabelPng', outputPng);
-        localStorage.setItem('talLabelSkc', fstate.product.skcNumber || '');
-        refreshProductUI();
+      const labelPaths = [];
+      const total = fstate.products.length;
+
+      // Phase 1：逐个生成标签
+      for (let i = 0; i < total; i++) {
+        const product = fstate.products[i];
+        const row = findRowBySkc(product.skcNumber);
+        if (!row) throw new Error(`找不到SKC ${product.skcNumber} 对应的表格行`);
+
+        setStatus(`① 生成标签 (${i + 1}/${total})：正在捕获条码...`, 'loading');
+        const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
+
+        setStatus(`① 生成标签 (${i + 1}/${total})：BarTender处理中...`, 'loading');
+        U.ensureExtensionAlive();
+        const result = await sendNative('PROCESS_LABEL', {
+          skcNumber: skcNumber || product.skcNumber,
+          skcSku: product.skcSku,
+          barcodePngB64,
+          templatePath,
+          outputDir,
+          widthRatio: getWidthRatio(),
+        });
+        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skcSku}`);
+
+        labelPaths.push({
+          skcNumber: product.skcNumber,
+          skcSku: product.skcSku,
+          pngPath: result.output_png,
+        });
       }
-      setStatus('① 标签生成完成 ✓，启动合规填写...', 'ok');
+
+      // 保存所有标签路径
+      localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
+      localStorage.setItem('talLabelSkc', fstate.products[0].skcNumber || '');
+      refreshProductUI();
+
+      // 多 SKC fail-soft：合规/主图按 SKC 共享，自动流程只覆盖第一个 SKC 的全部 SKU
+      const uniqueSkcs = [...new Set(fstate.products.map(p => p.skcNumber))];
+      if (uniqueSkcs.length > 1) {
+        setStatus(`① 标签生成完成 ✓ (${total} 个 / ${uniqueSkcs.length} 个 SKC)。自动流程仅处理第一个 SKC 的全部 SKU，其余 SKC 请分别选择后再执行`, 'ok');
+      } else {
+        setStatus(`① 全部标签生成完成 ✓ (${total} 个)，启动合规填写...`, 'ok');
+      }
       await U.sleep(800);
 
-      // Phase 2：合规填写
+      await maybeOpenOutputFolder(labelPaths);
+
+      // Phase 2：启动第一个商品的合规流程（同 SKC 共享，用任一 SKU 的 skcNumber 即可）
+      const first = fstate.products[0];
       setCFlow({
         active: true, step: 1,
-        skcNumber: fstate.product.skcNumber,
-        skcSku: fstate.product.skcSku,
+        skcNumber: first.skcNumber,
+        skcSku: first.skcSku,
         spuId: null,
         continueToPhase3: true,
       });
@@ -315,10 +389,9 @@
     }
   }
 
-  // 调试：只跑 Phase 1（标签生成），用当前调试栏 ratio
+  // 调试：只跑 Phase 1（标签生成），用当前调试栏 ratio，支持多SKU
   async function onRunPhase1Only() {
-    const row = findRowBySkc(fstate.product?.skcNumber);
-    if (!fstate.product || !row) return;
+    if (fstate.products.length === 0) return;
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
@@ -328,25 +401,38 @@
     const btn = document.getElementById('tal-btn-debug');
     btn.disabled = true;
     try {
-      setStatus(`调试：捕获条码（ratio=${ratio}）...`, 'loading');
-      const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
-      setStatus('调试：标签生成中...', 'loading');
-      U.ensureExtensionAlive();
-      const result = await sendNative('PROCESS_LABEL', {
-        skcNumber: skcNumber || fstate.product.skcNumber,
-        skcSku: fstate.product.skcSku,
-        barcodePngB64,
-        templatePath,
-        outputDir,
-        widthRatio: ratio,
-      });
-      if (!result?.success) throw new Error(result?.error || '标签生成失败');
-      const outputPng = result?.output_png;
-      if (outputPng) {
-        localStorage.setItem('talLabelPng', outputPng);
-        localStorage.setItem('talLabelSkc', fstate.product.skcNumber || '');
-        refreshProductUI();
+      const labelPaths = [];
+      const total = fstate.products.length;
+
+      for (let i = 0; i < total; i++) {
+        const product = fstate.products[i];
+        const row = findRowBySkc(product.skcNumber);
+        if (!row) throw new Error(`找不到SKC ${product.skcNumber} 对应的表格行`);
+
+        setStatus(`调试：生成标签 (${i + 1}/${total}, ratio=${ratio})...`, 'loading');
+        const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
+        U.ensureExtensionAlive();
+        const result = await sendNative('PROCESS_LABEL', {
+          skcNumber: skcNumber || product.skcNumber,
+          skcSku: product.skcSku,
+          barcodePngB64,
+          templatePath,
+          outputDir,
+          widthRatio: ratio,
+        });
+        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skcSku}`);
+
+        labelPaths.push({
+          skcNumber: product.skcNumber,
+          skcSku: product.skcSku,
+          pngPath: result.output_png,
+        });
       }
+
+      localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
+      localStorage.setItem('talLabelSkc', fstate.products[0].skcNumber || '');
+      refreshProductUI();
+      await maybeOpenOutputFolder(labelPaths);
       setStatus(`调试完成 ✓ ratio=${ratio}`, 'ok');
     } catch (err) {
       setStatus(`调试出错: ${err.message}`, 'err');
@@ -1419,11 +1505,16 @@
     clearCFlow();
     U.showToast('② 合规填写完成 ✓，启动主图上传...', 'ok');
 
-    const labelPng = localStorage.getItem('talLabelPng');
+    const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]');
     const skcNumber = flow.skcNumber;
-    if (labelPng && skcNumber) {
+    // 同 SKC 下所有 SKU 的标签：合规/主图槽位按 SKC 共享，Phase 3 把这些标签连续上传到同一组槽位
+    const skcLabels = labelPaths.filter(p => p.skcNumber === skcNumber);
+    if (skcLabels.length > 0 && skcNumber) {
       await U.sleep(800);
-      setImgFlow({ active: true, skcNumber, skcSku: flow.skcSku, spuId: flow.spuId, labelPngPath: labelPng });
+      setImgFlow({
+        active: true, skcNumber, skcSku: flow.skcSku, spuId: flow.spuId,
+        labelPngPaths: skcLabels.map(p => ({ skcSku: p.skcSku, pngPath: p.pngPath })),
+      });
       window.location.href = '/govern/compliant-live-photos';
     } else {
       U.showToast('③ 标签文件不存在，请重新执行完整流程', 'err');
@@ -1591,12 +1682,25 @@
     }
     await U.sleep(600);
 
-    // 通过 Native Host 分块读取标签图（避免单消息超过 Chrome Native Messaging 1MB 上限）
-    const bytes = await readFileChunked(flow.labelPngPath);
-    const filename = flow.labelPngPath.split(/[\\/]/).pop() || 'label.png';
+    // 多 SKU：读取该 SKC 下所有标签文件，连续上传到同一组槽位（合规/主图按 SKC 共享）。
+    // 兼容旧 imgFlow（残留的单数 labelPngPath 字段）。
+    const labelItems = (Array.isArray(flow.labelPngPaths) && flow.labelPngPaths.length)
+      ? flow.labelPngPaths
+      : (flow.labelPngPath ? [{ skcSku: flow.skcSku, pngPath: flow.labelPngPath }] : []);
+    if (!labelItems.length) throw new Error('读取失败：imgFlow 缺少标签文件路径，已中止');
+
+    const files = [];
+    for (let i = 0; i < labelItems.length; i++) {
+      const item = labelItems[i];
+      U.showToast(`主图插入：读取标签 (${i + 1}/${labelItems.length})...`, 'info');
+      // 通过 Native Host 分块读取标签图（避免单消息超过 Chrome Native Messaging 1MB 上限）
+      const bytes = await readFileChunked(item.pngPath);
+      const filename = item.pngPath.split(/[\\/]/).pop() || `label-${i + 1}.png`;
+      files.push({ bytes, filename });
+    }
 
     U.showToast('主图插入：定位标签图槽位...', 'info');
-    const uploaded = await uploadToLabelSlots(drawer, bytes, filename);
+    const uploaded = await uploadToLabelSlots(drawer, files);
     if (!uploaded) throw new Error('数据校验：当前编辑抽屉内未找到标签图上传位置');
 
     // 等待上传组件处理文件
@@ -1609,13 +1713,14 @@
     console.log('[TAL] 上传并识别已点击');
 
     await U.sleep(1000);
-    await aglReportDone({ spuId: flow.spuId || null, labelPng: flow.labelPngPath || null });
+    await aglReportDone({ spuId: flow.spuId || null, labelCount: files.length });
     clearImgFlow();
-    U.showToast('③ 主图上传完成 ✓', 'ok');
+    U.showToast(`③ 主图上传完成 ✓（${files.length} 个标签）`, 'ok');
   }
 
-  // 找所有「标签图」类型上传按钮，优先空白槽位（计数为 0），全有则上传全部
-  async function uploadToLabelSlots(drawer, bytes, filename) {
+  // 找「标签图」上传槽位，把所有 SKU 标签一次性注入其 multiple input（同 SKC 共用一组槽位）。
+  // sample 实测：标签图 input 带 multiple，等价用户在文件框多选 N 个文件。
+  async function uploadToLabelSlots(drawer, files) {
     // 严格限定在当前编辑 drawer 内查找，绝不用 document 全局（否则会命中列表页其他商品行的槽位 → 错行上传）
     const allBtns = Array.from(drawer.querySelectorAll('.rocket-upload[role="button"]'));
     const labelBtns = allBtns.filter(btn =>
@@ -1625,20 +1730,19 @@
     console.log('[TAL] (drawer 内) 标签图 upload 按钮数量:', labelBtns.length);
     if (!labelBtns.length) return false;
 
-    // 空白槽位：计数器为 (0/N)
+    // 优先空白槽位（计数器 (0/N)），无空白则取第一个；把全部文件注入这一个 multiple input
     const emptyBtns = labelBtns.filter(btn => {
       const m = btn.textContent.match(/\((\d+)\/\d+\)/);
       return !m || parseInt(m[1]) === 0;
     });
-    const targets = emptyBtns.length > 0 ? emptyBtns : labelBtns;
-    console.log('[TAL] 目标槽位数量:', targets.length, '(空白:', emptyBtns.length, ')');
-
-    for (const btn of targets) {
-      const fileInput = btn.querySelector('input[type="file"]');
-      if (fileInput) {
-        console.log('[TAL] 注入文件到 input:', fileInput.id || '(无id)');
-        await injectFileToInput(fileInput, bytes, filename);
-      }
+    const target = emptyBtns[0] || labelBtns[0];
+    const fileInput = target.querySelector('input[type="file"]');
+    if (!fileInput) return false;
+    console.log(`[TAL] 注入 ${files.length} 个标签到 input:`, fileInput.id || '(无id)', '(空白槽位:', emptyBtns.length, ')');
+    await injectFilesToInput(fileInput, files);
+    // 写后读校验（项目铁律）：确认 N 个文件确实进了 input，少传/拒绝立即暴露而非静默
+    if (fileInput.files.length !== files.length) {
+      throw new Error(`数据校验：标签图注入后文件数不符，期望 ${files.length} 实际 ${fileInput.files.length}`);
     }
     return true;
   }
@@ -1649,13 +1753,15 @@
     return 'image/png';
   }
 
-  // 将字节数据注入 input[type=file] 并触发上传
-  async function injectFileToInput(fileInput, bytes, filename) {
-    const mime = mimeFromName(filename);
-    const blob = new Blob([bytes], { type: mime });
-    const file = new File([blob], filename, { type: mime, lastModified: Date.now() });
+  // 将多个文件一次性注入 input[type=file]（multiple）并触发一次 change，等价用户多选上传。
+  // files: [{ bytes, filename }, ...]；单文件时数组长度为 1，行为与旧单文件注入一致。
+  async function injectFilesToInput(fileInput, files) {
     const dt = new DataTransfer();
-    dt.items.add(file);
+    for (const { bytes, filename } of files) {
+      const mime = mimeFromName(filename);
+      const blob = new Blob([bytes], { type: mime });
+      dt.items.add(new File([blob], filename, { type: mime, lastModified: Date.now() }));
+    }
     fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     await U.sleep(500);
@@ -1676,6 +1782,10 @@
           <span class="tal-path-k">输出</span>
           <span class="tal-path-v" id="tal-path-output-v"></span>
         </div>
+        <label class="tal-opt-row" for="tal-opt-openfolder" style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="tal-opt-openfolder">
+          <span>生成后自动打开文件夹</span>
+        </label>
       </div>
       <div class="tal-card">
         <div class="tal-card-title">当前商品</div>
@@ -1707,6 +1817,13 @@
     document.getElementById('tal-clear').addEventListener('click', clearSelection);
     document.getElementById('tal-path-template').addEventListener('click', onPickTemplate);
     document.getElementById('tal-path-output').addEventListener('click', onPickOutputDir);
+    const openFolderChk = document.getElementById('tal-opt-openfolder');
+    if (openFolderChk) {
+      openFolderChk.checked = shouldOpenFolderAfter();
+      openFolderChk.addEventListener('change', e => {
+        localStorage.setItem('talOpenFolderAfter', e.target.checked ? '1' : '0');
+      });
+    }
     if (TAL_DEBUG) {
       document.getElementById('tal-btn-debug').addEventListener('click', onRunPhase1Only);
       document.getElementById('tal-debug-ratio').addEventListener('change', e => {
@@ -1783,7 +1900,12 @@
         });
         if (!result?.success) throw new Error(result?.error || '标签生成失败');
         if (result.output_png) {
-          localStorage.setItem('talLabelPng', result.output_png);
+          // 编排器单 SKU 处理：写当前前先清掉同 SKC 旧条目，避免上一轮残留 SKU 标签
+          // 被 Phase3（按 skcNumber filter）当本轮一起上传陈旧文件。
+          const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]')
+            .filter(p => p.skcNumber !== rowData.skcNumber);
+          labelPaths.push({ skcNumber: rowData.skcNumber, skcSku: rowData.skcSku, pngPath: result.output_png });
+          localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
           localStorage.setItem('talLabelSkc', rowData.skcNumber || '');
         }
         setCFlow({

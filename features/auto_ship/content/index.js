@@ -560,7 +560,7 @@
     await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
     let live = await scanOrderNos();
     // 发货后 Temu 异步刷新表格：上一个已发货单还在扫描结果里 = 表格还是旧数据（中间态）。
-    // 中间态下行可能渲染不全，readOrderNo 读空/读错会把别的单漏掉（实测：同 SKC 第二单被漏扫）。
+    // 中间态下行可能渲染不全，readOrderNo 读空/读错会把别的单漏掉（实测：虚拟滚动下行渲染不全会漏扫某些行）。
     // 等已发货单从表中消失（=新数据已载入）再取单；超时降级用当前结果，不永久卡。
     if (run.lastShipped && live.includes(run.lastShipped)) {
       const deadline = Date.now() + 8000;

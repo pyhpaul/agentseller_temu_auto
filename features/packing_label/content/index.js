@@ -150,7 +150,8 @@
 
   // ── 商品枚举 ──────────────────────────────────────────────────────────────
   // 表格 rowspan 分组结构：一个物流分组 = 含 checkbox 的首 tr + 后续无 checkbox 的同组 tr，
-  // 每个 tr 对应一个商品。分组级单元格（checkbox / 物流单号 / 分组操作列）用 rowspan 合并在首 tr。
+  // 每个 tr 对应一个商品变体(SKU)；同 SKC 多 SKU 共享分组级物流单号。
+  // 分组级单元格（checkbox / 物流单号 / 分组操作列）用 rowspan 合并在首 tr。
 
   function extractTrackingRaw(tr) {
     const spans = Array.from(tr.querySelectorAll('a[data-testid="beast-core-button-link"] span'));
@@ -171,14 +172,15 @@
       .filter((a) => { const td = a.closest('td'); return td && !td.textContent.includes('运单'); })[0] || null;
   }
 
-  // 商品去重 key：备货单号/发货单号/包裹单号（虚拟列表重渲染时防重复打）。
-  function productKey(tr) {
+  // 订单/批次去重 key：备货单号/发货单号/包裹单号（虚拟列表重渲染时防重复打）。
+  // 注意这是单号级去重，不是商品编号——一个发货批次可含多个 SKU 行。
+  function orderBatchKey(tr) {
     const t = tr.textContent || '';
     const m = t.match(/WB\d+/) || t.match(/FH\d+/) || t.match(/PC\d+/);
     return m ? m[0] : '';
   }
 
-  // 当前 DOM 里选中分组下每个商品 → {btn, key, trackingRaw（分组级物流单号）, qty（商品级发货数量）}
+  // 当前 DOM 里选中分组下每个 SKU → {btn, key, trackingRaw（分组级物流单号，多 tr 共享）, qty（商品级发货数量）}
   function collectPrintTargets() {
     const trs = Array.from(document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]'));
     const targets = [];
@@ -189,7 +191,7 @@
       if (!group || !group.checked) continue;
       const btn = findProductPrintBtn(tr);
       if (!btn) continue;
-      targets.push({ btn, key: productKey(tr), trackingRaw: group.tracking, qty: extractQty(tr) });
+      targets.push({ btn, key: orderBatchKey(tr), trackingRaw: group.tracking, qty: extractQty(tr) });
     }
     return targets;
   }

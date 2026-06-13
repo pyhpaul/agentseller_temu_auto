@@ -70,6 +70,7 @@
     if (ui.p1Status) ui.p1Status.textContent = '状态：' + statusText(p1);
     if (ui.p1Data) {
       const c = p1.collected || {};
+      // 此处「货号」实为完整的 SKU货号/变体货号（含属性，规范定义见 docs/product-numbering-spec.md），非基础 SKC货号
       ui.p1Data.textContent = (c.skuNo || c.title)
         ? '货号 ' + (c.skuNo || '-') + ' ｜ 标题 ' + (c.title || '-').slice(0, 16) + ' ｜ 识别码 ' + (c.serial ? c.serial + '-' + c.skuNo : '-')
         : '';
