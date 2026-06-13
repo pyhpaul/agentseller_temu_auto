@@ -271,10 +271,6 @@
     rowObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  function selectRow(product) {
-    setProduct(product);
-    refreshRowHighlight();
-  }
 
   function refreshRowHighlight() {
     // tal-selected 是本 feature 专属 class（tal- 前缀 = Temu Auto Label 命名空间），其他 feature 不应共用
@@ -1744,6 +1740,10 @@
     if (!fileInput) return false;
     console.log(`[TAL] 注入 ${files.length} 个标签到 input:`, fileInput.id || '(无id)', '(空白槽位:', emptyBtns.length, ')');
     await injectFilesToInput(fileInput, files);
+    // 写后读校验（项目铁律）：确认 N 个文件确实进了 input，少传/拒绝立即暴露而非静默
+    if (fileInput.files.length !== files.length) {
+      throw new Error(`数据校验：标签图注入后文件数不符，期望 ${files.length} 实际 ${fileInput.files.length}`);
+    }
     return true;
   }
 
@@ -1900,13 +1900,11 @@
         });
         if (!result?.success) throw new Error(result?.error || '标签生成失败');
         if (result.output_png) {
-          const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]');
-          const idx = labelPaths.findIndex(p => p.skcNumber === rowData.skcNumber && p.skcSku === rowData.skcSku);
-          if (idx >= 0) {
-            labelPaths[idx].pngPath = result.output_png;
-          } else {
-            labelPaths.push({ skcNumber: rowData.skcNumber, skcSku: rowData.skcSku, pngPath: result.output_png });
-          }
+          // 编排器单 SKU 处理：写当前前先清掉同 SKC 旧条目，避免上一轮残留 SKU 标签
+          // 被 Phase3（按 skcNumber filter）当本轮一起上传陈旧文件。
+          const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]')
+            .filter(p => p.skcNumber !== rowData.skcNumber);
+          labelPaths.push({ skcNumber: rowData.skcNumber, skcSku: rowData.skcSku, pngPath: result.output_png });
           localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
           localStorage.setItem('talLabelSkc', rowData.skcNumber || '');
         }

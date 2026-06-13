@@ -14,11 +14,19 @@ BarTender 2022 标签生成 - 使用 .NET SDK (pythonnet)
   OverwriteOptions.Overwrite → 覆盖已有文件（= 2）
 """
 import os
+import re
 import sys
 import base64
 import tempfile
 import logging
 from typing import Optional
+
+# Windows 文件名/目录名非法字符（含路径分隔符、盘符冒号、通配等）统一替换为下划线
+_WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+
+
+def _safe_name(s: str) -> str:
+    return _WIN_ILLEGAL.sub('_', s)
 
 # DLL 查找优先级：环境变量 TEMU_LABEL_BT_DLL → Program Files → Program Files (x86)
 # 第一个存在的即用。员工把 BarTender 装到非默认目录时设置环境变量覆盖即可
@@ -84,12 +92,12 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
     # 文件：SKU货号完整形式（如 CLI319-White-2pcs）
     skc_sku_base = skc_sku.split('-')[0] if skc_sku else ''
     folder_name = f'{skc_number}-{skc_sku_base}' if skc_sku_base else str(skc_number)
-    folder_safe = folder_name.replace('/', '_').replace('\\', '_').replace(':', '_')
+    folder_safe = _safe_name(folder_name)
     sub_dir = os.path.join(output_dir, folder_safe)
     os.makedirs(sub_dir, exist_ok=True)
 
     file_stem = skc_sku if skc_sku else f'label-{skc_number}'
-    file_safe = file_stem.replace('/', '_').replace('\\', '_').replace(':', '_')
+    file_safe = _safe_name(file_stem)
 
     out_pdf        = os.path.join(sub_dir, f'{file_safe}.pdf')
     out_raw_png    = os.path.join(sub_dir, f'{file_safe}-raw.png')
