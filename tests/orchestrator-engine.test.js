@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine } = require('../core/background/orchestrator/engine.js');
+const { makeEngine, buildHitl } = require('../core/background/orchestrator/engine.js');
 const { makeMutationQueue } = require('../core/background/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -58,6 +58,26 @@ test('advance：result 含 url1688/orderNo1688/poNo → product 全回填（CPO 
   assert.strictEqual(wf0(store).product.poNo, 'PO9');
   assert.strictEqual(wf0(store).product.url1688, 'https://detail.1688.com/offer/123.html');
   assert.strictEqual(wf0(store).product.orderNo1688, 'ORD7');
+});
+
+test('buildHitl：带 hitlSpec.fields 的步 → editable=true + fields', () => {
+  const step = { id: 'compare_1688', label: '1688比价核价',
+    hitlSpec: { fields: [{ key: 'url1688', label: '1688 货源链接', fieldType: 'text', required: true }] } };
+  const h = buildHitl(step);
+  assert.strictEqual(h.editable, true);
+  assert.strictEqual(h.fields.length, 1);
+  assert.strictEqual(h.fields[0].key, 'url1688');
+});
+
+test('buildHitl：无 hitlSpec 的纯确认步 → editable=false + fields 空', () => {
+  const h = buildHitl({ id: 'select_product', label: '选品' });
+  assert.strictEqual(h.editable, false);
+  assert.deepStrictEqual(h.fields, []);
+});
+
+test('buildHitl：hitlSpec.fields 空数组 → editable=false', () => {
+  const h = buildHitl({ id: 'x', label: 'x', hitlSpec: { fields: [] } });
+  assert.strictEqual(h.editable, false);
 });
 
 test('advance：多 auto 步连续推进到末尾 done', async () => {

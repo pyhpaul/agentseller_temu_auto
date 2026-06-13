@@ -1,7 +1,7 @@
 // tests/overlay-view.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { activeWorkflow, decideOverlayView, normalizeStartLabel } = require('../core/content/overlay-view.js');
+const { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill } = require('../core/content/overlay-view.js');
 
 function batchWith(status) {
   return { workflows: [{ id: 'w1', status }] };
@@ -50,4 +50,38 @@ test('normalizeStartLabel：空/纯空白/null/undefined → null', () => {
   assert.strictEqual(normalizeStartLabel('   '), null);
   assert.strictEqual(normalizeStartLabel(null), null);
   assert.strictEqual(normalizeStartLabel(undefined), null);
+});
+
+const FILL_FIELDS = [
+  { key: 'url1688', label: '1688 链接', fieldType: 'text', required: true },
+  { key: 'qty', label: '数量', fieldType: 'number', required: false },
+];
+
+test('buildFillResult：按 fields 收集，trim 文本、number 转数字', () => {
+  const r = buildFillResult(FILL_FIELDS, k => ({ url1688: '  https://x.1688.com/a  ', qty: '12' }[k]));
+  assert.strictEqual(r.url1688, 'https://x.1688.com/a');
+  assert.strictEqual(r.qty, 12);
+});
+
+test('validateFill：required 空 → error', () => {
+  const v = validateFill(FILL_FIELDS, { url1688: '', qty: 1 });
+  assert.strictEqual(v.ok, false);
+  assert.ok(v.errors.some(e => e.key === 'url1688'));
+});
+
+test('validateFill：url1688 不含 1688.com → error', () => {
+  const v = validateFill(FILL_FIELDS, { url1688: 'https://taobao.com/x', qty: 1 });
+  assert.strictEqual(v.ok, false);
+  assert.ok(v.errors.some(e => e.key === 'url1688'));
+});
+
+test('validateFill：全合法 → ok', () => {
+  const v = validateFill(FILL_FIELDS, { url1688: 'https://x.1688.com/a', qty: 1 });
+  assert.strictEqual(v.ok, true);
+  assert.deepStrictEqual(v.errors, []);
+});
+
+test('validateFill：非必填空字段不报错（qty 非 required）', () => {
+  const v = validateFill(FILL_FIELDS, { url1688: 'https://x.1688.com/a', qty: NaN });
+  assert.strictEqual(v.ok, true);
 });
