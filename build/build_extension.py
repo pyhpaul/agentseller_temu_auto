@@ -186,10 +186,12 @@ def render_manifest(features=None):
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
     content_script_matches = collect_content_matches(features)
     extra_cs = collect_extra_content_scripts(features)
-    # build-info.js 必须最先注入，让 ui.js 能读到 window.__AS_BUILD_INFO__
+    # build-info.js 必须最先注入，让 ui.js / overlay 能读到 window.__AS_BUILD_INFO__
     content_scripts_js = (
-        # overlay.js（编排消费端 HITL 浮层）插 registry 后 core 前：归入 core 体系；自驱 IIFE 不依赖加载顺序
-        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js', 'content/overlay.js', 'content/core.js']
+        # overlay-view.js（视图决策纯逻辑）→ overlay.js（HITL 浮层 + 启动入口）插 registry 后 core 前：
+        # 归入 core 体系；overlay.js 引用 window.__AS_OVERLAY_VIEW__，故 overlay-view 必须排在 overlay 前。
+        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js',
+         'content/overlay-view.js', 'content/overlay.js', 'content/core.js']
         + [f'features/{f["id"]}/{f["content_script"]}' for f in sorted(features, key=lambda x: x.get('order', 999))]
     )
 
