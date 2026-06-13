@@ -647,23 +647,28 @@ importScripts(
   'orchestrator/engine.js',
 );
 
-// WS 通道（Plan 3 第一刀起自启）：加载 WsClient 类（挂 self.__AS_WS__）。
+// WS 通道（Plan 3）：加载 WsClient 类（挂 self.__AS_WS__）。importScripts 纯定义无副作用。
 importScripts('ws-client.js');
 
-// bg ws-client 自启：连大脑 localhost:8787。createWsClient onopen 自动发 HELLO{role:bg} + PING 保活。
-// 连不上（dev 未起大脑 / release 无大脑）→ 指数退避重连（架子已有），不影响 bg 其他功能。
-// 第一刀 handlers 空（入站 STATE_PATCH 诊断决策留第二刀）。
-const orchWsClient = self.__AS_WS__.startWsClient({
-  onStatus: s => console.log('[orch-ws]', s),
-  handlers: {
-    // 大脑诊断决策落地（spec §5/§6）：仍由 bg 写 storage；applyDiagnosis 含红线兜底。
-    // orchEngine 在下方定义——此为运行时回调（收到消息才执行），届时 orchEngine 已初始化，闭包延迟引用安全。
-    STATE_PATCH: (data) => {
-      orchEngine.applyDiagnosis(data.workflowId, data)
-        .catch(e => console.warn('[orch-ws] applyDiagnosis 失败', e));
+// bg ws-client 按需连（Plan 3 收尾·发版隔离 D）：不在 SW 顶层自启，改由首个 WF_* 消息触发
+// orchEnsureWs（幂等）。触发源 = 浮层「开始」(isDev 守卫,release 不注入) → release 无 WF_* →
+// 永不连 → ws 沉睡（与 orchestrator「无人发 WF_START 即沉睡」同一隔离机制，无需 package_all 剥离）。
+// ⚠ 绝不在 SW 顶层 / orchRecoverAll 调 orchEnsureWs——那会让 release 也连，破坏隔离。
+let orchWsClient = null;
+function orchEnsureWs() {
+  if (orchWsClient) return;   // 幂等：已连（或重连中）则跳过
+  orchWsClient = self.__AS_WS__.startWsClient({
+    onStatus: s => console.log('[orch-ws]', s),
+    handlers: {
+      // 大脑诊断决策落地（spec §5/§6）：仍由 bg 写 storage；applyDiagnosis 含红线兜底。
+      // orchEngine 在下方定义——运行时回调（收到消息才执行），届时已初始化，闭包延迟引用安全。
+      STATE_PATCH: (data) => {
+        orchEngine.applyDiagnosis(data.workflowId, data)
+          .catch(e => console.warn('[orch-ws] applyDiagnosis 失败', e));
+      },
     },
-  },
-});
+  });
+}
 
 const ORCH = {
   contract: self.__AS_DASH_CONTRACT__,
@@ -1024,6 +1029,8 @@ async function orchRetry(workflowId) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // 任何 WF_* 操作前确保 ws 已连（按需连·发版隔离 D：release 无 WF_* → 不连 → 沉睡）。
+  if (msg && typeof msg.type === 'string' && msg.type.startsWith('WF_')) orchEnsureWs();
   if (msg.type === 'WF_START') {
     orchStartWorkflow(msg.data || {})
       .then(id => sendResponse({ ok: true, workflowId: id }))
