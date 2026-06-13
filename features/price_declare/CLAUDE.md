@@ -43,7 +43,7 @@ Hub 面板设置项：
 | 场景 | 主信号 | 原因 |
 |------|--------|------|
 | 单行处理完毕后等同步 | **目标行从 DOM 消失** | badge 在多 SKU 分批更新场景下减少量不确定，行消失更精确 |
-| mainLoop 末页 0 行兜底判定（是否真完成） | **tab badge count** > totalText | rows/totalText 都可能是 loading 占位，badge 来自 Temu UI 顶层最稳 |
+| mainLoop 末页 0 行兜底判定（是否真完成） | **tab badge count** > totalText | rows/totalText 都可能是 loading 占位，badge 来自 Temu UI 顶层最稳。注：`badge > totalText` 是优先级降级链（badge 取不到才退 totalText），非数值大小比较 |
 
 **流程**：处理完一条行后，切 tab 触发 Temu React 重新请求列表数据，等目标行从 `findPendingRows()` 消失才继续，最多切 5 次，5 次后 fallback reload。
 
