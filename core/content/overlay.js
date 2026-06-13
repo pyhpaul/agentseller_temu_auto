@@ -60,15 +60,22 @@
         b += '<div style="font-size:12px;color:#8b949e;margin-bottom:6px;">' +
           Object.entries(h.keyValues).map(([k, v]) => `${k}: ${v}`).join('<br/>') + '</div>';
       }
-      // 回填型（editable=true）：按 fieldType 渲染控件。
-      // 首版 engine.buildHitl 的 editable 恒 false（无大脑纯确认型）→ 此分支暂不触发；保留=向前兼容（未来大脑给 editable 元数据时无需改 overlay）。
-      if (h.editable) {
-        if (h.fieldType === 'select' && Array.isArray(h.options)) {
-          b += `<select class="aso-field" id="aso-input">` +
-            h.options.map(o => `<option value="${o}">${o}</option>`).join('') + `</select>`;
-        } else {
-          b += `<input class="aso-field" id="aso-input" type="${h.fieldType === 'number' ? 'number' : 'text'}" placeholder="回填值"/>`;
-        }
+      // 回填型（editable=true + fields）：按 fields 逐个渲染控件（首版一 SKC 一 SKU，单值）。
+      // engine.buildHitl 给带 hitlSpec 的步（步2 skc / 步5 url1688 / 步6 orderNo1688）editable+fields；
+      // 纯确认步 editable=false 跳过。recovery 的 hitl editable=false，也不走这。
+      if (h.editable && Array.isArray(h.fields) && h.fields.length) {
+        h.fields.forEach(f => {
+          b += `<div style="margin-top:6px;"><label style="font-size:12px;color:#8b949e;">` +
+            `${f.label || f.key}${f.required ? ' <span style="color:#f85149;">*</span>' : ''}</label>`;
+          if (f.fieldType === 'select' && Array.isArray(f.options)) {
+            b += `<select class="aso-field" id="aso-fill-${f.key}">` +
+              f.options.map(o => `<option value="${o}">${o}</option>`).join('') + `</select>`;
+          } else {
+            b += `<input class="aso-field" id="aso-fill-${f.key}" ` +
+              `type="${f.fieldType === 'number' ? 'number' : 'text'}" placeholder="${f.label || f.key}"/>`;
+          }
+          b += `</div>`;
+        });
       }
       b += `<div>`;
       const goUrl = h.targetUrl || (step.target && step.target.url);
@@ -99,11 +106,13 @@
           if (url) window.open(url, '_blank');
         } else if (act === 'confirm') {
           let result = {};
-          if (wf.hitl && wf.hitl.editable) {
-            const input = el.querySelector('#aso-input');
-            const val = input ? input.value : '';
-            const key = wf.hitl.resultKey || 'value';   // engine.buildHitl 暂不给 resultKey → fallback 'value'
-            result = { [key]: val };
+          if (wf.hitl && wf.hitl.editable && Array.isArray(wf.hitl.fields) && wf.hitl.fields.length) {
+            result = VIEW.buildFillResult(wf.hitl.fields, key => {
+              const elx = el.querySelector(`#aso-fill-${key}`);
+              return elx ? elx.value : '';
+            });
+            const v = VIEW.validateFill(wf.hitl.fields, result);
+            if (!v.ok) { window.alert(v.errors.map(e => e.msg).join('\n')); return; }   // 校验失败不发，提示缺什么
           }
           send('WF_HITL_CONFIRM', { workflowId: wf.id, result });
         } else if (act === 'reject') {
