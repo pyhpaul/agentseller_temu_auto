@@ -1,5 +1,5 @@
 // core/content/overlay-view.js — overlay 视图决策纯逻辑（与 DOM/chrome 解耦，可 node 测）。spec §8。
-// 职责：从 storage 骨架 + 构建信息决定 overlay 渲染哪个视图 + 启动 label 规范化。
+// 职责：从 storage 骨架 + 构建信息决定 overlay 渲染哪个视图 + 启动 label 规范化 + HITL 回填收集/校验。
 // overlay.js（content script）引用全局 window.__AS_OVERLAY_VIEW__；node 测引用 module.exports。
 (function (root, factory) {
   const api = factory();
@@ -32,5 +32,32 @@
     return s.length ? s : null;
   }
 
-  return { activeWorkflow, decideOverlayView, normalizeStartLabel };
+  // 回填型 HITL：按 fields 从 getValue(key) 收集 result（文本 trim、number 转数字）。
+  function buildFillResult(fields, getValue) {
+    const out = {};
+    (fields || []).forEach(f => {
+      const raw = getValue(f.key);
+      out[f.key] = f.fieldType === 'number'
+        ? Number(raw)
+        : (raw == null ? '' : String(raw)).trim();
+    });
+    return out;
+  }
+
+  // 校验回填 result：required 非空 + url1688 基础格式（含 1688.com）。返回 {ok, errors:[{key,msg}]}。
+  function validateFill(fields, result) {
+    const errors = [];
+    (fields || []).forEach(f => {
+      const v = result ? result[f.key] : undefined;
+      const empty = v == null || v === '' || (f.fieldType === 'number' && Number.isNaN(v));
+      if (f.required && empty) {
+        errors.push({ key: f.key, msg: (f.label || f.key) + ' 必填' });
+      } else if (f.key === 'url1688' && v && !String(v).includes('1688.com')) {
+        errors.push({ key: f.key, msg: '1688 链接格式不对（应含 1688.com）' });
+      }
+    });
+    return { ok: errors.length === 0, errors };
+  }
+
+  return { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill };
 });
