@@ -247,3 +247,21 @@ test('applyDiagnosis：红线—retryCount 达上限的 retry 被强制 escalate
   assert.strictEqual(runs, 0);                               // 达上限不重跑
   assert.strictEqual(wf0(store).steps[0].status, 'paused');
 });
+
+test('onPaused：回填型 HITL pause 时被调（传 workflowId）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'h', type: 'hitl', status: 'pending', hitlSpec: { fields: [{ key: 'skc' }] } })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let pausedId = null;
+  const engine = makeEngine({ read: store.read, queue, stepRunner: async () => ({ status: 'done' }), now: () => 1, onPaused: (id) => { pausedId = id; } });
+  await engine.advance('w1');
+  assert.strictEqual(wf0(store).status, 'paused');
+  assert.strictEqual(pausedId, 'w1');
+});
+
+test('onPaused：缺省不报错（向后兼容）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'h', type: 'hitl', status: 'pending' })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  const engine = makeEngine({ read: store.read, queue, stepRunner: async () => ({ status: 'done' }), now: () => 1 });
+  await engine.advance('w1');   // 无 onPaused 注入也不抛
+  assert.strictEqual(wf0(store).status, 'paused');
+});
