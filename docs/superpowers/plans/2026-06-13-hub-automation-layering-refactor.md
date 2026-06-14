@@ -613,14 +613,17 @@ def assemble_automation(with_automation: bool):
     for name in ['overlay-view.js', 'overlay.js']:
         shutil.copy2(AUTOMATION / 'overlay' / name, DIST / 'content' / name)
     shutil.copy2(AUTOMATION / 'register.js', DIST / 'content' / 'automation-register.js')
-    # 注 sourceURL
-    for js in [DIST / 'background' / 'automation-bg-entry.js', DIST / 'contract.js',
-               DIST / 'content' / 'overlay-view.js', DIST / 'content' / 'overlay.js',
-               DIST / 'content' / 'automation-register.js',
-               *(DIST / 'background' / 'orchestrator').rglob('*.js'), DIST / 'background' / 'ws-client.js',
-               *(DIST / 'dashboard').rglob('*.js')]:
-        # 源相对路径尽力还原（dashboard/orchestrator 子树用 automation 前缀）
-        _inject_source_url(js, 'automation/' + js.name)
+    # 注 sourceURL：每个 dist 文件精确映射回 automation/ 源相对路径（保留子目录，DevTools 调试用）
+    _inject_source_url(DIST / 'background' / 'automation-bg-entry.js', 'automation/bg-entry.js')
+    _inject_source_url(DIST / 'contract.js', 'automation/contract.js')
+    _inject_source_url(DIST / 'background' / 'ws-client.js', 'automation/brain-bridge/ws-client.js')
+    _inject_source_url(DIST / 'content' / 'overlay-view.js', 'automation/overlay/overlay-view.js')
+    _inject_source_url(DIST / 'content' / 'overlay.js', 'automation/overlay/overlay.js')
+    _inject_source_url(DIST / 'content' / 'automation-register.js', 'automation/register.js')
+    for js in (DIST / 'background' / 'orchestrator').rglob('*.js'):
+        _inject_source_url(js, 'automation/orchestrator/' + str(js.relative_to(DIST / 'background' / 'orchestrator')))
+    for js in (DIST / 'dashboard').rglob('*.js'):
+        _inject_source_url(js, 'automation/dashboard/' + str(js.relative_to(DIST / 'dashboard')))
     fragment = json.loads((AUTOMATION / 'manifest.fragment.json').read_text(encoding='utf-8'))
     print('[build] automation/ 已装配（dashboard + orchestrator + overlay + register + fragment）')
     return {'pre_core': ['content/overlay-view.js', 'content/overlay.js'],
