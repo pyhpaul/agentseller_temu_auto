@@ -57,5 +57,17 @@
     return { ok: errors.length === 0, errors };
   }
 
-  return { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill };
+  // 回填提议（大脑 FILL_SUGGEST 写入 hitl.suggestion）：判定有无提议 + 合并到字段渲染（overlay 预填用）。
+  function hasSuggestion(hitl) {
+    return !!(hitl && hitl.suggestion && hitl.suggestion.values
+      && Object.keys(hitl.suggestion.values).length);
+  }
+  function mergeSuggestion(fields, suggestion) {
+    const vals = (suggestion && suggestion.values) || {};
+    return (fields || []).map(f => ({
+      ...f, suggestedValue: (vals[f.key] != null) ? String(vals[f.key]) : '',
+    }));
+  }
+
+  return { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill, hasSuggestion, mergeSuggestion };
 });

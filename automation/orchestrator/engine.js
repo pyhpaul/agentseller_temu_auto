@@ -52,6 +52,7 @@
     const { read, queue, stepRunner } = deps;
     const now = deps.now || (() => null);
     const onStepSettled = deps.onStepSettled || (() => {});   // Plan 3：每步落地后通知（上报 STEP_RESULT），默认 noop
+    const onPaused = deps.onPaused || (() => {});   // 后续刀：回填型 HITL pause 时通知 bg 请求大脑提议（fire-forget）
 
     // 改 skeleton 里某 workflow（走 queue 串行化；workflow 不存在则跳过写）
     function mutateWorkflow(workflowId, fn) {
@@ -104,6 +105,7 @@
               w.hitl = buildHitl(w.steps[w.cursor]);
               w.updatedAt = now();
             });
+            onPaused(workflowId);   // fire-forget：bg 据此为回填型步请求大脑提议（非回填步 bg 端自行过滤）
             return;                                                // 不驻留，等人确认
           }
           case 'advance-cursor': {

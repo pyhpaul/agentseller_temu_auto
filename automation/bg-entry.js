@@ -41,6 +41,9 @@ function orchEnsureWs() {
         orchEngine.applyDiagnosis(data.workflowId, data)
           .catch(e => console.warn('[orch-ws] applyDiagnosis 失败', e));
       },
+      FILL_SUGGEST: (data) => {
+        orchApplyFillSuggest(data).catch(e => console.warn('[orch-ws] FILL_SUGGEST 写入失败', e));
+      },
     },
   });
 }
@@ -62,6 +65,54 @@ function orchWrite(skeleton) {
 }
 
 const orchQueue = ORCH.mq.makeMutationQueue(orchRead, orchWrite);
+
+// 回填提议（后续刀）：回填型 HITL pause → 抓上下文 + 快照 → FILL_REQUEST；收 FILL_SUGGEST 写 hitl.suggestion。
+// 仅大脑在线才发；非回填步跳过；绝不写 product（人工确认门唯一落 product，守不变量1）。
+async function orchRequestFillSuggest(workflowId) {
+  if (!orchWsClient) return;                       // 大脑离线/release 无 ws → 退回纯人工（守不变量3）
+  const wf = ORCH.engine.findWorkflow(await orchRead(), workflowId);
+  if (!wf || wf.status !== 'paused') return;
+  const step = wf.steps[wf.cursor];
+  const fields = (step && step.hitlSpec && step.hitlSpec.fields) || [];
+  if (!fields.length) return;                      // 仅回填型步
+  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  orchWsClient.send('FILL_REQUEST', {
+    workflowId, stepId: step.id, fields,
+    context: {
+      product: wf.product,
+      recentSteps: wf.steps.slice(Math.max(0, wf.cursor - 3), wf.cursor).map(s => ({ id: s.id, status: s.status })),
+      pageSnapshot,
+    },
+  });
+}
+
+// 写大脑提议到 wf.hitl.suggestion（不碰 product）；只对当前 paused 的同一 step 生效（防过期提议串入）。
+function orchApplyFillSuggest(data) {
+  return orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, data.workflowId);
+    if (!wf || wf.status !== 'paused' || !wf.hitl) return undefined;
+    const step = wf.steps[wf.cursor];
+    if (!step || step.id !== data.stepId) return undefined;
+    wf.hitl.suggestion = { values: data.values || {}, reason: data.reason || '', confidence: data.confidence };
+    wf.updatedAt = Date.now();
+    return skeleton;
+  });
+}
+
+// 按 domain 抓当前页 innerText 快照（截断 6000）。尽力而为：无匹配 tab / 报错 → null（filler 仅凭 workflow 上下文）。
+async function orchCapturePageSnapshot(domain) {
+  if (!domain) return null;
+  try {
+    const tabs = await chrome.tabs.query({ url: `*://*.${domain}/*` });
+    const tab = tabs && tabs[0];
+    if (!tab) return null;
+    const arr = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => document.body.innerText });
+    const text = arr && arr[0] && arr[0].result;
+    return typeof text === 'string' ? text.slice(0, 6000) : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // stub stepRunner（2-2a）：模拟 auto 步成功，让骨架端到端可验证。
 // 2-2b 换真实：导航 tab → waitForEl(step.target.readySignal) → 调 feature 命令 → 收结构化回报。
@@ -334,6 +385,10 @@ const orchEngine = ORCH.engine.makeEngine({
       });
     } catch (e) { console.debug('[orch-ws] STEP_RESULT 发送忽略', e); }
   },
+  // 后续刀：回填型 HITL pause → 请求大脑提议（fire-forget；非回填步 orchRequestFillSuggest 内部过滤）
+  onPaused: (workflowId) => {
+    orchRequestFillSuggest(workflowId).catch(e => console.debug('[orch] 回填提议请求忽略', e));
+  },
 });
 
 // SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
@@ -440,6 +495,11 @@ self.AgentSellerBg.registerHandler('WF_', (msg, _sender, sendResponse) => {
     orchRetry((msg.data || {}).workflowId)
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_FILL_REFRESH') {
+    orchRequestFillSuggest((msg.data || {}).workflowId)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
 });

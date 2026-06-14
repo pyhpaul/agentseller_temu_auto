@@ -6,6 +6,7 @@ import time
 import websockets
 from brain.protocol import encode, decode
 from brain.diagnoser import diagnose
+from brain.filler import suggest
 from brain.model import MockModel
 
 # dashboard 连接集合（broadcast BRAIN_EVENT 用）。模块级：第一刀单进程单 batch，够用。
@@ -27,6 +28,8 @@ async def handler(websocket):
                 await websocket.send(encode("PONG"))
             elif mtype == "STEP_RESULT":
                 await _handle_step_result(websocket, data)
+            elif mtype == "FILL_REQUEST":
+                await _handle_fill_request(websocket, data)
             # 其余类型第一刀忽略
     finally:
         _dashboards.discard(websocket)
@@ -75,6 +78,25 @@ async def _handle_step_result(websocket, data):
     else:
         await _broadcast_dashboards(_brain_event(
             data, "log", "step {} → {}".format(data.get("stepId"), data.get("status"))))
+
+
+async def _handle_fill_request(websocket, data):
+    """FILL_REQUEST → filler 提议 → FILL_SUGGEST 回 bg + suggest 类 BRAIN_EVENT 给 dashboard。
+    filler 任何抛点兜底空提议（守不变量2），不崩 handler。to_thread 防阻塞模型冻结事件循环。"""
+    try:
+        result = await asyncio.to_thread(
+            suggest, data.get("stepId"), data.get("fields") or [], data.get("context") or {}, _model)
+    except Exception as e:
+        result = {"values": {}, "reason": "提议异常兜底（{}）".format(type(e).__name__), "confidence": 0.0}
+    await _broadcast_dashboards(_brain_event(
+        data, "suggest", "回填提议 {}：{}".format(list(result["values"].keys()), result["reason"])))
+    try:
+        await websocket.send(encode("FILL_SUGGEST", {
+            "workflowId": data.get("workflowId"), "stepId": data.get("stepId"),
+            "values": result["values"], "reason": result["reason"], "confidence": result["confidence"],
+        }))
+    except Exception:
+        pass
 
 
 async def _broadcast_dashboards(msg):
