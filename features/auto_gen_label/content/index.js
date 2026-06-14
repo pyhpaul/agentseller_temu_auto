@@ -155,14 +155,14 @@
   }
 
   function toggleProduct(product) {
-    // 同 SKC 的行点击时做排他选择；不同 SKC 时做多选
+    // 区分键用 skuId（行级唯一）；同 SKC 多 SKU 的 skcSku 相同，绝不能当区分键
     const sameSkc = fstate.products.filter(p => p.skcNumber === product.skcNumber);
     const different = fstate.products.filter(p => p.skcNumber !== product.skcNumber);
-    const alreadySelected = sameSkc.some(p => p.skcSku === product.skcSku);
+    const alreadySelected = sameSkc.some(p => p.skuId === product.skuId);
 
     if (alreadySelected) {
       // 已选则取消
-      setProducts([...different, ...sameSkc.filter(p => p.skcSku !== product.skcSku)]);
+      setProducts([...different, ...sameSkc.filter(p => p.skuId !== product.skuId)]);
     } else {
       // 未选则添加到同 SKC 分组
       setProducts([...different, ...sameSkc, product]);
@@ -180,9 +180,8 @@
       empty.style.display = 'none';
       if (info) {
         info.style.display = 'block';
-        const first = fstate.products[0];
         document.getElementById('tal-val-sku').textContent = `${fstate.products.length} 件商品`;
-        document.getElementById('tal-val-skc').textContent = fstate.products.map(p => p.skcSku).join(', ');
+        document.getElementById('tal-val-skc').textContent = fstate.products.map(p => p.skuSku).join(', ');
       }
     }
     // 标签文件行：显示已生成的标签数量
@@ -241,18 +240,18 @@
       if (e.target.closest('a, button')) return;
       const data = extractRowData(row);
       if (!data) { setStatus('未能读取该行数据', 'err'); return; }
-      if (!data.skcSku) { setStatus('该商品没有 SKC货号，标签生成需要 SKC货号，请选择其他商品', 'err'); return; }
+      if (!data.skuSku) { setStatus('该商品没有 SKU货号，标签生成需要 SKU货号，请选择其他商品', 'err'); return; }
 
       if (e.ctrlKey || e.metaKey) {
         // Ctrl/Cmd+Click：多SKC多选
         toggleProduct(data);
       } else {
-        // 普通Click：排他选择（清除不同SKC的，但同SKC可多选）
+        // 普通Click：排他选择（清除不同SKC的，但同SKC可多选）；区分键用 skuId（行级唯一）
         const differentSkc = fstate.products.filter(p => p.skcNumber !== data.skcNumber);
         const sameSkc = fstate.products.filter(p => p.skcNumber === data.skcNumber);
-        const alreadySelected = sameSkc.some(p => p.skcSku === data.skcSku);
+        const alreadySelected = sameSkc.some(p => p.skuId === data.skuId);
         if (alreadySelected) {
-          setProducts([...differentSkc, ...sameSkc.filter(p => p.skcSku !== data.skcSku)]);
+          setProducts([...differentSkc, ...sameSkc.filter(p => p.skuId !== data.skuId)]);
         } else {
           setProducts([...differentSkc, ...sameSkc, data]);
         }
@@ -276,7 +275,7 @@
     // tal-selected 是本 feature 专属 class（tal- 前缀 = Temu Auto Label 命名空间），其他 feature 不应共用
     document.querySelectorAll('tr.tal-selected').forEach(r => r.classList.remove('tal-selected'));
     for (const product of fstate.products) {
-      const row = findRowBySkc(product.skcNumber);
+      const row = findRowBySku(product.skuId);   // 按 SKU ID 精确定位（多 SKU 同 SKC 多行）
       if (row && !row.classList.contains('tal-selected')) {
         row.classList.add('tal-selected');
       }
@@ -293,21 +292,39 @@
   }
 
   function extractRowData(row) {
-    // SKC货号 列对部分单 SKU 商品本身为空，故只用 SKC 判定 row 是否可读
-    // 业务拦截（无 SKC货号 不能打标签）在调用方做
-    const si = getColumnIndex('SKC'), ki = getColumnIndex('SKC货号');
-    if (si < 0 || ki < 0) return null;
+    // 表格每行 = 一个 SKU。4 个关键列（实测 DOM 确认）：
+    //   SKC(SKC ID,数字) / SKU(SKU ID,数字) / SKC货号(SKC 级,同 SKC 各行相同) / SKU货号(SKU 级,各行不同)
+    // 用途分工：skuId = 行级唯一区分键（选中/定位行）；skuSku = 文件名+标签序列号；
+    //          skcNumber + skcSku = 文件夹 "SKC ID-SKC货号"。
+    // 空值占位符 "-" 归一为空。业务拦截（无 SKU货号 不能打标签）在调用方做。
+    const si = getColumnIndex('SKC'), ui = getColumnIndex('SKU');
+    const kci = getColumnIndex('SKC货号'), kui = getColumnIndex('SKU货号');
+    if (si < 0 || ui < 0) return null;
     const tds = row.querySelectorAll('td[data-testid="beast-core-table-td"]');
-    const skc = tds[si - 1]?.textContent.trim();
-    const skcSku = tds[ki - 1]?.textContent.trim();
-    return skc ? { skcNumber: skc, skcSku: skcSku || '' } : null;
+    const norm = v => { const t = (v || '').trim(); return t === '-' ? '' : t; };
+    const skcNumber = tds[si - 1]?.textContent.trim();
+    const skuId = tds[ui - 1]?.textContent.trim() || '';
+    const skcSku = kci > 0 ? norm(tds[kci - 1]?.textContent) : '';
+    const skuSku = kui > 0 ? norm(tds[kui - 1]?.textContent) : '';
+    return skcNumber ? { skcNumber, skuId, skcSku, skuSku } : null;
   }
 
+  // 按 SKC ID 找行（返回该 SKC 首行）——仅用于 orch 单 SKU 入口（入参是 skc）
   function findRowBySkc(skc) {
     if (!skc) return null;
     const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
     for (const row of rows) {
       if (extractRowData(row)?.skcNumber === skc) return row;
+    }
+    return null;
+  }
+
+  // 按 SKU ID 精确找行——多 SKU 场景必须用这个（同 SKC 多行，按 skcNumber 会都命中首行）
+  function findRowBySku(skuId) {
+    if (!skuId) return null;
+    const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+    for (const row of rows) {
+      if (extractRowData(row)?.skuId === skuId) return row;
     }
     return null;
   }
@@ -328,11 +345,11 @@
       const labelPaths = [];
       const total = fstate.products.length;
 
-      // Phase 1：逐个生成标签
+      // Phase 1：逐个生成标签（按 SKU ID 精确定位每行，多 SKU 同 SKC 也不会取错行）
       for (let i = 0; i < total; i++) {
         const product = fstate.products[i];
-        const row = findRowBySkc(product.skcNumber);
-        if (!row) throw new Error(`找不到SKC ${product.skcNumber} 对应的表格行`);
+        const row = findRowBySku(product.skuId);
+        if (!row) throw new Error(`找不到 SKU ${product.skuSku || product.skuId} 对应的表格行`);
 
         setStatus(`① 生成标签 (${i + 1}/${total})：正在捕获条码...`, 'loading');
         const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
@@ -342,16 +359,19 @@
         const result = await sendNative('PROCESS_LABEL', {
           skcNumber: skcNumber || product.skcNumber,
           skcSku: product.skcSku,
+          skuSku: product.skuSku,
           barcodePngB64,
           templatePath,
           outputDir,
           widthRatio: getWidthRatio(),
         });
-        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skcSku}`);
+        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skuSku}`);
 
         labelPaths.push({
           skcNumber: product.skcNumber,
+          skuId: product.skuId,
           skcSku: product.skcSku,
+          skuSku: product.skuSku,
           pngPath: result.output_png,
         });
       }
@@ -406,8 +426,8 @@
 
       for (let i = 0; i < total; i++) {
         const product = fstate.products[i];
-        const row = findRowBySkc(product.skcNumber);
-        if (!row) throw new Error(`找不到SKC ${product.skcNumber} 对应的表格行`);
+        const row = findRowBySku(product.skuId);
+        if (!row) throw new Error(`找不到 SKU ${product.skuSku || product.skuId} 对应的表格行`);
 
         setStatus(`调试：生成标签 (${i + 1}/${total}, ratio=${ratio})...`, 'loading');
         const { barcodePngB64, skcNumber } = await clickAndCaptureCanvas(row);
@@ -415,16 +435,19 @@
         const result = await sendNative('PROCESS_LABEL', {
           skcNumber: skcNumber || product.skcNumber,
           skcSku: product.skcSku,
+          skuSku: product.skuSku,
           barcodePngB64,
           templatePath,
           outputDir,
           widthRatio: ratio,
         });
-        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skcSku}`);
+        if (!result?.success) throw new Error(result?.error || `标签生成失败: ${product.skuSku}`);
 
         labelPaths.push({
           skcNumber: product.skcNumber,
+          skuId: product.skuId,
           skcSku: product.skcSku,
+          skuSku: product.skuSku,
           pngPath: result.output_png,
         });
       }
@@ -1880,7 +1903,7 @@
     const row = findRowBySkc(skc);
     if (!row) return { ok: true, started: false, reason: 'ROW_NOT_FOUND' };
     const rowData = extractRowData(row);
-    if (!rowData || !rowData.skcSku) return { ok: true, started: false, reason: 'NO_SKC_SKU' };
+    if (!rowData || !rowData.skuSku) return { ok: true, started: false, reason: 'NO_SKU_SKU' };
 
     // 清旧自驱状态 + 置 orch gating + 初态
     clearCFlow();
@@ -1896,6 +1919,7 @@
         const result = await sendNative('PROCESS_LABEL', {
           skcNumber: skcNumber || rowData.skcNumber,
           skcSku: rowData.skcSku,
+          skuSku: rowData.skuSku,
           barcodePngB64, templatePath, outputDir, widthRatio: getWidthRatio(),
         });
         if (!result?.success) throw new Error(result?.error || '标签生成失败');
@@ -1904,7 +1928,7 @@
           // 被 Phase3（按 skcNumber filter）当本轮一起上传陈旧文件。
           const labelPaths = JSON.parse(localStorage.getItem('talLabelPaths') || '[]')
             .filter(p => p.skcNumber !== rowData.skcNumber);
-          labelPaths.push({ skcNumber: rowData.skcNumber, skcSku: rowData.skcSku, pngPath: result.output_png });
+          labelPaths.push({ skcNumber: rowData.skcNumber, skuId: rowData.skuId, skcSku: rowData.skcSku, skuSku: rowData.skuSku, pngPath: result.output_png });
           localStorage.setItem('talLabelPaths', JSON.stringify(labelPaths));
           localStorage.setItem('talLabelSkc', rowData.skcNumber || '');
         }
