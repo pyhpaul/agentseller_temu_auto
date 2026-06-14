@@ -139,7 +139,8 @@ async function orchReviewApprove(workflowId) {
     const step = wf.steps[wf.cursor];
     if (!step || !wf.hitl || wf.hitl.kind !== 'review') return undefined;   // 只对 review-HITL 生效
     step.reviewed = true;
-    wf.status = 'running'; wf.updatedAt = Date.now();
+    step.status = 'pending';   // 回 pending → advance 出 run-auto；!reviewed 已 false 跳过复核闸 → 跑 adapter
+    wf.status = 'running'; wf.hitl = null; wf.updatedAt = Date.now();
     return skeleton;
   });
   await orchEngine.advance(workflowId);

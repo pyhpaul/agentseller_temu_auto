@@ -346,6 +346,32 @@ test('reviewGate：无注入 → 不可逆步照常跑（向后兼容）', async
   assert.strictEqual(ran, true);
 });
 
+test('reviewGate：approve 后(reviewed:true + status:pending) → advance 跑 adapter、不重核、step done', async () => {
+  // 模拟 orchReviewApprove 后的状态：人工确认提交，step 回 pending + reviewed=true
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, reviewed: true, status: 'pending' })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false, gated = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => { gated = true; return { verdict: 'hold' }; },
+  });
+  await engine.advance('w1');
+  assert.strictEqual(gated, false);                     // 已 reviewed → 不重核
+  assert.strictEqual(ran, true);                        // 不可逆 adapter 真跑了（approve 生效）
+  assert.strictEqual(wf0(store).steps[0].status, 'done');
+});
+
+test('reviewGate：paused 步(未回 pending) → advance noop，不跑 adapter（证明 approve 必须回 pending）', async () => {
+  // 反证：若 approve 漏设 status=pending，step 停 paused → decideNext noop → adapter 永不跑
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, reviewed: true, status: 'paused' })], { status: 'running' }));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({ read: store.read, queue, now: () => 1, stepRunner: async () => { ran = true; return { status: 'done' }; } });
+  await engine.advance('w1');
+  assert.strictEqual(ran, false);                       // paused 步不跑（这就是 bug 的根因，approve 修复后不会停 paused）
+});
+
 test('buildReviewHitl：review-kind + concerns', () => {
   const h = buildReviewHitl({ id: 'ship', label: '确认发货', target: { url: 'u' } }, { verdict: 'hold', reason: 'r', concerns: ['c1'] });
   assert.strictEqual(h.kind, 'review');
