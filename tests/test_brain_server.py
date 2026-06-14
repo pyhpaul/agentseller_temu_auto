@@ -113,3 +113,39 @@ def test_diagnose_crash_degrades_to_escalate():
         t, d = _run(scenario())
     assert t == "STATE_PATCH"
     assert d["action"] == "escalate"
+
+
+def test_fill_request_returns_suggest():
+    server._dashboards.clear()
+    server._model = MockModel(canned='{"values":{"url1688":"https://x.1688.com/a"},"reason":"r","confidence":0.7}')
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("HELLO", {"role": "bg"}))
+                await bg.send(encode("FILL_REQUEST", {
+                    "workflowId": "w", "stepId": "compare_1688",
+                    "fields": [{"key": "url1688", "label": "L", "required": True}], "context": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    t, d = _run(scenario())
+    assert t == "FILL_SUGGEST"
+    assert d["values"]["url1688"] == "https://x.1688.com/a"
+
+
+def test_fill_request_filler_crash_degrades_empty():
+    server._dashboards.clear()
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("FILL_REQUEST", {
+                    "workflowId": "w", "stepId": "x", "fields": [{"key": "k"}], "context": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    with mock.patch("brain.server.suggest", side_effect=RuntimeError("boom")):
+        t, d = _run(scenario())
+    assert t == "FILL_SUGGEST"
+    assert d["values"] == {}
