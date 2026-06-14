@@ -112,7 +112,12 @@ async function orchReviewGate(workflowId, step, wf) {
   return new Promise(resolve => {
     const timer = setTimeout(() => { orchReviewPending.delete(key); resolve(null); }, ORCH_REVIEW_TIMEOUT_MS);  // 超时→proceed
     orchReviewPending.set(key, { resolve, timer });
-    orchWsClient.send('REVIEW_REQUEST', { workflowId, stepId: step.id, product: wf.product, context: { pageSnapshot } });
+    try {
+      orchWsClient.send('REVIEW_REQUEST', { workflowId, stepId: step.id, product: wf.product, context: { pageSnapshot } });
+    } catch (e) {
+      // send 同步抛（transport 失败）→ 退回 proceed（与离线/超时同语义，不卡 advance；review 失败归 brain 侧→hold，transport 归 bg 侧→proceed）
+      clearTimeout(timer); orchReviewPending.delete(key); resolve(null);
+    }
   });
 }
 
