@@ -15,5 +15,6 @@
       "run_at": "document_idle"
     }
   ],
-  "extra_assets": ["content/overlay.css", "content/overlay.js"]
+  "extra_assets": ["content/overlay.css", "content/overlay.js"],
+  "background": "background/handler.js"
 }
