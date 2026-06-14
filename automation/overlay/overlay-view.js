@@ -69,5 +69,10 @@
     }));
   }
 
-  return { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill, hasSuggestion, mergeSuggestion };
+  // 不可逆复核 HITL（engine buildReviewHitl 写 kind:'review'）：overlay 据此渲染 concerns + 确认提交/中止。
+  function isReviewHitl(hitl) {
+    return !!(hitl && hitl.kind === 'review');
+  }
+
+  return { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill, hasSuggestion, mergeSuggestion, isReviewHitl };
 });
