@@ -87,7 +87,7 @@ features/auto_gen_label/
 **核心约束（业务确认）**：同一 SKC 下的多个 SKU，**合规信息（Phase 2）和主图槽位（Phase 3）都是 SKC/SPU 级别共享的**。所以：
 - Phase 1：为每个 SKU 货号各生成一个独立标签文件
 - Phase 2：按 SKC/SPU 只填**一次**合规信息（不是每 SKU 一次）
-- Phase 3：在同一组主图「标签图」槽位里，把该 SKC 下**所有** SKU 的标签**连续上传**（标签图 input 带 `multiple`，一次性多文件注入）
+- Phase 3：drawer 内有**多个独立标签图槽位**（商品主体实拍图区 / 外包装实拍图区 …，实测确认），每个槽位都要传该 SKC 下**所有** SKU 标签（input 带 `multiple`，一次多文件）。`uploadToLabelSlots` **遍历所有目标槽位**逐个注入——曾只填第一个空白槽位致漏传外包装
 
 **生成逻辑**：
 - `fstate.products` 存储选中的商品数组：`[{ skcNumber: '12345', skcSku: 'CLI319-White-2pcs' }, ...]`
@@ -260,8 +260,8 @@ engine.Stop()
 5. **drawer 内身份二次确认**：`drawer.querySelector('#spuId')` == 目标 SPU，不符中止（防点错行/rowspan 错位传错商品）
 6. 通过 native_host **逐个**分块读取该 SKC 下所有 SKU 标签 PNG（`imgFlow.labelPngPaths` 数组，`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
 7. **在 drawer 内**定位"标签图"上传按钮（`drawer.querySelectorAll('.rocket-upload[role="button"]')` 内 `<span>标签图</span>`，**禁止 `document` 全局**——曾因全局查找把标签图传到列表页其他商品行，见根 `CLAUDE.md`「数据正确性」§3）
-8. 取第一个空白槽位（计数器 `(0/N)`），无空白则取第一个槽位
-9. `injectFilesToInput` 把**所有** SKU 标签 File 加进一个 `DataTransfer`，一次性赋值 `input.files`（标签图 input 带 `multiple`）+ dispatch 一次 change —— 等价用户在文件框多选 N 个文件
+8. **遍历所有标签图槽位**（drawer 内有多个：商品主体实拍图 / 外包装实拍图 …）；优先所有空白槽位（计数 `(0/N)`），全有图则向全部槽位注入。⚠️ 不是只取第一个——曾只填商品主体漏了外包装
+9. 每个槽位 `injectFilesToInput` 把**所有** SKU 标签 File 加进一个 `DataTransfer` 赋值 `input.files`（input 带 `multiple`）+ dispatch change，注入后写后读校验 `files.length===N`
 10. 点"上传并识别"按钮提交（一次提交全部标签）
 
 ## Native Messaging 协议

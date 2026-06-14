@@ -1732,8 +1732,10 @@
     U.showToast(`③ 主图上传完成 ✓（${files.length} 个标签）`, 'ok');
   }
 
-  // 找「标签图」上传槽位，把所有 SKU 标签一次性注入其 multiple input（同 SKC 共用一组槽位）。
-  // sample 实测：标签图 input 带 multiple，等价用户在文件框多选 N 个文件。
+  // 找「标签图」上传槽位，把所有 SKU 标签注入。
+  // ⚠️ 实测确认：drawer 内有【多个独立】标签图槽位（商品主体实拍图区 / 外包装实拍图区 …），
+  //    每个区域各一个标签图上传位，都要传同一批 SKU 标签。input 带 multiple（一次多文件）。
+  //    曾只取第一个空白槽位 → 只填了商品主体、漏了外包装，故改为遍历所有目标槽位。
   async function uploadToLabelSlots(drawer, files) {
     // 严格限定在当前编辑 drawer 内查找，绝不用 document 全局（否则会命中列表页其他商品行的槽位 → 错行上传）
     const allBtns = Array.from(drawer.querySelectorAll('.rocket-upload[role="button"]'));
@@ -1741,24 +1743,31 @@
       Array.from(btn.querySelectorAll('span'))
         .some(s => s.childElementCount === 0 && s.textContent.trim() === '标签图')
     );
-    console.log('[TAL] (drawer 内) 标签图 upload 按钮数量:', labelBtns.length);
+    console.log('[TAL] (drawer 内) 标签图 upload 槽位数量:', labelBtns.length);
     if (!labelBtns.length) return false;
 
-    // 优先空白槽位（计数器 (0/N)），无空白则取第一个；把全部文件注入这一个 multiple input
+    // 优先所有空白槽位（计数器 (0/N)）；若全部已有图则向全部槽位注入（兜底）
     const emptyBtns = labelBtns.filter(btn => {
       const m = btn.textContent.match(/\((\d+)\/\d+\)/);
       return !m || parseInt(m[1]) === 0;
     });
-    const target = emptyBtns[0] || labelBtns[0];
-    const fileInput = target.querySelector('input[type="file"]');
-    if (!fileInput) return false;
-    console.log(`[TAL] 注入 ${files.length} 个标签到 input:`, fileInput.id || '(无id)', '(空白槽位:', emptyBtns.length, ')');
-    await injectFilesToInput(fileInput, files);
-    // 写后读校验（项目铁律）：确认 N 个文件确实进了 input，少传/拒绝立即暴露而非静默
-    if (fileInput.files.length !== files.length) {
-      throw new Error(`数据校验：标签图注入后文件数不符，期望 ${files.length} 实际 ${fileInput.files.length}`);
+    const targets = emptyBtns.length > 0 ? emptyBtns : labelBtns;
+    console.log(`[TAL] 目标标签图槽位 ${targets.length} 个（空白 ${emptyBtns.length} / 共 ${labelBtns.length}），每个各注入 ${files.length} 个文件`);
+
+    let injected = 0;
+    for (const btn of targets) {
+      const fileInput = btn.querySelector('input[type="file"]');
+      if (!fileInput) continue;
+      await injectFilesToInput(fileInput, files);
+      await U.sleep(300);   // 让上传组件处理本槽位文件，再注入下一个
+      // 写后读校验（项目铁律）：每个槽位都确认 N 个文件进了 input，少传/拒绝立即暴露
+      if (fileInput.files.length !== files.length) {
+        throw new Error(`数据校验：第 ${injected + 1} 个标签图槽位注入后文件数不符，期望 ${files.length} 实际 ${fileInput.files.length}`);
+      }
+      injected++;
     }
-    return true;
+    console.log(`[TAL] 已向 ${injected} 个标签图槽位各注入 ${files.length} 个标签`);
+    return injected > 0;
   }
 
   function mimeFromName(filename) {
