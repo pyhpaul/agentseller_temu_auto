@@ -48,11 +48,25 @@
     };
   }
 
+  // 不可逆复核 HOLD → review-kind HITL（concerns + reason；editable:false，人工确认提交/中止）
+  function buildReviewHitl(step, verdict) {
+    return {
+      action: '不可逆复核：' + step.label, stepId: step.id, kind: 'review',
+      keyValues: {}, reviewedBrief: '',
+      concerns: (verdict && verdict.concerns) || [],
+      reason: (verdict && verdict.reason) || '',
+      editable: false, fields: [],
+      targetUrl: (step.target && step.target.url) || null,
+      status: 'pending',
+    };
+  }
+
   function makeEngine(deps) {
     const { read, queue, stepRunner } = deps;
     const now = deps.now || (() => null);
     const onStepSettled = deps.onStepSettled || (() => {});   // Plan 3：每步落地后通知（上报 STEP_RESULT），默认 noop
     const onPaused = deps.onPaused || (() => {});   // 后续刀：回填型 HITL pause 时通知 bg 请求大脑提议（fire-forget）
+    const reviewGate = deps.reviewGate || null;   // 后续刀：不可逆步复核闸（async，注入；默认 null=不复核，release 沉睡）
 
     // 改 skeleton 里某 workflow（走 queue 串行化；workflow 不存在则跳过写）
     function mutateWorkflow(workflowId, fn) {
@@ -72,9 +86,21 @@
         switch (decision.kind) {
           case 'run-auto': {
             const step = wf.steps[wf.cursor];                      // 本轮快照的 step 定义
+            // 不可逆复核（后续刀）：reversible===false 且未复核 + reviewGate 注入 → 复核闸（阻塞 advance 等 verdict）
+            if (step.reversible === false && reviewGate && !step.reviewed) {
+              const verdict = await reviewGate(workflowId, step, wf);   // bg 实现：WS 往返+超时；离线/超时→null=proceed
+              if (verdict && verdict.verdict === 'hold') {
+                await mutateWorkflow(workflowId, w => {
+                  w.steps[w.cursor].status = 'paused'; w.status = 'paused';
+                  w.hitl = buildReviewHitl(w.steps[w.cursor], verdict);
+                  w.updatedAt = now();
+                });
+                return;                                                // 不跑 adapter，等人工确认提交/中止
+              }
+            }
             await mutateWorkflow(workflowId, w => {
               const s = w.steps[w.cursor];
-              s.status = 'running'; s.startedAt = now(); s.error = null;   // checkpoint：占位防重入
+              s.status = 'running'; s.startedAt = now(); s.error = null; s.reviewed = true;   // checkpoint + PASS 标 reviewed
             });
             let res;
             try {
@@ -190,5 +216,5 @@
     return { advance, recover, applyDiagnosis };
   }
 
-  return { makeEngine, findWorkflow, pickProduct, buildHitl };
+  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl };
 });

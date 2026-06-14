@@ -149,3 +149,39 @@ def test_fill_request_filler_crash_degrades_empty():
         t, d = _run(scenario())
     assert t == "FILL_SUGGEST"
     assert d["values"] == {}
+
+
+def test_review_request_returns_verdict():
+    server._dashboards.clear()
+    server._model = MockModel(canned='{"verdict":"hold","reason":"skc空","concerns":["skc 缺失"]}')
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("HELLO", {"role": "bg"}))
+                await bg.send(encode("REVIEW_REQUEST", {
+                    "workflowId": "w", "stepId": "gen_label", "product": {"skc": ""}, "context": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    t, d = _run(scenario())
+    assert t == "REVIEW_VERDICT"
+    assert d["verdict"] == "hold"
+    assert "skc 缺失" in d["concerns"]
+
+
+def test_review_request_reviewer_crash_holds():   # fail-safe：reviewer 抛 → hold（非 pass）
+    server._dashboards.clear()
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("REVIEW_REQUEST", {
+                    "workflowId": "w", "stepId": "ship", "product": {}, "context": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    with mock.patch("brain.server.review", side_effect=RuntimeError("boom")):
+        t, d = _run(scenario())
+    assert t == "REVIEW_VERDICT"
+    assert d["verdict"] == "hold"

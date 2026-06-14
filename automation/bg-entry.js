@@ -44,6 +44,7 @@ function orchEnsureWs() {
       FILL_SUGGEST: (data) => {
         orchApplyFillSuggest(data).catch(e => console.warn('[orch-ws] FILL_SUGGEST 写入失败', e));
       },
+      REVIEW_VERDICT: (data) => { orchResolveReview(data); },
     },
   });
 }
@@ -97,6 +98,52 @@ function orchApplyFillSuggest(data) {
     wf.updatedAt = Date.now();
     return skeleton;
   });
+}
+
+// 不可逆复核（后续刀）：reviewGate 阻塞 advance 等 REVIEW_VERDICT（区别于回填 fire-and-forget）。
+const orchReviewPending = new Map();          // key=`${wfId}:${stepId}` → {resolve, timer}
+const ORCH_REVIEW_TIMEOUT_MS = 15000;
+
+// engine 注入的复核闸：离线/超时 → null(proceed，additive)；仅显式 verdict 才返回。绝不写 product。
+async function orchReviewGate(workflowId, step, wf) {
+  if (!orchWsClient) return null;             // 大脑离线 → proceed（守不变量3：release 无 ws 永不复核）
+  const key = workflowId + ':' + step.id;
+  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  return new Promise(resolve => {
+    const timer = setTimeout(() => { orchReviewPending.delete(key); resolve(null); }, ORCH_REVIEW_TIMEOUT_MS);  // 超时→proceed
+    orchReviewPending.set(key, { resolve, timer });
+    try {
+      orchWsClient.send('REVIEW_REQUEST', { workflowId, stepId: step.id, product: wf.product, context: { pageSnapshot } });
+    } catch (e) {
+      // send 同步抛（transport 失败）→ 退回 proceed（与离线/超时同语义，不卡 advance；review 失败归 brain 侧→hold，transport 归 bg 侧→proceed）
+      clearTimeout(timer); orchReviewPending.delete(key); resolve(null);
+    }
+  });
+}
+
+// REVIEW_VERDICT 回来：按 key 找等待的 resolver，resolve(verdict)。无对应（超时已 resolve）→ 忽略。
+function orchResolveReview(data) {
+  const key = data.workflowId + ':' + data.stepId;
+  const pending = orchReviewPending.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  orchReviewPending.delete(key);
+  pending.resolve({ verdict: data.verdict, reason: data.reason, concerns: data.concerns });
+}
+
+// 人工确认提交不可逆动作：标 reviewed=true + running + advance（这次 reviewGate 被 !reviewed 跳过 → 跑 adapter）。
+async function orchReviewApprove(workflowId) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf || wf.status !== 'paused') return undefined;
+    const step = wf.steps[wf.cursor];
+    if (!step || !wf.hitl || wf.hitl.kind !== 'review') return undefined;   // 只对 review-HITL 生效
+    step.reviewed = true;
+    step.status = 'pending';   // 回 pending → advance 出 run-auto；!reviewed 已 false 跳过复核闸 → 跑 adapter
+    wf.status = 'running'; wf.hitl = null; wf.updatedAt = Date.now();
+    return skeleton;
+  });
+  await orchEngine.advance(workflowId);
 }
 
 // 按 domain 抓当前页 innerText 快照（截断 6000）。尽力而为：无匹配 tab / 报错 → null（filler 仅凭 workflow 上下文）。
@@ -389,6 +436,7 @@ const orchEngine = ORCH.engine.makeEngine({
   onPaused: (workflowId) => {
     orchRequestFillSuggest(workflowId).catch(e => console.debug('[orch] 回填提议请求忽略', e));
   },
+  reviewGate: orchReviewGate,   // 后续刀：不可逆步执行前复核（离线/超时→null=proceed）
 });
 
 // SW 唤醒恢复：每次 SW 实例化（冷启 / 回收唤醒 / 浏览器启动）即跑。
@@ -499,6 +547,11 @@ self.AgentSellerBg.registerHandler('WF_', (msg, _sender, sendResponse) => {
   }
   if (msg.type === 'WF_FILL_REFRESH') {
     orchRequestFillSuggest((msg.data || {}).workflowId)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_REVIEW_APPROVE') {
+    orchReviewApprove((msg.data || {}).workflowId)
       .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }

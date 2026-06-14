@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -264,4 +264,118 @@ test('onPaused：缺省不报错（向后兼容）', async () => {
   const engine = makeEngine({ read: store.read, queue, stepRunner: async () => ({ status: 'done' }), now: () => 1 });
   await engine.advance('w1');   // 无 onPaused 注入也不抛
   assert.strictEqual(wf0(store).status, 'paused');
+});
+
+test('reviewGate：不可逆步 hold → 暂停 review-HITL，不跑 adapter', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => ({ verdict: 'hold', reason: 'skc空', concerns: ['skc 缺失'] }),
+  });
+  await engine.advance('w1');
+  assert.strictEqual(ran, false);
+  assert.strictEqual(wf0(store).status, 'paused');
+  assert.strictEqual(wf0(store).hitl.kind, 'review');
+  assert.deepStrictEqual(wf0(store).hitl.concerns, ['skc 缺失']);
+});
+
+test('reviewGate：不可逆步 pass → 跑 adapter + 标 reviewed', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => ({ verdict: 'pass' }),
+  });
+  await engine.advance('w1');
+  assert.strictEqual(ran, true);
+  assert.strictEqual(wf0(store).steps[0].reviewed, true);
+  assert.strictEqual(wf0(store).steps[0].status, 'done');
+});
+
+test('reviewGate：null（离线/超时）→ 照常跑 adapter', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => null,
+  });
+  await engine.advance('w1');
+  assert.strictEqual(ran, true);
+});
+
+test('reviewGate：可逆步(reversible:true) 不复核', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'sku', reversible: true })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let gated = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => ({ status: 'done' }),
+    reviewGate: async () => { gated = true; return { verdict: 'hold' }; },
+  });
+  await engine.advance('w1');
+  assert.strictEqual(gated, false);
+  assert.strictEqual(wf0(store).status, 'done');
+});
+
+test('reviewGate：已 reviewed 步不重复复核', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, reviewed: true })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let gated = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => ({ status: 'done' }),
+    reviewGate: async () => { gated = true; return { verdict: 'hold' }; },
+  });
+  await engine.advance('w1');
+  assert.strictEqual(gated, false);
+});
+
+test('reviewGate：无注入 → 不可逆步照常跑（向后兼容）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({ read: store.read, queue, now: () => 1, stepRunner: async () => { ran = true; return { status: 'done' }; } });
+  await engine.advance('w1');
+  assert.strictEqual(ran, true);
+});
+
+test('reviewGate：approve 后(reviewed:true + status:pending) → advance 跑 adapter、不重核、step done', async () => {
+  // 模拟 orchReviewApprove 后的状态：人工确认提交，step 回 pending + reviewed=true
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, reviewed: true, status: 'pending' })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false, gated = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => { gated = true; return { verdict: 'hold' }; },
+  });
+  await engine.advance('w1');
+  assert.strictEqual(gated, false);                     // 已 reviewed → 不重核
+  assert.strictEqual(ran, true);                        // 不可逆 adapter 真跑了（approve 生效）
+  assert.strictEqual(wf0(store).steps[0].status, 'done');
+});
+
+test('reviewGate：paused 步(未回 pending) → advance noop，不跑 adapter（证明 approve 必须回 pending）', async () => {
+  // 反证：若 approve 漏设 status=pending，step 停 paused → decideNext noop → adapter 永不跑
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, reviewed: true, status: 'paused' })], { status: 'running' }));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({ read: store.read, queue, now: () => 1, stepRunner: async () => { ran = true; return { status: 'done' }; } });
+  await engine.advance('w1');
+  assert.strictEqual(ran, false);                       // paused 步不跑（这就是 bug 的根因，approve 修复后不会停 paused）
+});
+
+test('buildReviewHitl：review-kind + concerns', () => {
+  const h = buildReviewHitl({ id: 'ship', label: '确认发货', target: { url: 'u' } }, { verdict: 'hold', reason: 'r', concerns: ['c1'] });
+  assert.strictEqual(h.kind, 'review');
+  assert.strictEqual(h.editable, false);
+  assert.deepStrictEqual(h.concerns, ['c1']);
+  assert.strictEqual(h.targetUrl, 'u');
 });
