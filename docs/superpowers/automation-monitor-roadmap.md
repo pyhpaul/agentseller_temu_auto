@@ -34,7 +34,8 @@
 | **HITL 回填打通 L3** | 激活回填型 HITL(步2 collect_dxm 填 skc / 步5 compare_1688 填 url1688 / 步6 order_1688 填 orderNo1688)→ 下游 AUTO 步拿到数据,打通端到端数据流 | ✅ 合入 main(PR #58 + 收尾 #59) · 子 agent review APPROVE |
 
 > **当前唯一剩 = chrome e2e 端到端验证**(task #30,照 `docs/superpowers/2026-06-13-l3-chrome-e2e-checklist.md` 跑,需起大脑 `python3 -m brain` + 测试商品 + 授权)——解锁发版的关卡,⚠ 验证通过前不推 tag。
-> **后续刀**(spec §12,需 chrome e2e 验证基础 + brainstorming + 用户定优先级,勿在未验证基础上盲目摞):多变种 per-SKU 契约、大脑回填、不可逆复核、可偏离。
+> **后续刀**(spec §12,需 chrome e2e 验证基础 + brainstorming + 用户定优先级,勿在未验证基础上盲目摞):多变种 per-SKU 契约、~~大脑回填~~、不可逆复核、可偏离。
+> **大脑回填(HITL 回填模型提议)已实施**(feature 分支 `feature/hitl-fill-brain-suggestion`,brainstorm→spec→plan→subagent-driven):通用 propose→verify 通道——回填型 HITL 步 pause 时大脑从 workflow 上下文 + 页面快照**提议**回填值,overlay 预填+🧠badge,人工复核确认才落 product(大脑永不自动 confirm/写 product)。`brain/filler.py`(与 diagnoser 并列,空提议红线绝不编造)+ WS `FILL_REQUEST`/`FILL_SUGGEST` + engine `onPaused` 钩子 + overlay 预填 + bg-entry 接线。三不变量(人工门唯一落 product / 绝不编造 / 发版隔离 JS 只动 automation)。单元 node 106 / pytest 79 + 真 brain 进程通道冒烟。spec/plan:`docs/superpowers/{specs,plans}/2026-06-14-hitl-fill-brain-suggestion*`。⚠ **真模型端到端(配 BRAIN_LLM_* + chrome)仍人工 gated**,同 chrome e2e。
 > 注:原「Plan 4 = 编排大脑(Claude Agent SDK)」已被 Plan 3 取代——model-agnostic 颠覆「锁定单一家」决策(spec §11.1:编排框架自建模型无关 + LLM 后端可插拔 LiteLLM/OpenAI-compat)。
 
 ## 工作流隔离策略(2026-06-09 定)
