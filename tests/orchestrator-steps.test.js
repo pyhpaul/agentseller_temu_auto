@@ -74,3 +74,8 @@ test('buildInitialWorkflow: step 带 retryCount=0（Plan 3 self-heal 重试上�
   const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
   assert.ok(wf.steps.every(s => s.retryCount === 0));
 });
+
+test('buildInitialWorkflow：每步含 reviewed:false', () => {
+  const wf = buildInitialWorkflow({ label: 'A' }, () => 'id');
+  assert.ok(wf.steps.every(s => s.reviewed === false));
+});

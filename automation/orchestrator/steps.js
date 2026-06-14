@@ -57,7 +57,7 @@
         reversible: d.reversible, domain: d.domain, target: d.target || null,
         hitlSpec: d.hitlSpec || null,
         status: 'pending', startedAt: null, endedAt: null,
-        result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0,
+        result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0, reviewed: false,
       })),
       hitl: null,
       tmpTabs: [],
