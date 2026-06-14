@@ -1,9 +1,10 @@
-// core/content/overlay.js — 业务页 HITL 浮层（只读 storage + 发 message，不连 WS）。spec §5.3。
-// 与 FAB/Panel 同级注入（core content script）；唯一职责=编排消费端：
+// automation/overlay/overlay.js — 业务页 HITL 浮层（只读 storage + 发 message，不连 WS）。spec §5.3。
+// 由 automation 装配为 content script（contract 后、registry 后 core 前）；唯一职责=编排消费端：
 //   读 chrome.storage.local['as_workflow_state'] → 渲染进度/HITL/error；发 WF_*（绝不写 storage、不连 WS 绕 CSP）。
 (function () {
   'use strict';
-  const STORAGE_KEY = 'as_workflow_state';
+  // STORAGE_KEY 读 contract（单一真源，build 把 contract.js 作为 content script 注入在 overlay 前）；字面量兜底防未注入。
+  const STORAGE_KEY = (window.__AS_DASH_CONTRACT__ && window.__AS_DASH_CONTRACT__.STORAGE_KEY) || 'as_workflow_state';
   const TOTAL_STEPS = 13;
   let root = null;
   let composing = false;                       // 空态启动入口本地 UI 状态（是否展开 label 输入框）

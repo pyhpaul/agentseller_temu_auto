@@ -78,15 +78,15 @@
       .tal-feature-card .tal-ficon  { font-size:22px; }
       .tal-feature-card .tal-flabel { font-size:11px; color:#555; text-align:center; }
 
-      /* Hub「打开监控」入口 */
-      #tal-open-monitor {
+      /* 扩展按钮（extension panelButtons 数据化渲染） */
+      .tal-ext-btn {
         width:100%; padding:8px 0; margin-bottom:10px;
         border:1px solid #30363d; border-radius:8px; cursor:pointer;
         background:linear-gradient(135deg,#1c2128,#161b22); color:#58a6ff;
         font-size:12px; font-weight:600; display:flex; align-items:center;
         justify-content:center; gap:6px; transition:background .15s,border-color .15s;
       }
-      #tal-open-monitor:hover { background:#21262d; border-color:#58a6ff; }
+      .tal-ext-btn:hover { background:#21262d; border-color:#58a6ff; }
 
       /* Feature 视图 */
       #tal-feature-view { padding:10px 12px; min-width:220px; }
@@ -189,8 +189,6 @@
     if (document.getElementById('tal-panel')) return;
     const panel = document.createElement('div');
     panel.id = 'tal-panel';
-    const __asDev = !!(window.__AS_BUILD_INFO__ && window.__AS_BUILD_INFO__.isDev === true);
-    const __monitorBtn = __asDev ? '<div id="tal-open-monitor">📊 打开监控面板</div>' : '';
     panel.innerHTML = `
       <div class="tal-titlebar" id="tal-titlebar">
         <span id="tal-back" style="display:none;cursor:pointer;" title="返回">←</span>
@@ -199,7 +197,7 @@
         <button id="tal-close" title="收起">×</button>
       </div>
       <div id="tal-hub-view">
-        ${__monitorBtn}
+        <div id="tal-ext-buttons"></div>
         <div class="tal-feature-grid" id="tal-feature-grid"></div>
       </div>
       <div id="tal-feature-view" style="display:none"></div>
@@ -226,8 +224,8 @@
 
     panel.querySelector('#tal-close').addEventListener('click', hidePanelToFab);
     panel.querySelector('#tal-back').addEventListener('click', () => showHub(false));
-    const __monitorBtnEl = panel.querySelector('#tal-open-monitor');
-    if (__monitorBtnEl) __monitorBtnEl.addEventListener('click', () => window.AgentSeller.openMonitor());
+
+    refreshPanelButtons();
 
     // 监听 panel 尺寸变化，自动保持底部对齐 panelTargetBottom
     if (typeof ResizeObserver !== 'undefined') {
@@ -314,6 +312,21 @@
     }
   }
 
+  // extension 注册时由 registry 调用，重建 extension panelButtons
+  function refreshPanelButtons() {
+    const host = document.getElementById('tal-ext-buttons');
+    if (!host || !window.__AgentSellerRegistry?.collectPanelButtons) return;
+    host.innerHTML = '';
+    window.__AgentSellerRegistry.collectPanelButtons().forEach(btn => {
+      const el = document.createElement('div');
+      el.className = 'tal-ext-btn';
+      if (btn.id) el.id = `tal-extbtn-${btn.id}`;
+      el.innerHTML = `${btn.icon || ''} ${btn.label || ''}`.trim();
+      if (typeof btn.onClick === 'function') el.addEventListener('click', () => btn.onClick());
+      host.appendChild(el);
+    });
+  }
+
   // 新增函数：feature 注册时由 registry 调用，重建 hub 网格
   function refreshHub() {
     const grid = document.getElementById('tal-feature-grid');
@@ -336,6 +349,7 @@
     showFeature,
     hidePanelToFab,
     refreshHub,
+    refreshPanelButtons,
     getState: () => state,
   };
 })();

@@ -1,7 +1,7 @@
 // tests/orchestrator-recovery.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { decideRecovery } = require('../core/background/orchestrator/recovery.js');
+const { decideRecovery } = require('../automation/orchestrator/recovery.js');
 
 test('step 非 running（无中断）→ none', () => {
   assert.strictEqual(decideRecovery({ status: 'done' }).action, 'none');

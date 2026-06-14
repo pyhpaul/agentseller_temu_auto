@@ -8,11 +8,17 @@
 - **作用**：在 Temu 页面框选截图，自动跳转 1688 以图搜图
 - **触发**：Hub 面板 → 点击「🔍 1688搜图」图标 → 点「开始截图」按钮
 
+## Background 编排（SW 命令处理器）
+
+跨 tab 编排逻辑位于 `features/image_search_1688/background/handler.js`，经 `self.AgentSellerBg.registerHandler('IMG_SEARCH_', fn)` 注册命令处理器，由 build 的 `assemble_feature_backgrounds` 将其 importScripts 注入 SW 末尾（与 SW 共享 global scope）。`feature.json` 加 `"background": "background/handler.js"` 字段触发装配。
+
 ## 文件结构
 
 ```
 features/image_search_1688/
-├── feature.json
+├── feature.json           # + "background": "background/handler.js"
+├── background/
+│   └── handler.js         # SW 命令处理器：截图截取/裁切/写 session/开 1688 tab（注册 IMG_SEARCH_ 前缀）
 ├── content/
 │   ├── index.js       # 注册 feature，渲染「开始截图」按钮
 │   ├── overlay.js     # 截图框选覆盖层（动态注入到 Temu tab）
@@ -50,7 +56,7 @@ features/image_search_1688/
 
 ## 注意事项
 
-- `chrome.storage.session` 需在 SW 的 `onInstalled`/`onStartup` 调用 `setAccessLevel` 开放给 content script（已在 service-worker.js 中设置）
+- `chrome.storage.session` 需在 SW 的 `onInstalled`/`onStartup` 调用 `setAccessLevel` 开放给 content script（已在 `features/image_search_1688/background/handler.js` 中设置，由 build 装配进 SW）
 - 1688 风控页（路径含 `/punish` 或参数含 `x5secdata`）会走剪贴板兜底路径
 - `overlay.js` 的 guard 变量 `window.__img_search_overlay_loaded__` **不在 tearDown 中重置**：第二次截图靠已存在的 `onMessage` 监听器调用 `ensureRoot()`（此时闭包内 `root===null`，可重建）；若重置会产生第二个闭包和监听器，两者 root 变量独立，导致 null 报错
 - `js` 路径在 `feature.json` 中始终使用 `/` 分隔符（即使在 Windows 上）

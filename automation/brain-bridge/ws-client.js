@@ -1,4 +1,4 @@
-// core/background/ws-client.js — bg WebSocket 客户端架子（连大脑 localhost）。spec §4.2/§4.3。
+// automation/brain-bridge/ws-client.js — bg WebSocket 客户端架子（连大脑 localhost）。spec §4.2/§4.3。
 // 架子（2-2c-2）：连接/重连/保活/消息路由结构就位；**不自启**（startWsClient 留 Plan 3 调）。
 // 不传 RUN_STEP 业务（未注册 handler 即 stub-log）；真实调度 + SW 回收风险留 Plan 3（spec §4.3）。
 // release：随 background/ 进包，但 SW 顶层不调 startWsClient → 沉睡 dead code 无害（同 OPEN_MONITOR）。

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { STEP_DEFS, buildInitialWorkflow } = require('../core/background/orchestrator/steps.js');
+const { STEP_DEFS, buildInitialWorkflow } = require('../automation/orchestrator/steps.js');
 
 test('STEP_DEFS: 13 步、id 唯一、字段完整', () => {
   assert.strictEqual(STEP_DEFS.length, 13);

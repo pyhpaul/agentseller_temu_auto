@@ -2,7 +2,7 @@
 // WebSocket 副作用（connect/onopen/重连定时器）留 chrome / Plan 3 端到端验；本测只覆盖可纯测逻辑。
 const { test } = require('node:test');
 const assert = require('node:assert');
-const ws = require('../core/background/ws-client.js');
+const ws = require('../automation/brain-bridge/ws-client.js');
 
 test('nextReconnectDelay: 指数退避 1s→2s→4s→8s', () => {
   assert.strictEqual(ws.nextReconnectDelay(0), 1000);
