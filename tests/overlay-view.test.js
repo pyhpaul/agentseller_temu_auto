@@ -85,3 +85,24 @@ test('validateFill：非必填空字段不报错（qty 非 required）', () => {
   const v = validateFill(FILL_FIELDS, { url1688: 'https://x.1688.com/a', qty: NaN });
   assert.strictEqual(v.ok, true);
 });
+
+const { hasSuggestion, mergeSuggestion } = require('../automation/overlay/overlay-view.js');
+
+test('hasSuggestion：有非空 values → true；空/无 → false', () => {
+  assert.strictEqual(hasSuggestion({ suggestion: { values: { skc: 'X' } } }), true);
+  assert.strictEqual(hasSuggestion({ suggestion: { values: {} } }), false);
+  assert.strictEqual(hasSuggestion({}), false);
+  assert.strictEqual(hasSuggestion(null), false);
+});
+
+test('mergeSuggestion：字段附 suggestedValue（命中→值，未命中→空串），保留原字段', () => {
+  const fields = [{ key: 'skc', label: 'SKC' }, { key: 'spuId', label: 'SPU' }];
+  const out = mergeSuggestion(fields, { values: { skc: 'SKC123' } });
+  assert.strictEqual(out[0].suggestedValue, 'SKC123');
+  assert.strictEqual(out[1].suggestedValue, '');
+  assert.strictEqual(out[0].label, 'SKC');   // 原字段 label 保留
+});
+
+test('mergeSuggestion：无 suggestion → 全空串（现状不变）', () => {
+  assert.strictEqual(mergeSuggestion([{ key: 'skc' }], null)[0].suggestedValue, '');
+});
