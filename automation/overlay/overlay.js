@@ -64,15 +64,24 @@
       // engine.buildHitl 给带 hitlSpec 的步（步2 skc / 步5 url1688 / 步6 orderNo1688）editable+fields；
       // 纯确认步 editable=false 跳过。recovery 的 hitl editable=false，也不走这。
       if (h.editable && Array.isArray(h.fields) && h.fields.length) {
-        h.fields.forEach(f => {
+        // 大脑提议（FILL_SUGGEST 写入 h.suggestion）→ 预填 value + 🧠badge；无提议则空（现状）
+        if (VIEW.hasSuggestion(h)) {
+          b += `<div style="font-size:12px;color:#3fb950;margin:4px 0;">🧠 大脑建议（请核对）` +
+            (h.suggestion.reason ? `：${h.suggestion.reason}` : '') +
+            (typeof h.suggestion.confidence === 'number' ? `（信心 ${h.suggestion.confidence}）` : '') + `</div>`;
+        }
+        const merged = VIEW.mergeSuggestion(h.fields, h.suggestion);
+        merged.forEach(f => {
+          const sv = (f.suggestedValue || '').replace(/"/g, '&quot;');
+          const badge = f.suggestedValue ? ` <span style="color:#3fb950;">🧠</span>` : '';
           b += `<div style="margin-top:6px;"><label style="font-size:12px;color:#8b949e;">` +
-            `${f.label || f.key}${f.required ? ' <span style="color:#f85149;">*</span>' : ''}</label>`;
+            `${f.label || f.key}${f.required ? ' <span style="color:#f85149;">*</span>' : ''}${badge}</label>`;
           if (f.fieldType === 'select' && Array.isArray(f.options)) {
             b += `<select class="aso-field" id="aso-fill-${f.key}">` +
-              f.options.map(o => `<option value="${o}">${o}</option>`).join('') + `</select>`;
+              f.options.map(o => `<option value="${o}"${o === f.suggestedValue ? ' selected' : ''}>${o}</option>`).join('') + `</select>`;
           } else {
             b += `<input class="aso-field" id="aso-fill-${f.key}" ` +
-              `type="${f.fieldType === 'number' ? 'number' : 'text'}" placeholder="${f.label || f.key}"/>`;
+              `type="${f.fieldType === 'number' ? 'number' : 'text'}" value="${sv}" placeholder="${f.label || f.key}"/>`;
           }
           b += `</div>`;
         });
@@ -81,6 +90,7 @@
       const goUrl = h.targetUrl || (step.target && step.target.url);
       if (goUrl) b += `<button class="aso-btn aso-btn-go" data-act="go">前往</button>`;
       b += `<button class="aso-btn aso-btn-ok" data-act="confirm">${h.editable ? '提交' : '确认完成'}</button>`;
+      if (h.editable) b += `<button class="aso-btn aso-btn-no" data-act="refresh">🔄 重新建议</button>`;
       b += `<button class="aso-btn aso-btn-no" data-act="reject">拒绝</button></div>`;
       return b;
     }
@@ -119,6 +129,8 @@
           send('WF_HITL_REJECT', { workflowId: wf.id });   // paused=拒绝 / error=转人工，均 abort
         } else if (act === 'retry') {
           send('WF_RETRY', { workflowId: wf.id });
+        } else if (act === 'refresh') {
+          send('WF_FILL_REFRESH', { workflowId: wf.id });   // 让 bg 重新请求大脑提议
         }
       });
     });
