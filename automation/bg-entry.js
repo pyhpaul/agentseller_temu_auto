@@ -127,6 +127,9 @@ async function orchPollState(key, { timeoutMs, intervalMs = 2000, onTick } = {})
 }
 
 // ── CPO adapter（create_sku / create_po）─────────────────────────────────────
+// 边界（重构决策 A，spec §7.1）：adapter 直调全局 cpoRun/cpoRun2 = 受控的 SW global 函数共享——
+// automation 与 CPO handler 都被 build 装配进同一 SW、共享 global scope，automation 未 import feature
+// 模块，非模块反向依赖；await 可靠等终态，优于「命令入口+轮询 storage」（故 Task 2.1 不改此结构）。
 // CPO 自管 tab（cpoRun/cpoRun2 内部 chrome.tabs.create）：adapter 不导航/不 waitForEl，
 // 直接 await（两者 async、await 到终态才返回、done/error 都写 cpo_state.phaseN 正常返回不 throw），
 // 再读 cpo_state 桥接回 engine 的 {status,result,error}。cpo_state(CPO 私有)与 as_workflow_state(编排器)并存。

@@ -177,7 +177,8 @@ def assemble_automation(with_automation: bool):
         _inject_source_url(js, 'automation/dashboard/' + str(js.relative_to(DIST / 'dashboard')))
     fragment = json.loads((AUTOMATION / 'manifest.fragment.json').read_text(encoding='utf-8'))
     print('[build] automation/ 已装配（dashboard + orchestrator + overlay + register + fragment）')
-    return {'pre_core': ['content/overlay-view.js', 'content/overlay.js'],
+    # contract.js 作为 content script 注入在 overlay 前：overlay 读 window.__AS_DASH_CONTRACT__.STORAGE_KEY（单一真源）
+    return {'pre_core': ['contract.js', 'content/overlay-view.js', 'content/overlay.js'],
             'post_core': ['content/automation-register.js'], 'fragment': fragment}
 
 
