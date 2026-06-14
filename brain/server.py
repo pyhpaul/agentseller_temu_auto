@@ -7,6 +7,7 @@ import websockets
 from brain.protocol import encode, decode
 from brain.diagnoser import diagnose
 from brain.filler import suggest
+from brain.reviewer import review
 from brain.model import MockModel
 
 # dashboard 连接集合（broadcast BRAIN_EVENT 用）。模块级：第一刀单进程单 batch，够用。
@@ -30,6 +31,8 @@ async def handler(websocket):
                 await _handle_step_result(websocket, data)
             elif mtype == "FILL_REQUEST":
                 await _handle_fill_request(websocket, data)
+            elif mtype == "REVIEW_REQUEST":
+                await _handle_review_request(websocket, data)
             # 其余类型第一刀忽略
     finally:
         _dashboards.discard(websocket)
@@ -94,6 +97,25 @@ async def _handle_fill_request(websocket, data):
         await websocket.send(encode("FILL_SUGGEST", {
             "workflowId": data.get("workflowId"), "stepId": data.get("stepId"),
             "values": result["values"], "reason": result["reason"], "confidence": result["confidence"],
+        }))
+    except Exception:
+        pass
+
+
+async def _handle_review_request(websocket, data):
+    """REVIEW_REQUEST → reviewer 复核 → REVIEW_VERDICT 回 bg + review 类 BRAIN_EVENT。
+    fail-safe：reviewer 任何抛点兜底 hold（绝不假 pass 放行不可逆）。to_thread 防阻塞模型冻结。"""
+    try:
+        result = await asyncio.to_thread(
+            review, data.get("stepId"), data.get("product") or {}, data.get("context") or {}, _model)
+    except Exception as e:
+        result = {"verdict": "hold", "reason": "复核异常兜底（{}），保守转人工".format(type(e).__name__), "concerns": []}
+    await _broadcast_dashboards(_brain_event(
+        data, "review", "{}：{}".format(result["verdict"], result["reason"])))
+    try:
+        await websocket.send(encode("REVIEW_VERDICT", {
+            "workflowId": data.get("workflowId"), "stepId": data.get("stepId"),
+            "verdict": result["verdict"], "reason": result["reason"], "concerns": result["concerns"],
         }))
     except Exception:
         pass
