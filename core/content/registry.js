@@ -5,6 +5,8 @@
   const features = [];                  // [{id, icon, label, locked, order, init, render}]
   const featureById = new Map();
   const pageChangeListeners = [];
+  const extensions = [];               // [{id, panelButtons, overlays}]
+  const extensionById = new Map();
 
   function registerFeature(def) {
     if (!def || !def.id) throw new Error('registerFeature: 缺少 id');
@@ -53,6 +55,18 @@
     window.addEventListener('popstate', () => setTimeout(dispatchPageChange, 300));
   }
 
+  function registerExtension(def) {
+    if (!def || !def.id) throw new Error('registerExtension: 缺少 id');
+    if (extensionById.has(def.id)) { console.warn('[AgentSeller] extension 已注册，跳过:', def.id); return; }
+    extensions.push(def);
+    extensionById.set(def.id, def);
+    if (window.__AgentSellerUI?.refreshPanelButtons) window.__AgentSellerUI.refreshPanelButtons();
+  }
+  function getExtensions() { return extensions.slice(); }
+  function collectPanelButtons() { return extensions.flatMap(e => e.panelButtons || []); }
+  // Phase 2（Task 1.4/2.x）：automation overlay 消费此接口挂载 HITL 浮层
+  function getOverlays() { return extensions.flatMap(e => e.overlays || []); }
+
   async function sendNative(action, data) {
     if (!chrome?.runtime?.id) throw new Error('插件已重载，请刷新页面后重试');
     const resp = await chrome.runtime.sendMessage({ type: action, data });
@@ -61,11 +75,12 @@
   }
 
   // 暴露 registry 内部接口给 ui.js 使用
-  window.__AgentSellerRegistry = { getFeatures, renderFeature, dispatchPageChange, hookHistory };
+  window.__AgentSellerRegistry = { getFeatures, renderFeature, dispatchPageChange, hookHistory, getExtensions, collectPanelButtons, getOverlays };
 
   // 公开 API：feature 业务代码使用
   window.AgentSeller = {
     registerFeature,
+    registerExtension,
     onPageChange,
     showToast: (...args) => window.__AgentSellerUtils.showToast(...args),
     utils: null,  // 由 core.js 在初始化时填入
@@ -85,17 +100,6 @@
       if (!ui) return;
       if (ui.getState().view === 'fab') ui.showHub(true);
       else ui.showHub(false);
-    },
-    // 打开监控 dashboard（独立窗口）。content 不能直接 chrome.windows.create，
-    // 发 OPEN_MONITOR 给 service worker 处理（SW 跨窗口存活、有 windows 权限）。
-    openMonitor: async () => {
-      if (!chrome?.runtime?.id) { window.__AgentSellerUtils.showToast('插件已重载，请刷新页面后重试', 'err'); return; }
-      try {
-        const resp = await chrome.runtime.sendMessage({ type: 'OPEN_MONITOR' });
-        if (!resp?.success) throw new Error(resp?.error || '打开监控失败');
-      } catch (e) {
-        window.__AgentSellerUtils.showToast('打开监控失败：' + (e?.message || e), 'err');
-      }
     },
   };
 })();
