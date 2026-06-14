@@ -45,3 +45,9 @@ def test_only_requested_keys_kept():
 def test_empty_string_value_ignored():
     m = MockModel(canned='{"values":{"url1688":"  "},"reason":"r"}')
     assert suggest("compare_1688", FIELDS, _ctx(), m)["values"] == {}
+
+
+def test_bool_value_excluded():
+    # bool 不当值收（否则 True→"True"，与 confidence 的 bool 排除一致）
+    m = MockModel(canned='{"values":{"url1688":true},"reason":"r"}')
+    assert suggest("compare_1688", FIELDS, _ctx(), m)["values"] == {}

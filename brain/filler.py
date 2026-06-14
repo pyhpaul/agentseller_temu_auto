@@ -28,7 +28,8 @@ def suggest(step_id, fields, context, model):
     if isinstance(raw_values, dict):
         for k in keys:                       # 只收请求的字段、强制非空字符串、空串忽略（不编造）
             v = raw_values.get(k)
-            if isinstance(v, (str, int, float)) and str(v).strip():
+            # 排除 bool（isinstance(True,int)==True，否则 True→"True"，与 confidence 的 bool 排除一致）
+            if isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v).strip():
                 values[k] = str(v).strip()
     conf = obj.get("confidence")
     confidence = float(conf) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else 0.0
