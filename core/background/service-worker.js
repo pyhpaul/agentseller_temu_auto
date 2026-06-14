@@ -104,6 +104,16 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 
 const NATIVE_HOST = 'com.temu.label_host';
 
+// ── bg-router ── 数据化 bg 命令路由注册表 ────────────────────────────────────────
+// feature/automation 的 bg 段通过 self.AgentSellerBg.registerHandler(prefix, fn) 注册命令处理器，
+// 无需硬编码进 core SW。现有 native 透传 / OPEN_MONITOR / IMG_SEARCH / CPO / WF_* 分支全部保留，
+// 两 listener 并存（MV3 支持多 listener）；当前无人注册 → router 对所有消息返回 false，原有分支照常工作。
+importScripts('bg-router.js');                     // 提供 self.__AS_BG_ROUTER__
+const _asBgRouter = self.__AS_BG_ROUTER__.makeBgRouter();
+self.AgentSellerBg = { registerHandler: (prefix, fn) => _asBgRouter.register(prefix, fn) };
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => _asBgRouter.route(msg, sender, sendResponse));
+// ── end bg-router ─────────────────────────────────────────────────────────────
+
 let nativePort = null;
 
 function connectNativeHost() {
