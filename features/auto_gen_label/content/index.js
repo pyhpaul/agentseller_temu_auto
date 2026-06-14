@@ -1255,17 +1255,9 @@
   async function runStep1(flow) {
     U.showToast('步骤 1/3：查询 SPU...', 'info');
 
-    // 选 SKC + 填货号 + 写后读校验（自愈"选 SKC 后页面异步重置回 SPU"）
-    await fillSkcAndVerify(flow.skcNumber);
-
-    // 点击查询（"查 询" normText 后匹配 "查询"）
-    const searchBtn = U.findByText('button', '查询');
-    if (!searchBtn) throw new Error('未找到查询按钮');
-    searchBtn.click();
-
-    // 等查询结果刷新到唯一行后再取 SPU（搜精确 SKC 结果必唯一）。
-    // 不再固定 sleep + 抓"全页第一个 SPU"——结果未刷新时那样会抓到默认行，导致 SKC↔SPU 错配、操作错商品。
-    const spuId = await extractSpuFromUniqueResult();
+    // 带重试的查询：每轮 fillSkcAndVerify(确保搜索框值) + 点查询 + 等唯一结果行。
+    // 慢刷新 / 请求丢失 / 搜索框被异步重置都在总窗口内自愈；仍坚持"唯一 1 行"防 SKC↔SPU 错配。
+    const spuId = await queryAndExtractSpuWithRetry(flow.skcNumber);
     if (!spuId) throw new Error('未找到 SPU（查询结果为空？）');
 
     U.showToast(`找到 SPU: ${spuId}，跳转继续...`, 'info');
@@ -1280,26 +1272,37 @@
       .filter(r => /SPU[：:]\s*\d+/.test(r.textContent));
   }
 
-  // 查询后等结果刷新到唯一行，从该行取 SPU。
-  // 不唯一（未刷新 / 查无结果 / 多结果）或超时则报错，绝不抓第一个——从源头防 SKC↔SPU 错配。
-  async function extractSpuFromUniqueResult(timeout = 10000) {
-    const deadline = Date.now() + timeout;
-    let rows = [];
-    let firstLogged = false;
+  // 带重试的查询 + 取唯一 SPU：每轮 fillSkcAndVerify + 点查询 + 短窗口等"含 SPU 结果行恰好 1 行"。
+  // 页面刷新慢 / 查询请求丢失 / 搜索框被异步重置 → 重新查询，总窗口(默认 45s)内自愈。
+  // 始终坚持"唯一 1 行"才取值，不唯一/超时报错——从源头防 SKC↔SPU 错配（绝不抓第一个）。
+  async function queryAndExtractSpuWithRetry(skcNumber, totalTimeout = 45000, perAttempt = 12000) {
+    const deadline = Date.now() + totalTimeout;
+    let attempt = 0, lastRows = [];
     while (Date.now() < deadline) {
-      rows = getSpuResultRows();
-      if (!firstLogged) {
-        console.log('[TAL][step1] 查询后含SPU结果行数=', rows.length,
-          'SPU=', rows.map(r => r.textContent.match(/SPU[：:]\s*(\d+)/)?.[1]));
-        firstLogged = true;
+      attempt++;
+      // 每轮确保搜索框为目标 SKC（fillSkcAndVerify 自带写后读自愈）；短超时避免单轮拖太久
+      const fillBudget = Math.min(15000, Math.max(3000, deadline - Date.now()));
+      await fillSkcAndVerify(skcNumber, fillBudget);
+
+      const searchBtn = U.findByText('button', '查询');
+      if (!searchBtn) throw new Error('未找到查询按钮');
+      searchBtn.click();
+      console.log(`[TAL][step1] 查询第 ${attempt} 次（剩余 ${Math.round((deadline - Date.now()) / 1000)}s）`);
+
+      // 本轮内轮询等唯一结果行
+      const attemptDeadline = Math.min(Date.now() + perAttempt, deadline);
+      while (Date.now() < attemptDeadline) {
+        const rows = getSpuResultRows();
+        lastRows = rows;
+        if (rows.length === 1) {
+          const m = rows[0].textContent.match(/SPU[：:]\s*(\d+)/);
+          if (m) { console.log('[TAL][step1] 唯一结果行 SPU=', m[1]); return m[1]; }
+        }
+        await U.sleep(300);
       }
-      if (rows.length === 1) {
-        const m = rows[0].textContent.match(/SPU[：:]\s*(\d+)/);
-        if (m) { console.log('[TAL][step1] 唯一结果行 SPU=', m[1]); return m[1]; }
-      }
-      await U.sleep(300);
+      console.log(`[TAL][step1] 第 ${attempt} 次 ${perAttempt / 1000}s 内未出唯一结果行（当前 ${lastRows.length} 行），重新查询`);
     }
-    throw new Error(`数据校验：查询 SKC 后含 SPU 的结果行数=${rows.length}（期望唯一 1 行），可能结果未刷新或该 SKC 查无结果，已中止以防 SKC↔SPU 错配`);
+    throw new Error(`数据校验：查询 SKC 后 ${totalTimeout / 1000}s 内未刷新出唯一 SPU 结果行（最后 ${lastRows.length} 行），可能页面刷新过慢或该 SKC 查无结果，已中止以防 SKC↔SPU 错配`);
   }
 
   // ── Step 2：合规信息列表页 — 查询 + 点编辑 ───────────────────────────────
