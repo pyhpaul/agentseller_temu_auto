@@ -23,7 +23,7 @@ window.TPD.selectors.*                                              (selectors)
 window.TPD.storage.*                                                (storage)
 window.TPD.actions.*                                                (actions)
 window.TPD.engine.*                                                 (engine)
-window.TPD.panel.mount()                                            (panel.js 整块为死代码，从未 mount；真实 UI 是 §UI 描述的 Hub feature view。panel.js 内含已废弃的 stopOnError/refreshEvery/delayMultiplier 设置项，勿据其推断当前可配置项)
+window.TPD.panel.mount()                                            (panel/mount 代码块在 index.js 内、整块死代码，从未 mount；真实 UI 是 §UI 描述的 Hub feature view。该块内含已废弃的 stopOnError/refreshEvery/delayMultiplier 设置项，勿据其推断当前可配置项)
 ```
 
 状态机：`IDLE → RUNNING ⇄ PAUSED ⇄ STEPPING → IDLE/ERROR`
