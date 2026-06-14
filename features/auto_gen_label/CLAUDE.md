@@ -96,7 +96,12 @@ features/auto_gen_label/
 - Phase 2→3 transition：从 `talLabelPaths` filter 出该 skcNumber 下**所有** SKU 标签，存入 `imgFlow.labelPngPaths`
 - Phase 3：读取 `labelPngPaths` 全部文件 → 一次 `DataTransfer` 多文件注入标签图槽位
 
-**多 SKC 边界（fail-soft）**：Ctrl/Cmd+点击可跨 SKC 多选，但合规/主图按 SKC 共享，自动流程**只覆盖第一个 SKC 的全部 SKU**。检测到多个 SKC 时 setStatus 明确提示"其余 SKC 请分别选择后再执行"——不阻断、不偷偷错处理。其余 SKC 的标签已生成在磁盘，用户重新选该 SKC 行再执行即可。
+**单 SKC 约束（强制）**：合规/主图按 SKC 共享，**一次只能处理同一个 SKC 的多个 SKU**，不允许跨 SKC。选择交互：
+- 点同一 SKC 的行 → 按 `skuId` toggle（已选取消 / 未选加入）
+- 点不同 SKC 的行 → **清空旧选择，切换到新 SKC**（始终保持 `fstate.products` 单一 SKC）
+- `onRunAllPhases` / `onRunPhase1Only` 入口再加防御：检测到多 SKC 直接报错中止（理论不触发，兜底选择逻辑）
+
+> 历史：曾用 Ctrl/Cmd+点击支持跨 SKC 多选 + 多 SKC fail-soft（只处理第一个），但跨 SKC 本就无业务意义（每个 SKC 各自 Phase2/3），已移除，统一为「切换」语义。
 
 **典型用途**：同一SKC有多个颜色/尺寸规格（多SKU货号）时，一次点击全选这个SKC的所有变种，自动生成所有规格的标签，Phase 3 一次性把这些标签连续传到该商品的标签图槽位。
 

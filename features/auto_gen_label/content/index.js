@@ -154,20 +154,6 @@
     refreshRowHighlight();
   }
 
-  function toggleProduct(product) {
-    // 区分键用 skuId（行级唯一）；同 SKC 多 SKU 的 skcSku 相同，绝不能当区分键
-    const sameSkc = fstate.products.filter(p => p.skcNumber === product.skcNumber);
-    const different = fstate.products.filter(p => p.skcNumber !== product.skcNumber);
-    const alreadySelected = sameSkc.some(p => p.skuId === product.skuId);
-
-    if (alreadySelected) {
-      // 已选则取消
-      setProducts([...different, ...sameSkc.filter(p => p.skuId !== product.skuId)]);
-    } else {
-      // 未选则添加到同 SKC 分组
-      setProducts([...different, ...sameSkc, product]);
-    }
-  }
 
   function refreshProductUI() {
     const empty = document.getElementById('tal-product-empty');
@@ -231,9 +217,10 @@
     if (clickDelegationBound) return;
     clickDelegationBound = true;
     // 在 document 上绑一个全局 click listener（event delegation），
-    // 避免 React 复用/替换 row 节点时 listener 丢失。支持多SKU选择：
-    // - 普通点击：排他选择（清除其他SKC的，同SKC内多选）
-    // - Ctrl/Cmd+点击：多SKC多选
+    // 避免 React 复用/替换 row 节点时 listener 丢失。
+    // 约束：一次只能处理同一个 SKC 的多个 SKU（Phase2/3 按 SKC 共享，跨 SKC 没意义）：
+    // - 点同一 SKC 的行：toggle 该 SKU（已选取消，未选加入）
+    // - 点不同 SKC 的行：清空旧选择，切换到新 SKC（始终保持单一 SKC）
     document.addEventListener('click', e => {
       const row = e.target.closest('tr[data-testid="beast-core-table-body-tr"]');
       if (!row) return;
@@ -242,20 +229,18 @@
       if (!data) { setStatus('未能读取该行数据', 'err'); return; }
       if (!data.skuSku) { setStatus('该商品没有 SKU货号，标签生成需要 SKU货号，请选择其他商品', 'err'); return; }
 
-      if (e.ctrlKey || e.metaKey) {
-        // Ctrl/Cmd+Click：多SKC多选
-        toggleProduct(data);
-      } else {
-        // 普通Click：排他选择（清除不同SKC的，但同SKC可多选）；区分键用 skuId（行级唯一）
-        const differentSkc = fstate.products.filter(p => p.skcNumber !== data.skcNumber);
-        const sameSkc = fstate.products.filter(p => p.skcNumber === data.skcNumber);
-        const alreadySelected = sameSkc.some(p => p.skuId === data.skuId);
-        if (alreadySelected) {
-          setProducts([...differentSkc, ...sameSkc.filter(p => p.skuId !== data.skuId)]);
-        } else {
-          setProducts([...differentSkc, ...sameSkc, data]);
-        }
+      const curSkc = fstate.products[0]?.skcNumber;
+      if (curSkc && curSkc !== data.skcNumber) {
+        // 切换 SKC：清空旧选择，只选中新行（一次只能处理同一 SKC）
+        setProducts([data]);
+        setStatus(`已切换到 SKC ${data.skcNumber}（一次只能处理同一 SKC，原选择已清除）`, '');
+        return;
       }
+      // 同一 SKC（或首次选）：按 skuId（行级唯一）toggle 该 SKU 行
+      const exists = fstate.products.some(p => p.skuId === data.skuId);
+      setProducts(exists
+        ? fstate.products.filter(p => p.skuId !== data.skuId)
+        : [...fstate.products, data]);
     });
   }
 
@@ -334,6 +319,11 @@
   // ═══════════════════════════════════════════════════════════════════════════
   async function onRunAllPhases() {
     if (fstate.products.length === 0) return;
+    // 防御：选中必须同一 SKC（选择逻辑已保证，这里兜底，理论不触发）
+    if (new Set(fstate.products.map(p => p.skcNumber)).size > 1) {
+      setStatus('选中商品包含多个 SKC，一次只能处理同一 SKC，请重新选择', 'err');
+      return;
+    }
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
@@ -381,13 +371,7 @@
       localStorage.setItem('talLabelSkc', fstate.products[0].skcNumber || '');
       refreshProductUI();
 
-      // 多 SKC fail-soft：合规/主图按 SKC 共享，自动流程只覆盖第一个 SKC 的全部 SKU
-      const uniqueSkcs = [...new Set(fstate.products.map(p => p.skcNumber))];
-      if (uniqueSkcs.length > 1) {
-        setStatus(`① 标签生成完成 ✓ (${total} 个 / ${uniqueSkcs.length} 个 SKC)。自动流程仅处理第一个 SKC 的全部 SKU，其余 SKC 请分别选择后再执行`, 'ok');
-      } else {
-        setStatus(`① 全部标签生成完成 ✓ (${total} 个)，启动合规填写...`, 'ok');
-      }
+      setStatus(`① 全部标签生成完成 ✓ (${total} 个)，启动合规填写...`, 'ok');
       await U.sleep(800);
 
       await maybeOpenOutputFolder(labelPaths);
@@ -412,6 +396,10 @@
   // 调试：只跑 Phase 1（标签生成），用当前调试栏 ratio，支持多SKU
   async function onRunPhase1Only() {
     if (fstate.products.length === 0) return;
+    if (new Set(fstate.products.map(p => p.skcNumber)).size > 1) {
+      setStatus('选中商品包含多个 SKC，一次只能处理同一 SKC，请重新选择', 'err');
+      return;
+    }
     const { templatePath, outputDir } = getPaths();
     if (!templatePath || !outputDir) {
       setStatus('模板路径或输出目录未设置', 'err');
