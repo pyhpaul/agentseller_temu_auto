@@ -23,12 +23,24 @@
   enableSessionStorageAccess();
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
+  // dataURL → Blob 手动解码：扩展 CSP 的 connect-src 不放行 data:，fetch('data:…') 会被拦截
+  // （automation 装配带入 CSP 时，SW 内对 data: 的 fetch 被 connect-src 限制 → Failed to fetch）。
+  // 纯 base64 解码不发网络请求，不受 CSP 影响，dev/release 都稳。
+  function imgDataUrlToBlob(dataUrl) {
+    const comma = dataUrl.indexOf(',');
+    const mime = (dataUrl.slice(0, comma).match(/:(.*?);/) || [])[1] || 'image/png';
+    const bin = atob(dataUrl.slice(comma + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
   async function imgCropImage(fullDataUrl, rect, dpr) {
     const sx = Math.round(rect.x * dpr);
     const sy = Math.round(rect.y * dpr);
     const sw = Math.round(rect.w * dpr);
     const sh = Math.round(rect.h * dpr);
-    const blob = await (await fetch(fullDataUrl)).blob();
+    const blob = imgDataUrlToBlob(fullDataUrl);
     const bitmap = await createImageBitmap(blob);
     try {
       const canvas = new OffscreenCanvas(sw, sh);
