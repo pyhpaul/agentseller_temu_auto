@@ -1,7 +1,7 @@
 // tests/orchestrator-state-machine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { decideNext } = require('../core/background/orchestrator/state-machine.js');
+const { decideNext } = require('../automation/orchestrator/state-machine.js');
 
 function wf(over) {
   return Object.assign({

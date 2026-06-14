@@ -240,7 +240,11 @@ def build_installer():
 
 def main():
     print('[package] 1/5 构建 extension dist...')
-    build_all()
+    # release 不装配 automation/（with_automation=False）→ 产物纯 hub：无 dashboard/overlay/
+    # orchestrator/automation-bg-entry/automation-register（📊 监控按钮）/windows/CSP。下方 3 个
+    # strip 函数（dashboard/windows/CSP）因 automation 未装配而成幂等 no-op，保留作双保险，
+    # 移除留文档同步 task。理由见 plan Task 1.7 Step 5。
+    build_all(with_automation=False)
 
     print('[package] 2/5 构建 native_host EXE...')
     build_bat = ROOT / 'native_host' / 'build' / 'build.bat'

@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / 'core'
+AUTOMATION = ROOT / 'automation'
 FEATURES_DIR = ROOT / 'features'
 DIST = ROOT / 'dist' / 'extension'
 
@@ -42,38 +43,6 @@ def copy_core_assets():
             rel_to_root = (src / js.relative_to(dst)).relative_to(ROOT)
             _inject_source_url(js, str(rel_to_root))
         print(f'[build] {sub}/ → dist/extension/{sub}/  ({sum(1 for _ in dst.rglob("*") if _.is_file())} files)')
-
-
-def copy_dashboard_assets():
-    """拷贝 core/dashboard/ 整个子树 → dist/extension/dashboard/，并给各 .js 注 sourceURL。
-    dashboard 是 ES module 扩展页，不走 content_scripts 注入，故与 copy_core_assets 的
-    background/content/popup/icons 分开处理（那批是 content script + popup 资产）。
-    """
-    src = CORE / 'dashboard'
-    if not src.exists():
-        return
-    dst = DIST / 'dashboard'
-    shutil.copytree(src, dst)
-    for js in dst.rglob('*.js'):
-        rel_to_root = (src / js.relative_to(dst)).relative_to(ROOT)
-        _inject_source_url(js, str(rel_to_root))
-    n = sum(1 for _ in dst.rglob('*') if _.is_file())
-    print(f'[build] dashboard/ → dist/extension/dashboard/  ({n} files)')
-
-
-def copy_core_root_files():
-    """拷贝 core/ 根级共享文件（contract.js 等）→ dist/extension/。
-    这些是 bg + dashboard 共用的契约模块（不属 background/content/popup/dashboard 任一子目录），
-    单独拷到 dist 根级；SW importScripts('../contract.js')、dashboard <script src="../contract.js"> 共用。
-    """
-    for name in ['contract.js']:
-        src = CORE / name
-        if not src.exists():
-            continue
-        dst = DIST / name
-        shutil.copy2(src, dst)
-        _inject_source_url(dst, str(src.relative_to(ROOT)))
-        print(f'[build] {name} → dist/extension/{name}')
 
 
 def scan_features():
@@ -173,27 +142,102 @@ def emit_build_info():
     print(f'[build] build-info.js generated  ts={ts} isDev=true version=dev')
 
 
-def render_manifest(features=None):
+def assemble_automation(with_automation: bool):
+    """装配 automation/ 到 dist（dev 默认 True；release 传 False → 跳过，产物纯 hub）。
+    返回 content_scripts 注入位 + manifest fragment；automation/ 不存在亦跳过（幂等）。
+
+    装配位置决定 importScripts 运行时路径：bg 资产落 dist/background/（与 SW 同级），故
+    automation/bg-entry.js 里 importScripts('../contract.js','orchestrator/*.js','ws-client.js')
+    的相对路径与原 SW 完全一致。dashboard 落 dist 根 dashboard/（getURL 路径不变）。
+    """
+    if not with_automation or not AUTOMATION.exists():
+        print('[build] automation/ 未装配（release 或目录缺失）')
+        return {'pre_core': [], 'post_core': [], 'fragment': {}}
+    # bg 资产 → dist/background/（与 SW 同级，复现 importScripts 相对路径）
+    (DIST / 'background').mkdir(parents=True, exist_ok=True)
+    shutil.copy2(AUTOMATION / 'bg-entry.js', DIST / 'background' / 'automation-bg-entry.js')
+    shutil.copytree(AUTOMATION / 'orchestrator', DIST / 'background' / 'orchestrator')
+    shutil.copy2(AUTOMATION / 'brain-bridge' / 'ws-client.js', DIST / 'background' / 'ws-client.js')
+    shutil.copy2(AUTOMATION / 'contract.js', DIST / 'contract.js')
+    shutil.copytree(AUTOMATION / 'dashboard', DIST / 'dashboard')
+    # overlay + register → dist/content/
+    for name in ['overlay-view.js', 'overlay.js']:
+        shutil.copy2(AUTOMATION / 'overlay' / name, DIST / 'content' / name)
+    shutil.copy2(AUTOMATION / 'register.js', DIST / 'content' / 'automation-register.js')
+    # sourceURL 注入：每个 dist 文件映射回 automation/ 源相对路径（保留子目录，DevTools 调试用）
+    _inject_source_url(DIST / 'background' / 'automation-bg-entry.js', 'automation/bg-entry.js')
+    _inject_source_url(DIST / 'contract.js', 'automation/contract.js')
+    _inject_source_url(DIST / 'background' / 'ws-client.js', 'automation/brain-bridge/ws-client.js')
+    _inject_source_url(DIST / 'content' / 'overlay-view.js', 'automation/overlay/overlay-view.js')
+    _inject_source_url(DIST / 'content' / 'overlay.js', 'automation/overlay/overlay.js')
+    _inject_source_url(DIST / 'content' / 'automation-register.js', 'automation/register.js')
+    for js in (DIST / 'background' / 'orchestrator').rglob('*.js'):
+        _inject_source_url(js, 'automation/orchestrator/' + str(js.relative_to(DIST / 'background' / 'orchestrator')))
+    for js in (DIST / 'dashboard').rglob('*.js'):
+        _inject_source_url(js, 'automation/dashboard/' + str(js.relative_to(DIST / 'dashboard')))
+    fragment = json.loads((AUTOMATION / 'manifest.fragment.json').read_text(encoding='utf-8'))
+    print('[build] automation/ 已装配（dashboard + orchestrator + overlay + register + fragment）')
+    return {'pre_core': ['content/overlay-view.js', 'content/overlay.js'],
+            'post_core': ['content/automation-register.js'], 'fragment': fragment}
+
+
+def assemble_feature_backgrounds(features, with_automation):
+    """拷 feature 的 background handler → dist，并在 dist SW 末尾追加 importScripts（feature bg + automation bg-entry）。
+
+    automation-bg-entry 必须排在末尾、在 CPO 段定义之后被 importScripts：bg-entry 顶层 orchRecoverAll() /
+    orchNavigateAndWait 调 SW 全局的 cpoWaitTabComplete/cpoRun/cpoRun2，同 global scope，加载顺序保证已定义。
+    """
+    # 前提：copy_core_assets 已先拷 service-worker.js 到 dist/background/
+    sw = DIST / 'background' / 'service-worker.js'
+    lines = []
+    for f in features:
+        bg = f.get('background')
+        if not bg:
+            continue
+        src = f['_dir'] / bg
+        if not src.exists():
+            raise FileNotFoundError(f'[build] feature background not found: {src}')
+        dst = DIST / 'features' / f['id'] / bg
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        _inject_source_url(dst, str(src.relative_to(ROOT)))
+        lines.append(f"importScripts('../features/{f['id']}/{bg}');")
+        print(f'[build] feature bg: {src.relative_to(ROOT)} → importScripts')
+    if with_automation and AUTOMATION.exists():
+        lines.append("importScripts('automation-bg-entry.js');")
+    if lines:
+        body = sw.read_text(encoding='utf-8').rstrip()
+        sw.write_text(body + '\n\n// ── assembled bg (build-injected) ──\n' + '\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def render_manifest(features=None, automation=None):
     """读模板 → 替换占位符 → 写 dist/extension/manifest.json。
-    v1 features=None，仅写 core 的 content_scripts 占位（空数组）。
+    automation 由 assemble_automation 返回（pre_core/post_core content scripts + fragment）；
+    None 时退化为空（release 不装配 automation 的情形）。
     """
     features = features or []
+    automation = automation or {'pre_core': [], 'post_core': [], 'fragment': {}}
     template = json.loads((CORE / 'manifest.template.json').read_text(encoding='utf-8'))
+    fragment = automation['fragment']
 
-    # storage 由 core 显式声明：orchestrator bg + overlay content script 都依赖 storage.local/onChanged，
-    # 不靠 feature.json 偶然聚合带入（避免「未来删 feature 致 core 组件静默失效」）。同 windows（dashboard 依赖）。
-    permissions = sorted({'nativeMessaging', 'windows', 'storage', *(p for f in features for p in f.get('permissions', []))})
+    # storage 留 core（CPO 这个 hub feature 也用 cpo_state，恒需）；windows/CSP 仅 automation fragment 带入，
+    # release 不装配 automation → fragment 为空 → 无 windows/无 CSP，manifest 与 main hub 基线一致。
+    permissions = sorted({'nativeMessaging', 'storage',
+                          *fragment.get('permissions', []),
+                          *(p for f in features for p in f.get('permissions', []))})
     host_permissions = sorted({h for f in features for h in f.get('host_permissions', [])})
     content_script_matches = collect_content_matches(features)
     extra_cs = collect_extra_content_scripts(features)
-    # build-info.js 必须最先注入，让 ui.js / overlay 能读到 window.__AS_BUILD_INFO__
-    content_scripts_js = (
-        # overlay-view.js（视图决策纯逻辑）→ overlay.js（HITL 浮层 + 启动入口）插 registry 后 core 前：
-        # 归入 core 体系；overlay.js 引用 window.__AS_OVERLAY_VIEW__，故 overlay-view 必须排在 overlay 前。
-        ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js',
-         'content/overlay-view.js', 'content/overlay.js', 'content/core.js']
-        + [f'features/{f["id"]}/{f["content_script"]}' for f in sorted(features, key=lambda x: x.get('order', 999))]
-    )
+
+    # core 基础链（不再硬编码 overlay）→ 插 automation pre_core（registry 后 core 前）→ core → post_core → features
+    # overlay-view 须排 overlay 前（overlay 引用 window.__AS_OVERLAY_VIEW__）；automation-register 排 core 后
+    # （registerExtension 由 registry 提供，core.js 装配 hub 时已就绪）。
+    core_js = ['content/build-info.js', 'content/utils.js', 'content/ui.js', 'content/registry.js']
+    core_js += automation['pre_core']            # overlay-view, overlay（automation 装配时）
+    core_js += ['content/core.js']
+    core_js += automation['post_core']           # automation-register（automation 装配时）
+    content_scripts_js = core_js + [f'features/{f["id"]}/{f["content_script"]}'
+                                    for f in sorted(features, key=lambda x: x.get('order', 999))]
 
     template['permissions'] = permissions
     template['host_permissions'] = host_permissions
@@ -201,22 +245,27 @@ def render_manifest(features=None):
     template['content_scripts'][0]['js'] = content_scripts_js
     for ecs in extra_cs:
         template['content_scripts'].append(ecs)
+    if fragment.get('content_security_policy'):
+        template['content_security_policy'] = fragment['content_security_policy']
 
     (DIST / 'manifest.json').write_text(json.dumps(template, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(f'[build] manifest.json generated  ({len(features)} features, {len(content_scripts_js)} content scripts)')
+    print(f'[build] manifest.json generated  ({len(features)} features, {len(content_scripts_js)} content scripts, automation={"on" if bool(automation["pre_core"]) else "off"})')
 
 
-def build_all():
+def build_all(with_automation: bool = True):
+    """全量构建到 dist/extension/。with_automation=True（dev 默认）装配 automation/；
+    release（package_all.py 传 False）跳过 automation → 产物纯 hub（无 dashboard/overlay/windows/CSP）。
+    """
     clean_dist()
     copy_core_assets()
-    copy_core_root_files()          # ← 新增：拷 core 根级共享 contract.js
-    copy_dashboard_assets()
     emit_build_info()
     features = scan_features()
     copy_feature_assets(features)
     copy_extra_cs_assets(features)
-    render_manifest(features=features)
-    print(f'[build] done → {DIST}')
+    automation = assemble_automation(with_automation)
+    assemble_feature_backgrounds(features, with_automation)
+    render_manifest(features=features, automation=automation)
+    print(f'[build] done → {DIST}  (automation={"on" if with_automation else "off"})')
 
 
 if __name__ == '__main__':

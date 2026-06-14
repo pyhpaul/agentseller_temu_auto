@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createStore } = require('../core/dashboard/state/store.js');
-const { SCHEMA_VERSION, emptyBatch } = require('../core/contract.js');
+const { createStore } = require('../automation/dashboard/state/store.js');
+const { SCHEMA_VERSION, emptyBatch } = require('../automation/contract.js');
 
 function sampleBatch() {
   return {
@@ -113,7 +113,7 @@ test('appendBrainEvent: 恰好等于上限时不丢（length > max 严格大于�
   assert.deepStrictEqual(ev.map(e => e.text), ['0', '1', '2']);
 });
 
-const { selectActiveWorkflow } = require('../core/dashboard/components/select-active.js');
+const { selectActiveWorkflow } = require('../automation/dashboard/components/select-active.js');
 
 test('selectActiveWorkflow: 按 activeWorkflowId 命中', () => {
   const batch = { activeWorkflowId: 'w2', workflows: [{ id: 'w1' }, { id: 'w2' }] };

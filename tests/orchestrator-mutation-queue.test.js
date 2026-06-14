@@ -1,7 +1,7 @@
 // tests/orchestrator-mutation-queue.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeMutationQueue } = require('../core/background/orchestrator/mutation-queue.js');
+const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // 模拟异步 storage：read/write 各有延迟，制造交错机会
 function fakeStore(initial) {

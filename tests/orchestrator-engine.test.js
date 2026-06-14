@@ -1,8 +1,8 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl } = require('../core/background/orchestrator/engine.js');
-const { makeMutationQueue } = require('../core/background/orchestrator/mutation-queue.js');
+const { makeEngine, buildHitl } = require('../automation/orchestrator/engine.js');
+const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
 function fakeStore(skeleton) {

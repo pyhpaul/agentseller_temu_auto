@@ -1,7 +1,7 @@
 // tests/overlay-view.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill } = require('../core/content/overlay-view.js');
+const { activeWorkflow, decideOverlayView, normalizeStartLabel, buildFillResult, validateFill } = require('../automation/overlay/overlay-view.js');
 
 function batchWith(status) {
   return { workflows: [{ id: 'w1', status }] };
