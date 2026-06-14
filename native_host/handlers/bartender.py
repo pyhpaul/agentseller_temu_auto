@@ -68,7 +68,7 @@ def _resource_path(name: str) -> str:
 
 def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
                    template_path: str, output_dir: str,
-                   width_ratio: float = None) -> dict:
+                   width_ratio: float = None, sku_sku: str = None) -> dict:
     if not template_path or not os.path.isfile(template_path):
         return {'success': False, 'error': f'模板文件不存在: {template_path}'}
     if not output_dir or not os.path.isdir(output_dir):
@@ -86,18 +86,16 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
             ),
         }
 
-    # 命名规则改进：
-    # 文件夹：SKC ID - SKC货号基础部分（如 12345-CLI319）
-    #        SKC货号可能含属性（如 CLI319-White-2pcs），此处提取基础部分（CLI319）
-    # 文件：SKU货号完整形式（如 CLI319-White-2pcs）
-    skc_sku_base = skc_sku.split('-')[0] if skc_sku else ''
-    folder_name = f'{skc_number}-{skc_sku_base}' if skc_sku_base else str(skc_number)
+    # 命名规则（多 SKU）：
+    # 文件夹 = SKC ID + SKC货号（SKC 级，同 SKC 各 SKU 共目录，如 9483336741-RAC-020）
+    # 文件名 + 标签序列号 = SKU货号（SKU 级，区分变体，如 RAC-020-Black）；缺则退回 SKC货号/SKC ID
+    folder_name = f'{skc_number}-{skc_sku}' if skc_sku else str(skc_number)
     folder_safe = _safe_name(folder_name)
     sub_dir = os.path.join(output_dir, folder_safe)
     os.makedirs(sub_dir, exist_ok=True)
 
-    file_stem = skc_sku if skc_sku else f'label-{skc_number}'
-    file_safe = _safe_name(file_stem)
+    label_serial = sku_sku or skc_sku or f'label-{skc_number}'
+    file_safe = _safe_name(label_serial)
 
     out_pdf        = os.path.join(sub_dir, f'{file_safe}.pdf')
     out_raw_png    = os.path.join(sub_dir, f'{file_safe}-raw.png')
@@ -105,7 +103,8 @@ def generate_label(skc_number: str, skc_sku: str, barcode_png_b64: str,
 
     png_path = _save_b64_png(barcode_png_b64, skc_number)
     try:
-        _run_bartender(template_path, png_path, skc_sku, out_pdf, out_raw_png, bt_dll)
+        # 具名序列号印 SKU货号（label_serial），多 SKU 时每个标签区分变体
+        _run_bartender(template_path, png_path, label_serial, out_pdf, out_raw_png, bt_dll)
         _composite_with_background(out_raw_png, out_jpeg_final, width_ratio=width_ratio)
     finally:
         _safe_remove(png_path)
@@ -124,6 +123,7 @@ def handle(msg: dict) -> dict:
     return generate_label(
         skc_number=msg['skc_number'],
         skc_sku=msg['skc_sku'],
+        sku_sku=msg.get('sku_sku'),
         barcode_png_b64=msg['barcode_png_b64'],
         template_path=msg['template_path'],
         output_dir=msg['output_dir'],

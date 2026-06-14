@@ -87,7 +87,7 @@ features/auto_gen_label/
 **核心约束（业务确认）**：同一 SKC 下的多个 SKU，**合规信息（Phase 2）和主图槽位（Phase 3）都是 SKC/SPU 级别共享的**。所以：
 - Phase 1：为每个 SKU 货号各生成一个独立标签文件
 - Phase 2：按 SKC/SPU 只填**一次**合规信息（不是每 SKU 一次）
-- Phase 3：在同一组主图「标签图」槽位里，把该 SKC 下**所有** SKU 的标签**连续上传**（标签图 input 带 `multiple`，一次性多文件注入）
+- Phase 3：drawer 内有**多个独立标签图槽位**（商品主体实拍图区 / 外包装实拍图区 …，实测确认），每个槽位都要传该 SKC 下**所有** SKU 标签（input 带 `multiple`，一次多文件）。`uploadToLabelSlots` **遍历所有目标槽位**逐个注入——曾只填第一个空白槽位致漏传外包装
 
 **生成逻辑**：
 - `fstate.products` 存储选中的商品数组：`[{ skcNumber: '12345', skcSku: 'CLI319-White-2pcs' }, ...]`
@@ -96,23 +96,37 @@ features/auto_gen_label/
 - Phase 2→3 transition：从 `talLabelPaths` filter 出该 skcNumber 下**所有** SKU 标签，存入 `imgFlow.labelPngPaths`
 - Phase 3：读取 `labelPngPaths` 全部文件 → 一次 `DataTransfer` 多文件注入标签图槽位
 
-**多 SKC 边界（fail-soft）**：Ctrl/Cmd+点击可跨 SKC 多选，但合规/主图按 SKC 共享，自动流程**只覆盖第一个 SKC 的全部 SKU**。检测到多个 SKC 时 setStatus 明确提示"其余 SKC 请分别选择后再执行"——不阻断、不偷偷错处理。其余 SKC 的标签已生成在磁盘，用户重新选该 SKC 行再执行即可。
+**单 SKC 约束（强制）**：合规/主图按 SKC 共享，**一次只能处理同一个 SKC 的多个 SKU**，不允许跨 SKC。选择交互：
+- 点同一 SKC 的行 → 按 `skuId` toggle（已选取消 / 未选加入）
+- 点不同 SKC 的行 → **清空旧选择，切换到新 SKC**（始终保持 `fstate.products` 单一 SKC）
+- `onRunAllPhases` / `onRunPhase1Only` 入口再加防御：检测到多 SKC 直接报错中止（理论不触发，兜底选择逻辑）
+
+> 历史：曾用 Ctrl/Cmd+点击支持跨 SKC 多选 + 多 SKC fail-soft（只处理第一个），但跨 SKC 本就无业务意义（每个 SKC 各自 Phase2/3），已移除，统一为「切换」语义。
 
 **典型用途**：同一SKC有多个颜色/尺寸规格（多SKU货号）时，一次点击全选这个SKC的所有变种，自动生成所有规格的标签，Phase 3 一次性把这些标签连续传到该商品的标签图槽位。
 
-### 文件命名改进（v1.5.0）
+### ⚠️ 条码管理页表格列关系（核心，踩坑根源）
 
-**输出目录结构变化**：
+表格**每行 = 一个 SKU**，4 个关键列各有粒度（实测 DOM 确认，`samples/html.txt`）：
 
-| 项 | 旧版 | 新版 | 例 |
-|----|------|------|-----|
-| 文件夹 | `SKC-{skc_number}-{skc_sku}` | `{skc_id}-{skc_sku_base}` | `12345-CLI319` |
-| PDF 文件 | `SKC-{skc_number}-{skc_sku}.pdf` | `{skc_sku}.pdf` | `CLI319-White-2pcs.pdf` |
-| PNG 文件 | `SKC-{skc_number}-{skc_sku}.jpeg` | `{skc_sku}.jpeg` | `CLI319-White-2pcs.jpeg` |
+| 列 | 表头 | 粒度 | 同 SKC 多行 | 用途 |
+|----|------|------|------------|------|
+| col4 | SKC | SKC ID（数字） | 相同 | 文件夹前半 |
+| col5 | SKU | SKU ID（数字） | **不同** | **选中/定位行的唯一区分键** |
+| col6 | SKC货号 | 如 `RAC-020` | 相同 | 文件夹后半 |
+| col7 | SKU货号 | 如 `RAC-020-Black` | **不同** | 文件名 + 标签序列号 |
 
-**背景**：
-- SKC货号可能含属性（如 `CLI319-White-2pcs`），但文件夹名应该精简（避免过深的目录树）
-- 文件命名按 SKU货号完整形式，便于识别具体的商品规格
+> 历史 bug：曾用 `SKC货号`（col6，同 SKC 各行相同）当选中区分键 → 点同 SKC 第二个 SKU 被判"已选"取消 → **多 SKU 永远只能选一行**；且 `findRowBySkc` 按 SKC 找行会让同 SKC 所有 SKU 都命中首行 → 标签全用第一个条码。
+> 修复：`extractRowData` 取全 4 列，**区分键用 col5 SKU ID**，定位行用 `findRowBySku(skuId)`，命名用 col7 SKU货号。**SKC货号(col6) 与 SKU货号(col7) 是两个独立列，不是 split 出来的。**
+
+### 文件命名（按列分工）
+
+| 项 | 规则 | 取值列 | 例 |
+|----|------|--------|-----|
+| 文件夹 | `{SKC ID}-{SKC货号}` | col4 + col6 | `9483336741-RAC-020` |
+| PDF/PNG 文件名 | `{SKU货号}` | col7 | `RAC-020-Black.jpeg` |
+
+同 SKC 的多个 SKU 标签集中在同一文件夹（col4-col6），文件名各按 SKU货号区分。SKU货号缺失时文件名退回 SKC货号 / `label-{SKC ID}`。
 
 ### 数据结构
 
@@ -121,16 +135,17 @@ features/auto_gen_label/
 | Key | 旧版 | 新版 |
 |-----|------|------|
 | `talLabelPng` | 单个字符串路径 | ~~删除~~ |
-| `talLabelPaths` | ~~无~~ | 数组 `[{skcNumber, skcSku, pngPath}, ...]`（Phase 1 全量写入） |
+| `talLabelPaths` | ~~无~~ | 数组 `[{skcNumber, skuId, skcSku, skuSku, pngPath}, ...]`（Phase 1 全量写入） |
 | `talLabelSkc` | 存 SKC 编号 | 存第一个选中商品的 SKC 编号 |
-| `talImgFlow.labelPngPath` | 单个路径 | ~~改为 labelPngPaths 数组~~（保留旧字段读取兼容） |
 | `talImgFlow.labelPngPaths` | ~~无~~ | `[{skcSku, pngPath}, ...]`（该 SKC 下全部 SKU 标签，Phase 3 连续上传） |
+
+**fstate.products 行模型**：`{ skcNumber(col4), skuId(col5), skcSku(col6), skuSku(col7) }`
 
 **格式示例**：
 ```json
 localStorage.talLabelPaths = [
-  { "skcNumber": "12345", "skcSku": "CLI319-White-2pcs", "pngPath": "D:\\Labels\\12345-CLI319\\CLI319-White-2pcs.jpeg" },
-  { "skcNumber": "12345", "skcSku": "CLI319-White-3pcs", "pngPath": "D:\\Labels\\12345-CLI319\\CLI319-White-3pcs.jpeg" }
+  { "skcNumber": "9483336741", "skuId": "4225419140", "skcSku": "RAC-020", "skuSku": "RAC-020-Black", "pngPath": "D:\\Labels\\9483336741-RAC-020\\RAC-020-Black.jpeg" },
+  { "skcNumber": "9483336741", "skuId": "6110759347", "skcSku": "RAC-020", "skuSku": "RAC-020-White", "pngPath": "D:\\Labels\\9483336741-RAC-020\\RAC-020-White.jpeg" }
 ]
 ```
 
@@ -147,25 +162,21 @@ localStorage.talLabelPaths = [
 - DLL 路径：`C:\Program Files\Seagull\BarTender 2022\Seagull.BarTender.Print.dll`
 - 模板 SubStrings 名称（经实测确认，.NET API 用 `SubStrings` 而非 `NamedSubStrings`）：
   - `具名条形码`：值为本地 PNG 文件路径（条形码图片）
-  - `具名序列号`：值为 SKC货号字符串（如 `CLI319-White-2pcs`，由 content script 传入）
+  - `具名序列号`：值为 **SKU货号**（col7，如 `RAC-020-Black`），多 SKU 时每个标签印各自变体货号
 - 条形码从弹窗 `<canvas id="canvas">` 直接捕获为 PNG base64，解码后写入临时文件再传入
 
-**文件命名算法**（v1.5.0 改进）：
+**PROCESS_LABEL 入参**：`skc_number`(col4) / `skc_sku`(col6 SKC货号) / `sku_sku`(col7 SKU货号) / barcode_png_b64 / template_path / output_dir / width_ratio
+
+**文件命名算法**（generate_label）：
 ```python
-# 提取 SKC货号基础部分（不含属性）
-# skc_sku 格式如 "CLI319-White-2pcs"，取第一段 "CLI319"
-skc_sku_base = skc_sku.split('-')[0] if skc_sku else ''
-
-# 文件夹：SKC ID - SKC货号基础部分（如 "12345-CLI319"）
-folder_name = f'{skc_number}-{skc_sku_base}' if skc_sku_base else str(skc_number)
-
-# 文件：SKU货号完整形式（含属性，如 "CLI319-White-2pcs"）
-file_stem = skc_sku if skc_sku else f'label-{skc_number}'
-
-# 输出：folder_name/file_stem.pdf 等
+# 文件夹：SKC ID + SKC货号（col4-col6，同 SKC 各 SKU 共目录）
+folder_name = f'{skc_number}-{skc_sku}' if skc_sku else str(skc_number)
+# 文件名 + 标签序列号：SKU货号（col7）；缺则退回 SKC货号 / label-{SKC ID}
+label_serial = sku_sku or skc_sku or f'label-{skc_number}'
+# 输出：{folder_name}/{label_serial}.pdf|.jpeg；具名序列号也印 label_serial
 ```
 
-**背景**：分离了文件夹（结构化）和文件名（内容化），让输出目录更清晰，同一 SKC 的多个 SKU 集中在一个文件夹。
+**背景**：SKC货号(col6) 与 SKU货号(col7) 是表格两个独立列，不靠 split。文件夹用 SKC 级（共目录），文件名/标签用 SKU 级（区分变体）。
 
 **经实测确认的完整调用（pythonnet 3.0）**：
 
@@ -249,8 +260,8 @@ engine.Stop()
 5. **drawer 内身份二次确认**：`drawer.querySelector('#spuId')` == 目标 SPU，不符中止（防点错行/rowspan 错位传错商品）
 6. 通过 native_host **逐个**分块读取该 SKC 下所有 SKU 标签 PNG（`imgFlow.labelPngPaths` 数组，`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
 7. **在 drawer 内**定位"标签图"上传按钮（`drawer.querySelectorAll('.rocket-upload[role="button"]')` 内 `<span>标签图</span>`，**禁止 `document` 全局**——曾因全局查找把标签图传到列表页其他商品行，见根 `CLAUDE.md`「数据正确性」§3）
-8. 取第一个空白槽位（计数器 `(0/N)`），无空白则取第一个槽位
-9. `injectFilesToInput` 把**所有** SKU 标签 File 加进一个 `DataTransfer`，一次性赋值 `input.files`（标签图 input 带 `multiple`）+ dispatch 一次 change —— 等价用户在文件框多选 N 个文件
+8. **遍历所有标签图槽位**（drawer 内有多个：商品主体实拍图 / 外包装实拍图 …）；优先所有空白槽位（计数 `(0/N)`），全有图则向全部槽位注入。⚠️ 不是只取第一个——曾只填商品主体漏了外包装
+9. 每个槽位 `injectFilesToInput` 把**所有** SKU 标签 File 加进一个 `DataTransfer` 赋值 `input.files`（input 带 `multiple`）+ dispatch change，注入后写后读校验 `files.length===N`
 10. 点"上传并识别"按钮提交（一次提交全部标签）
 
 ## Native Messaging 协议

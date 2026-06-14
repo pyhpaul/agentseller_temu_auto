@@ -61,3 +61,44 @@ def test_model_garbage_escalate():
     # 模型返回非 JSON / 非法 action → 安全转人工
     d = diagnose(_err(), {"retryCount": 0}, MockModel(canned="not json at all"))
     assert d["action"] == "escalate"
+
+
+def test_read_codefenced_retry_now_parses():
+    # 加固后：围栏包裹的合法 retry 决策能被诊断器解析（此前会 escalate）
+    d = diagnose(_err(message="selector not found", code="NOT_FOUND"), {"retryCount": 0},
+                 MockModel(canned='```json\n{"action":"retry","reason":"渲染抖动"}\n```'))
+    assert d["action"] == "retry"
+    assert d["reason"] == "渲染抖动"
+
+
+def test_action_case_normalized():
+    # 大小写/空白归一化：" Retry " → retry
+    d = diagnose(_err(message="x"), {"retryCount": 0},
+                 MockModel(canned='{"action":" Retry ","reason":"r"}'))
+    assert d["action"] == "retry"
+
+
+def test_refusal_still_escalates():
+    # 不变量2 红线：拒答文本无合法 JSON → escalate
+    d = diagnose(_err(message="x"), {"retryCount": 0},
+                 MockModel(canned="I cannot help with that."))
+    assert d["action"] == "escalate"
+
+
+def test_model_exception_reason_carries_cause():
+    # 可观测性：异常类型透进 reason（仍 escalate，行为不变）
+    class BoomModel:
+        def decide(self, messages, tools=None):
+            raise RuntimeError("api down")
+    d = diagnose(_err(), {"retryCount": 0}, BoomModel())
+    assert d["action"] == "escalate"
+    assert "RuntimeError" in d["reason"]
+
+
+def test_nonstring_action_escalates_no_crash():
+    # 回归防护（对抗 review 发现）：非字符串 action（list/int/dict/bool）→ escalate 且【不抛】。
+    # 此前 (obj.get("action") or "").strip() 对非 str truthy 值崩 AttributeError，杀 ws handler、丢决策。
+    for canned in ('{"action":1,"reason":"x"}', '{"action":["retry"]}',
+                   '{"action":{"x":"retry"}}', '{"action":true}', '{"action":1.5}'):
+        d = diagnose(_err(message="x"), {"retryCount": 0}, MockModel(canned=canned))
+        assert d["action"] == "escalate", canned

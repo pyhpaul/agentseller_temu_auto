@@ -76,12 +76,13 @@ function sendToNativeHost(msg) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'PROCESS_LABEL') {
-    const { skcNumber, skcSku, barcodePngB64, templatePath, outputDir, widthRatio } = msg.data;
+    const { skcNumber, skcSku, skuSku, barcodePngB64, templatePath, outputDir, widthRatio } = msg.data;
 
     sendToNativeHost({
       action: 'generate_label',
       skc_number: skcNumber,
       skc_sku: skcSku,
+      sku_sku: skuSku,
       barcode_png_b64: barcodePngB64,
       template_path: templatePath,
       output_dir: outputDir,
