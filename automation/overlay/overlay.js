@@ -53,6 +53,21 @@
   function renderBody(wf, step) {
     if (wf.status === 'paused' && wf.hitl) {
       const h = wf.hitl;
+      // 不可逆复核 HITL（kind:'review'）：渲染 concerns + 前往核对 + 确认提交 + 中止（与回填 HITL 分叉）
+      if (VIEW.isReviewHitl(h)) {
+        let rb = `<div style="margin-bottom:6px;">⚠️ 不可逆复核：<b>${step.label || ''}</b></div>`;
+        if (h.reason) rb += `<div style="font-size:12px;color:#d29922;margin-bottom:6px;">${h.reason}</div>`;
+        if (Array.isArray(h.concerns) && h.concerns.length) {
+          rb += `<ul style="margin:6px 0;padding-left:18px;font-size:12px;color:#ff7b72;">` +
+            h.concerns.map(c => `<li>${c}</li>`).join('') + `</ul>`;
+        }
+        rb += `<div>`;
+        const goUrl = h.targetUrl || (step.target && step.target.url);
+        if (goUrl) rb += `<button class="aso-btn aso-btn-go" data-act="go">前往核对</button>`;
+        rb += `<button class="aso-btn aso-btn-ok" data-act="approve">确认提交</button>`;
+        rb += `<button class="aso-btn aso-btn-no" data-act="reject">中止</button></div>`;
+        return rb;
+      }
       // 标题优先 prompt（engine recover 的 ask-hitl 带 prompt 恢复引导语），回退 action/label
       const title = h.prompt || h.action || step.label || '人工确认';
       let b = `<div style="margin-bottom:6px;">待处理：<b>${title}</b></div>`;
@@ -131,6 +146,8 @@
           send('WF_RETRY', { workflowId: wf.id });
         } else if (act === 'refresh') {
           send('WF_FILL_REFRESH', { workflowId: wf.id });   // 让 bg 重新请求大脑提议
+        } else if (act === 'approve') {
+          send('WF_REVIEW_APPROVE', { workflowId: wf.id });   // 人工确认提交不可逆动作
         }
       });
     });
