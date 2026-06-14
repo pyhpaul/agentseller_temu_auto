@@ -540,12 +540,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: 按 Task 0.2 归属表，把被 automation 复用的通用 tab helper 提到 core**
 
-已知 `cpoWaitTabComplete`（等 tab complete）被 orchestrator（automation）的 `orchNavigateAndWait` 调用 → 提升到 `core/background/tab-utils.js`，挂 `self.AgentSellerBg.util.waitTabComplete`（函数体一字不改）。SW 顶部 `importScripts('tab-utils.js')`。CPO handler 与 automation/bg-entry 改调 `self.AgentSellerBg.util.waitTabComplete`。
-> 完整待提升清单以 Task 0.2 的 notes 归属表为准；判定规则：被 ≥2 段用且 feature 无关 → core。
+**Task 0.2 已确认：唯一需提升的 helper 是 `cpoWaitTabComplete`**（→ 改名 `waitTabComplete`），调用点 = CPO 7 处（L409/420/428/552/557/587/613）+ orchestrator 1 处（L708，`orchNavigateAndWait`）。新建 `core/background/tab-utils.js` 挂 `self.AgentSellerBg.util.waitTabComplete`（函数体一字不改），SW 顶部 `importScripts('tab-utils.js')`。上述全部调用点改引用 `self.AgentSellerBg.util.waitTabComplete`。
+> Task 0.2 notes（`docs/superpowers/notes/sw-dependency-map.md`）已核实：`cpoSendCommand`/`orchSendStepCommand` 近重复但错误协议不同（CPO 私有 `resp.ok===false→throw` vs orch 原样返回），**不合并**（合并=改 CPO 行为）。
 
 - [ ] **Step 2: 搬 CPO 段到 feature background**
 
-SW 第 324-635 行（`// ── create_purchase_order ──` 段，含 `cpoRun`/`cpoRun2`/CPO helpers/`CPO_*` 分支）整体移到 `features/create_purchase_order/background/handler.js`，包裹 IIFE + `self.AgentSellerBg.registerHandler('CPO_', …)`。被提升的 helper（如 `cpoWaitTabComplete`）改引用 `self.AgentSellerBg.util.waitTabComplete`。**其余函数体不变**（cpo_state 写法、CPO 私有协议、错误结构本阶段全部保留——合一留阶段 2）。
+SW 第 324-635 行（`// ── create_purchase_order ──` 段，含 `cpoRun`/`cpoRun2`/CPO helpers/`CPO_*` listener）整体移到 `features/create_purchase_order/background/handler.js`，末尾加 `self.AgentSellerBg.registerHandler('CPO_', …)` 注册命令入口（替代原 L452/L629 的 onMessage listener）。`cpoWaitTabComplete` 的调用点改引用 `self.AgentSellerBg.util.waitTabComplete`。
+
+> ⚠ **阶段 1 不 IIFE 私有化（关键，Task 0.2 发现）**：orchestrator 的 adapter **直调** `cpoRun`(L773)/`cpoRun2`(L785)（跨段引用 A2/A3）。若把 CPO 包 IIFE，`cpoRun`/`cpoRun2` 变私有 → orchestrator 调不到 → 代码加载即断。故**阶段 1 保持 `cpoRun`/`cpoRun2`/CPO helpers 在 SW 全局 scope**（不包 IIFE——与现状同，现状 CPO 本就在 SW 全局），orchestrator 仍直调（A2/A3 零行为变更）。本 Task 仅做：① 换文件位置 ② `cpoWaitTabComplete` 改调 core util ③ 末尾加 `CPO_` 命令入口。**完全 IIFE 封装 + orchestrator 改 `invokeFeatureCommand` 解耦 = Task 2.1**。其余函数体（cpo_state 写法/私有协议/错误结构）不变。
 
 - [ ] **Step 3: feature.json 加 background 字段**
 
