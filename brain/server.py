@@ -45,20 +45,33 @@ def _brain_event(data, kind, text):
 
 async def _handle_step_result(websocket, data):
     """STEP_RESULT 路由：出错 → 诊断 self-heal（diagnose BRAIN_EVENT + STATE_PATCH 回 bg）；正常 → log。"""
-    err = data.get("error")
-    if data.get("status") == "error" and err:
+    if data.get("status") == "error":
+        # status=error 一律进诊断：error 缺失时合成保守 err（unknown 非 read → diagnose 天然 escalate），
+        # 绝不把真实错误当 benign log 静默吞（守不变量2精神：诊断不到也要转人工，不放过）。
+        err = data.get("error") or {"category": "unknown", "recoverable": True}
         ctx = {"stepId": data.get("stepId"), "retryCount": data.get("retryCount", 0)}
-        decision = diagnose(err, ctx, _model)
+        # 诊断含阻塞 urlopen（接真模型时可能慢/僵）→ to_thread 移出事件循环，
+        # 防慢模型冻结整个 server（否则 ws 库 ping 超时会误断所有连接、丢诊断结果）。
+        # 纵深防御：诊断任何抛点都兜底成 escalate（守不变量2「不确定→转人工」），绝不崩 handler 丢决策。
+        try:
+            decision = await asyncio.to_thread(diagnose, err, ctx, _model)
+        except Exception as e:
+            decision = {"action": "escalate",
+                        "reason": "诊断异常兜底（{}），安全转人工".format(type(e).__name__)}
         # diagnose 类 BRAIN_EVENT 给 dashboard 看推理
         await _broadcast_dashboards(_brain_event(
             data, "diagnose", "{}：{}".format(decision["action"], decision["reason"])))
-        # STATE_PATCH 回 bg 落地决策（仍由 bg 写 storage，守数据契约 spec §5）
-        await websocket.send(encode("STATE_PATCH", {
-            "workflowId": data.get("workflowId"),
-            "stepId": data.get("stepId"),
-            "action": decision["action"],
-            "reason": decision["reason"],
-        }))
+        # STATE_PATCH 回 bg 落地决策（仍由 bg 写 storage，守数据契约 spec §5）。
+        # 包 try：诊断期间 bg 连接可能已断，静默兜底（对齐 _broadcast 容错），不让一次发送失败崩 handler。
+        try:
+            await websocket.send(encode("STATE_PATCH", {
+                "workflowId": data.get("workflowId"),
+                "stepId": data.get("stepId"),
+                "action": decision["action"],
+                "reason": decision["reason"],
+            }))
+        except Exception:
+            pass
     else:
         await _broadcast_dashboards(_brain_event(
             data, "log", "step {} → {}".format(data.get("stepId"), data.get("status"))))
