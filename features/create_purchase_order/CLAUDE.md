@@ -26,9 +26,11 @@
 - **完成锁定**：`phase2.status==='done' && collected2.orderNo1688`（不依赖 phase1 done），覆盖两模式；done 后 1688 订单号框回填只读，「清除当前流程」解锁。
 - **校验**：`validatePhase2({ repurchase:true, orderNo1688 })` 只要订单号非空即通过；新品分支向后兼容（不传 repurchase 即原「phase1 done + 订单号」）。`tests/cpo-logic.test.js` 含 4 例复购用例 + 2 例新加（订单号非空通过 / 仅空白失败）。
 
-## 架构：background 编排者（本项目新模式）
+## 架构：background 编排者（归位 feature 目录）
 
-现有其它 feature 的 background 多是「native messaging 透传」；本 feature **首次把跨 tab 编排逻辑放进 `core/background/service-worker.js`**（沿用 image_search 的「文件内标记段」先例，段标记 `// ── create_purchase_order ──`）。
+本 feature 的跨 tab 编排逻辑位于 `features/create_purchase_order/background/handler.js`，经 `self.AgentSellerBg.registerHandler('CPO_', fn)` 注册命令处理器，由 build 的 `assemble_feature_backgrounds` 将其 importScripts 注入 SW 末尾，与 SW 共享同一 global scope。`feature.json` 加 `"background": "background/handler.js"` 字段触发装配。
+
+**重要架构约定**：`cpoRun`/`cpoRun2` **故意不包 IIFE**——`automation/bg-entry.js` 的 orchestrator adapter 直调这两个函数（受控的 SW global 函数共享，同 scope 可达，非模块反向依赖）；`await` 可靠等终态，优于「命令入口+轮询 storage」方案。CPO handler 内部仅写 `cpo_state`（自治），automation adapter 单向读 `cpo_state` 映射进 `as_workflow_state.step.result`，CPO 对 automation contract 零反向依赖。
 
 ```
 content(temu列表) ──CPO_START{url1688,skc,skuNo,spuId}──▶ background 线性 async 编排

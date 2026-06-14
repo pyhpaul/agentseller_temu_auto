@@ -1,5 +1,7 @@
 # Hub / Automation 分层重构 实施计划
 
+> **实施状态（2026-06-13）**：阶段 0/1/2 已完成（`feature/hub-automation-layering`）。Task 1.3+1.4+1.7 合并执行（搬迁+接入+build 适配同一轮），Task 2.1 采决策 A（保持 adapter 直调全局 cpoRun，不改为命令入口+轮询），Task 2.3 错误翻译 Plan 3 已内联在 adapter 中。阶段 3（文档同步）已完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把寄生在 `core/` 里的 automation 系统（orchestrator/dashboard/overlay/ws-client/contract）抽到独立顶层 `automation/`，core 经单一 `registerExtension` 契约对其开放、零反向引用；feature 的 bg 编排段归位各自 `features/<id>/background/`；并清理 CPO 双编排技术债——全程不影响现有 8 feature 功能。

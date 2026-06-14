@@ -8,11 +8,17 @@
 - **作用**：在 Temu 页面框选截图，自动跳转 1688 以图搜图
 - **触发**：Hub 面板 → 点击「🔍 1688搜图」图标 → 点「开始截图」按钮
 
+## Background 编排（SW 命令处理器）
+
+跨 tab 编排逻辑位于 `features/image_search_1688/background/handler.js`，经 `self.AgentSellerBg.registerHandler('IMG_SEARCH_', fn)` 注册命令处理器，由 build 的 `assemble_feature_backgrounds` 将其 importScripts 注入 SW 末尾（与 SW 共享 global scope）。`feature.json` 加 `"background": "background/handler.js"` 字段触发装配。
+
 ## 文件结构
 
 ```
 features/image_search_1688/
-├── feature.json
+├── feature.json           # + "background": "background/handler.js"
+├── background/
+│   └── handler.js         # SW 命令处理器：截图截取/裁切/写 session/开 1688 tab（注册 IMG_SEARCH_ 前缀）
 ├── content/
 │   ├── index.js       # 注册 feature，渲染「开始截图」按钮
 │   ├── overlay.js     # 截图框选覆盖层（动态注入到 Temu tab）
