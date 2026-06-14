@@ -1,4 +1,4 @@
-// core/background/orchestrator/mutation-queue.js
+// automation/orchestrator/mutation-queue.js
 // storage 写入串行化队列：read→mutate→write 串行，防多触发源交错 lost-update。spec §2.3。
 (function (root, factory) {
   const api = factory();

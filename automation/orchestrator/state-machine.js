@@ -1,4 +1,4 @@
-// core/background/orchestrator/state-machine.js
+// automation/orchestrator/state-machine.js
 // 编排器状态机核心：纯函数，输入 workflow 快照 → 输出下一步指令（无副作用）。spec §2.2。
 (function (root, factory) {
   const api = factory();

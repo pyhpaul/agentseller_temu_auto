@@ -1,4 +1,4 @@
-// core/background/orchestrator/recovery.js
+// automation/orchestrator/recovery.js
 // SW 回收恢复决策：对中断的 running step 判断重跑 vs 转 HITL。spec §4.2。UMD 双模式。
 (function (root, factory) {
   const api = factory();

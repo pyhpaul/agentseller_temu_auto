@@ -1,4 +1,4 @@
-// core/background/orchestrator/steps.js
+// automation/orchestrator/steps.js
 // 13 原子 step 声明表 + 初始 workflow 工厂。真源 spec §3.2。UMD 双模式（sw importScripts + node 单测）。
 (function (root, factory) {
   const api = factory();

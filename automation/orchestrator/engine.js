@@ -1,4 +1,4 @@
-// core/background/orchestrator/engine.js
+// automation/orchestrator/engine.js
 // 编排引擎：注入 read/queue/stepRunner/now，实现 advance 单步推进 + recover SW 恢复。
 // 纯逻辑+注入（无 chrome 直接依赖），可 node 测。消费 state-machine.decideNext + recovery.decideRecovery。spec §2.2/§4.2。
 (function (root, factory) {

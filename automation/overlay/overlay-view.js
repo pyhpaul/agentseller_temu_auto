@@ -1,4 +1,4 @@
-// core/content/overlay-view.js — overlay 视图决策纯逻辑（与 DOM/chrome 解耦，可 node 测）。spec §8。
+// automation/overlay/overlay-view.js — overlay 视图决策纯逻辑（与 DOM/chrome 解耦，可 node 测）。spec §8。
 // 职责：从 storage 骨架 + 构建信息决定 overlay 渲染哪个视图 + 启动 label 规范化 + HITL 回填收集/校验。
 // overlay.js（content script）引用全局 window.__AS_OVERLAY_VIEW__；node 测引用 module.exports。
 (function (root, factory) {
