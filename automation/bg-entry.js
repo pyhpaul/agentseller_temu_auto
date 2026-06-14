@@ -3,7 +3,9 @@
 // assemble_feature_backgrounds 在 dist SW 末尾追加 importScripts('automation-bg-entry.js')。
 // 运行时与 service-worker.js 同一 global scope（同被 SW importScripts），故：
 //   ① 依赖 SW 已提供的 self.AgentSellerBg.registerHandler（bg-router.js 接线）注册 WF_/OPEN_MONITOR；
-//   ② orchNavigateAndWait 内部直调 CPO 段的 cpoWaitTabComplete（仍在 SW 全局），同 scope 可达。
+//   ② orchNavigateAndWait 内部调 self.AgentSellerBg.util.waitTabComplete（core/background/tab-utils.js
+//      提供，CPO + orchestrator 共用）；orchAdapterCreateSku/Po 仍直调 CPO handler 的 cpoRun/cpoRun2
+//      （仍在 SW 全局，同 scope 可达；Task 2.1 才换命令入口解耦）。
 // importScripts 路径按 dist 运行时算（automation-bg-entry.js 落 dist/background/，与 SW 同级），
 // 与原 SW 中这两组 importScripts 完全一致。
 
@@ -78,7 +80,7 @@ async function orchStubStepRunner(step) {
 //   executeScript 失败(权限/页面未就绪)→ false 继续轮询,超时才抛——content handler 首行 waitForEl 再兜一层。
 async function orchNavigateAndWait(url, readySignal, { tabTimeoutMs = 30000, readyTimeoutMs = 30000 } = {}) {
   const tab = await chrome.tabs.create({ url, active: true });
-  await cpoWaitTabComplete(tab.id, tabTimeoutMs);
+  await self.AgentSellerBg.util.waitTabComplete(tab.id, tabTimeoutMs);
   if (!readySignal) return tab.id;
   const deadline = Date.now() + readyTimeoutMs;
   while (Date.now() < deadline) {

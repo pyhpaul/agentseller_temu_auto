@@ -185,7 +185,8 @@ def assemble_feature_backgrounds(features, with_automation):
     """拷 feature 的 background handler → dist，并在 dist SW 末尾追加 importScripts（feature bg + automation bg-entry）。
 
     automation-bg-entry 必须排在末尾、在 CPO 段定义之后被 importScripts：bg-entry 顶层 orchRecoverAll() /
-    orchNavigateAndWait 调 SW 全局的 cpoWaitTabComplete/cpoRun/cpoRun2，同 global scope，加载顺序保证已定义。
+    orchNavigateAndWait 调 self.AgentSellerBg.util.waitTabComplete（tab-utils 提供）和 cpoRun/cpoRun2
+    （仍在 SW 全局），同 global scope，加载顺序保证已定义。
     """
     # 前提：copy_core_assets 已先拷 service-worker.js 到 dist/background/
     sw = DIST / 'background' / 'service-worker.js'
