@@ -4,7 +4,7 @@
 
 Chrome 插件 + Python Native Host 组合，自动化 Temu 商家中心的多项操作。
 架构层级：**公共骨架（FAB / Panel / Hub / Native Messaging）+ 多个独立 feature**。
-当前 feature：`auto_gen_label`（标签生成 + 合规填写 + 标签主图插入）。
+已集成多个 feature（标签生成 / 自动发货 / 检查与发布 / 创建采购单 / 1688搜图 / 打包标签 / 价格不调整 / 销售清单导出等），当前列表用 `ls features/*/feature.json` 自查。
 
 ## Architecture
 
@@ -39,6 +39,13 @@ agentseller_temu/
 │   │   ├── components/*.js          # topbar/queue-list/overview-bar/step-list/brain-stream/hitl-queue/error-chip/dom/select-active
 │   │   └── mock/mock-data.js        # 开发态渲染验证用 mock 骨架 + 大脑流 + HITL 详情
 │   └── overlay/{overlay.js,overlay-view.js}  # HITL 多字段回填浮层（content world）
+├── brain/                            # 大脑进程（外部 Python WS server，dev-only；与 Chrome 端 automation/ 经 ws://localhost:8787 桥接）
+│   ├── __main__.py                  # `python -m brain` 启动 WS server；BRAIN_LLM_BASE_URL 配真实模型，否则 MockModel
+│   ├── server.py                    # WS handler：STEP_RESULT→诊断 / FILL_REQUEST→回填 / REVIEW_REQUEST→复核 + broadcast BRAIN_EVENT 给 dashboard
+│   ├── diagnoser.py / filler.py / reviewer.py  # 三判断点（诊断 self-heal / 字段回填提议 / 不可逆复核）
+│   ├── jsonx.py                     # 容错 JSON 解析（三判断点共用，模型输出兜底）
+│   ├── model.py                     # model-agnostic：MockModel（离线规则式）+ OpenAICompatModel
+│   └── protocol.py / registry.py    # WS 帧编解码 + 注册
 ├── native_host/                     # 顶层共享 Python Native Host（所有 feature 共用唯一 host com.temu.label_host）
 │   ├── main.py                      # 薄入口：Native Messaging 协议 IO + DISPATCH 表按 action 分发
 │   ├── file_ops.py                  # 通用文件能力 + 文件/文件夹对话框（read/write_file_chunk / pick_file / pick_folder）
@@ -139,6 +146,8 @@ self.AgentSellerBg = {
 
 **监控 dashboard（自动化监控系统 Plan 1）**：`automation/dashboard/` 是独立扩展页（`chrome-extension://<id>/dashboard/dashboard.html`），ES module 加载，深色盯盘 UI（视觉真源 `ui-prototype/dashboard.html`）。数据层 `store.js` 合并两路：`storage-source` 订阅真实 `chrome.storage.local['as_workflow_state']`（spec §4.1 权威骨架，background 唯一写入、dashboard 只读）+ `ws-source`（当前 mock 回放大脑流，真实 WS client 留 Plan 3）。组件只认 store、骨架全量重渲、大脑流增量 append。加载顺序：classic 脚本 `contract.js`→`store.js`→`select-active.js`（挂 `window.__AS_DASH_*` 全局）先于 module `dashboard.js`。`automation/manifest.fragment.json` 的 `content_security_policy.extension_pages` 放行 `connect-src ws://localhost:*` 供 Plan 3 用。Hub「打开监控」按钮经 `automation/register.js` 的 `registerExtension` 注册，onClick 发 `OPEN_MONITOR` 消息 → SW `registerHandler('OPEN_MONITOR',...)` 处理 `chrome.windows.create` 独立窗口。**此按钮和 dashboard 仅 dev 装配（automation/ 被装配时），release 不装配即天然不出现。** 契约/优先级见 `docs/superpowers/specs/2026-06-08-automation-monitor-and-data-contract-design.md`。
 
+**大脑端（brain/）**：Chrome 端 automation 经 ws://localhost:8787 连外部 Python 大脑进程（`python -m brain` 启动）。大脑三判断点——STEP_RESULT 出错→diagnoser 诊断回 STATE_PATCH、FILL_REQUEST→filler 回填提议回 FILL_SUGGEST、REVIEW_REQUEST→reviewer 不可逆复核回 REVIEW_VERDICT，broadcast BRAIN_EVENT 给 dashboard。model.py 默认 MockModel，配 BRAIN_LLM_BASE_URL 切 OpenAICompatModel。
+
 **构建信息注入**：build 时 `build_extension.py` 生成 `dist/extension/content/build-info.js`，注入 `window.__AS_BUILD_INFO__ = { ts, isDev: true, version: 'dev' }`。Panel 标题栏：
 - `isDev=true`：显示 `dev:<ts>` 灰色小字（判断 Chrome 是否真 reload 了新版）
 - `isDev=false` + `version`：显示 `v<version>`（员工自助查当前装的版本号）
@@ -231,8 +240,8 @@ python build/package_all.py                    # extension + EXE + install.bat +
 `build_extension.py` 同时给每个 .js 文件末尾注入 `//# sourceURL=<src 相对路径>`，DevTools 的 Sources 面板和 console 日志按源码路径展示，调试体验与"chrome 直接加载源目录"等价。
 
 **测试命令**：
-- JS 单测：`node --test tests/*.test.js`（bg-router / registerExtension / orchestrator / overlay / ws-client 等，共 101 用例）。⚠️ **不要用 `node --test tests/`**（整目录会把 pytest 的 `.py` 文件当 JS 加载解析失败）。
-- Python 单测：`python3 -m pytest tests/`（build 装配逻辑 + 大脑诊断 + 协议等，共 44 用例）。
+- JS 单测：`node --test tests/*.test.js`（bg-router / registerExtension / orchestrator / overlay / ws-client 等，共 117 用例）。⚠️ **不要用 `node --test tests/`**（整目录会把 pytest 的 `.py` 文件当 JS 加载解析失败）。
+- Python 单测：`python3 -m pytest tests/`（build 装配逻辑 + 大脑三判断点（诊断/回填/复核）+ model/协议/server 等，共 90 用例）。
 
 ## 新增 Feature 标准工作流（worktree 友好）
 

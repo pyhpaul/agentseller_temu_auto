@@ -8,7 +8,7 @@
 
 ```bash
 # 1) 构建（WSL/项目根）
-python3 build/build_extension.py            # 预期 8 features / 15 content scripts
+python3 build/build_extension.py            # 预期 8 features
 
 # 2) 起大脑进程（Plan 3 验证用；不起则大脑离线、自动降级为纯确定性 + 人工 HITL）
 pip install -r brain/requirements.txt --break-system-packages   # 首次（websockets，PEP 668 需此 flag）
@@ -27,8 +27,8 @@ python3 -m brain                            # 前台跑，监听 ws://localhost:
 ## L0 纯逻辑回归（已绿，无需 chrome，先跑确认基线）
 
 ```bash
-node --test tests/*.test.js          # 预期 87 pass（⚠ 必须 *.test.js，整目录会把 pytest .py 当 JS 失败）
-python3 -m pytest tests/             # 预期 51 pass
+node --test tests/*.test.js          # 预期 117 pass（⚠ 必须 *.test.js，整目录会把 pytest .py 当 JS 失败）
+python3 -m pytest tests/             # 预期 90 pass
 ```
 
 ---
@@ -82,10 +82,12 @@ SW console 构造单步 workflow + 设 cursor + `orchEngine.advance`，逐个验
 2. **大脑起**（`python3 -m brain`）→ dashboard WS 连接灯 **live**；**大脑停** → 降级（灯灭/mock 回放）。
 3. **bg 按需连**：dev 起大脑后，WF_START 时 bg 经 orchEnsureWs 连大脑（onopen 自动 HELLO{role:bg}+PING）。
 4. **诊断 self-heal**：AUTO 步 read 类错误 → bg 上报 STEP_RESULT → 大脑诊断（瞬时→retry / 结构性→escalate，两红线）→ STATE_PATCH 回 bg → applyDiagnosis 落地。dashboard 大脑流显示 diagnose 事件。
+5. **回填提议**（需真模型，先设 `BRAIN_LLM_BASE_URL` / `BRAIN_LLM_API_KEY` / `BRAIN_LLM_MODEL` 再起大脑）：推进流水线到 HITL 步（步2 collect_dxm / 步5 compare_1688 / 步6 order_1688）→ overlay 预填大脑提议值 + 🧠badge 标注来源。**验证核心**：大脑永不自动写 `product`，必须人工点「确认完成」才落地；提议值仅预填输入框供审阅，不绕过 HITL 门控。MockModel（默认）也能验链路走通，真模型验证提议质量需额外 `BRAIN_LLM_*` 配置，属人工 gated 项。
+6. **不可逆复核**（reviewGate，需大脑在线）：推进到不可逆 AUTO 步（publish / gen_label / create_po / ship）→ 大脑在线时 `reviewGate` 拦截 → 向大脑发 `REVIEW_REQUEST`；大脑回 `PASS` → 自动跑该步，回 `HOLD` → 转人工；**大脑离线 / WS 超时 / transport 失败 → proceed（additive 降级，不阻塞）；在线复核器回 error / 超时 → hold（fail-safe，宁停不错）**。验证须区分两种降级路径均符合预期，不可逆步需测试商品授权；真模型复核质量同上为人工 gated 项。
 
 ---
 
 ## 验证完成判定
 
-- L0 绿（自动化基线）+ L1 绿（浮层/回填零副作用）+ L2 各 adapter 隔离通过 + L3 至少 1 条测试商品完整端到端 + L4 大脑连接/降级/诊断可见。
+- L0 绿（自动化基线）+ L1 绿（浮层/回填零副作用）+ L2 各 adapter 隔离通过 + L3 至少 1 条测试商品完整端到端 + L4 大脑连接/降级/诊断可见 + L4.5/L4.6 回填提议与不可逆复核降级路径符合预期。
 - 通过后才解除「不推 tag」硬约束 → 可发 rc / 正式 tag（员工发版仍走 dashboard 剥离的 release 路径）。

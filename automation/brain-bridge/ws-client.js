@@ -1,6 +1,6 @@
-// automation/brain-bridge/ws-client.js — bg WebSocket 客户端架子（连大脑 localhost）。spec §4.2/§4.3。
-// 架子（2-2c-2）：连接/重连/保活/消息路由结构就位；**不自启**（startWsClient 留 Plan 3 调）。
-// 不传 RUN_STEP 业务（未注册 handler 即 stub-log）；真实调度 + SW 回收风险留 Plan 3（spec §4.3）。
+// automation/brain-bridge/ws-client.js — bg WebSocket 客户端（连大脑 localhost）。spec §4.2/§4.3。
+// 连接/重连/保活/消息路由结构就位；不在 SW 顶层自启，由 bg-entry.js orchEnsureWs 在首个 WF_* 按需启动。
+// 业务 handler（STATE_PATCH/FILL_SUGGEST/REVIEW_VERDICT）由 bg-entry.js 注册；未注册类型走 stub-log 兜底。
 // release：随 background/ 进包，但 SW 顶层不调 startWsClient → 沉睡 dead code 无害（同 OPEN_MONITOR）。
 // 双模式：SW importScripts 挂 self.__AS_WS__；node require 测纯逻辑（nextReconnectDelay/encode）。
 (function (root, factory) {
@@ -57,14 +57,14 @@
         try { msg = JSON.parse(ev.data); } catch (e) { console.debug('[ws] 非法消息忽略', e); return; }
         const h = handlers[msg.type];
         if (h) h(msg.data, send);
-        else if (msg.type !== 'PONG') console.log('[ws] 未处理消息（架子 stub，Plan 3 注册 handler）', msg.type);
+        else if (msg.type !== 'PONG') console.log('[ws] 未注册消息类型忽略', msg.type);
       };
       sock.onclose = () => { _clearTimers(); onStatus('offline'); _scheduleReconnect(); };
       sock.onerror = () => { console.warn('[ws] 连接错误（onclose 将接管重连）'); };
     }
     function send(type, data) {
       if (ws && ws.readyState === 1) { ws.send(encode(type, data)); return true; }
-      return false;   // 未连上：调用方自行决定（架子阶段恒 false）
+      return false;   // 未连上：调用方自行决定
     }
     function close() {
       closed = true; _clearTimers();
@@ -73,7 +73,7 @@
     return { connect, send, close };
   }
 
-  // 显式启动（Plan 3 在合适时机调，如 WF_START）；架子阶段 SW 顶层不调 → release 沉睡无害
+  // 显式启动（由 bg-entry.js orchEnsureWs 按需调，如 WF_* 首次触发）；SW 顶层不调 → release 沉睡无害
   function startWsClient(opts) {
     const client = createWsClient(opts);
     client.connect();

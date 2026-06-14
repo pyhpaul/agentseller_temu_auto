@@ -415,7 +415,7 @@
         wrap.append(note2);
       }
 
-      // 清除按钮（两 phase 未全部完成时弹确认，避免误清）
+      // 清除按钮：直接清当前流程数据，不弹确认（误清成本低，重跑即可；见 onClear）
       const clearBtn = document.createElement('button');
       clearBtn.textContent = '🗑 清除当前流程';
       clearBtn.style.cssText = 'margin-top:10px;padding:6px 12px;font-size:12px;color:#ff4d4f;background:#fff;border:1px solid #ff4d4f;border-radius:4px;cursor:pointer;align-self:stretch;';
@@ -484,7 +484,7 @@
     return !!el;
   }
 
-  // 图片信息：「选择图片」(ant-dropdown) → 「网络图片」→ 弹窗填 url → 「确定」
+  // 图片信息：「选择图片」(ant-dropdown) → 「网络图片」→ 弹窗填 url → 「添加」
   async function cpoAddNetworkImage(url) {
     const choose = U.findByText('button,.ant-btn,a', '选择图片');
     if (!choose) return { ok: false, error: '未找到「选择图片」按钮' };

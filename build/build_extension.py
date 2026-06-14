@@ -1,6 +1,8 @@
 """
-build_extension.py — 把 core/ 和 features 内容聚合到 dist/extension/。
-v1：仅 core 资产拷贝；feature 扫描在 Task 7 加入。
+build_extension.py — 把 core/ + features/ + automation/(dev) 聚合到 dist/extension/。
+build_all(with_automation=) 控制 automation 目录级装配：
+  dev=True  → 装配 dashboard/orchestrator/overlay/register；
+  release=False → 产物纯 hub，release manifest 更干净。
 """
 import datetime
 import json

@@ -32,7 +32,7 @@
 ```
 features/auto_gen_label/
 ├── feature.json
-├── content/index.js          # chrome 端业务（Phase 1/2/3 全部，约 1500 行）
+├── content/index.js          # chrome 端业务（Phase 1/2/3 全部，约 2000 行）
 ├── samples/                  # 调试辅料（DOM 抓取、日志样本）
 └── CLAUDE.md
 ```
@@ -81,8 +81,8 @@ features/auto_gen_label/
 ### 多SKU支持
 
 **选择方式**：
-- **普通点击**：排他选择该商品（清除其他SKC的商品，但同SKC内支持多行/多SKU并选）
-- **Ctrl/Cmd+点击**：多SKC多选（添加到选择列表而不清除其他SKC）
+- **点同一 SKC 的行**：按 SKU ID toggle（已选取消 / 未选加入）
+- **点不同 SKC 的行**：清空旧选择，切换到新 SKC（始终单一 SKC）
 
 **核心约束（业务确认）**：同一 SKC 下的多个 SKU，**合规信息（Phase 2）和主图槽位（Phase 3）都是 SKC/SPU 级别共享的**。所以：
 - Phase 1：为每个 SKU 货号各生成一个独立标签文件
@@ -190,8 +190,8 @@ engine = Engine(False)
 engine.Start()
 fmt = engine.Documents.Open(btw_path)
 fmt.SubStrings['具名条形码'].Value = png_path
-fmt.SubStrings['具名序列号'].Value = skc_sku
-res = Resolution(600)          # 单参数 = 600 DPI（双参数 = 像素尺寸，不是DPI）
+fmt.SubStrings['具名序列号'].Value = label_serial  # SKU货号(col7)
+res = Resolution(1200)         # 单参数 = DPI（双参数 = 像素尺寸，不是DPI）；DPI 由 bartender.py 的 EXPORT_DPI 常量控制（当前 1200）
 fmt.ExportImageToFile(out_pdf, ImageType.PDF, ColorDepth.ColorDepth24bit, res, OverwriteOptions.Overwrite)
 fmt.ExportImageToFile(out_png, ImageType.PNG, ColorDepth.ColorDepth24bit, res, OverwriteOptions.Overwrite)
 fmt.Close(SaveOptions.DoNotSaveChanges)
@@ -210,7 +210,7 @@ engine.Stop()
 
 **Resolution 构造说明**：
 
-- `Resolution(600)` → 600 DPI，输出 1890×1417 像素（80×60mm 模板）✓
+- `Resolution(1200)` → 1200 DPI，输出 3780×2835 像素（80×60mm 模板）✓；DPI 由 `bartender.py` 的 `EXPORT_DPI` 常量控制（当前 1200）
 - `Resolution(600, 600)` → 输出 600×600 像素（≈190 DPI），不是 600 DPI ✗
 
 ## Phase 2：合规信息填写
@@ -249,7 +249,7 @@ engine.Stop()
 
 ## Phase 3：标签主图插入
 
-**触发**：Phase 2 成功且 PNG 文件存在时自动跳页启动；或 Phase 1 完成后单独用 `onStartImageUpload` 手动启动。
+**触发**：Phase 2 成功且该 SKC 标签 PNG 存在时，由 `runStep3` 自动写 imgFlow + 跳页启动（无独立手动入口）。
 
 **流程**：
 
@@ -272,7 +272,7 @@ engine.Stop()
 
 ```js
 const result = await sendNative('PROCESS_LABEL', {
-  skcNumber, skcSku, barcodePngB64, templatePath, outputDir, widthRatio
+  skcNumber, skcSku, skuSku, barcodePngB64, templatePath, outputDir, widthRatio
 });
 if (!result.success) throw new Error(result.error);
 const { output_pdf, output_png } = result;
@@ -284,7 +284,7 @@ const { output_pdf, output_png } = result;
 
 | Action | 入参 | 出参 |
 |--------|------|------|
-| `PROCESS_LABEL` | skc_number / skc_sku / barcode_png_b64 / template_path / output_dir / width_ratio | output_pdf / output_png |
+| `PROCESS_LABEL` | skc_number / skc_sku / sku_sku / barcode_png_b64 / template_path / output_dir / width_ratio | output_pdf / output_png |
 | `PICK_FILE` | title / filetypes | path |
 | `PICK_FOLDER` | title | path |
 | `READ_FILE` | path | data (base64) |
