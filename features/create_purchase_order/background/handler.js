@@ -291,7 +291,7 @@ async function cpoRun2({ orderNo1688, autoSave = true, repurchase = false, wareh
 // CPO 命令入口：经 bg-router 的 registerHandler 注册（前缀匹配 'CPO_'）。
 // 原 SW 两个 chrome.runtime.onMessage.addListener（各只接管 CPO_START / CPO_START_PHASE2）合一；
 // 行为不变：仅 CPO_START / CPO_START_PHASE2 接管并 sendResponse；其余 CPO_*（bg→content 命令）
-// 返回 undefined（falsy）→ router 落空返回 false，content 侧监听照常处理。
+// handler 返回 undefined（falsy，route 原样透传、不持有异步通道）→ content 侧监听照常处理。
 self.AgentSellerBg.registerHandler('CPO_', (msg, _sender, sendResponse) => {
   if (msg.type === 'CPO_START') {
     if (!msg.data) { sendResponse({ ok: false, error: '缺少启动参数' }); return; }
