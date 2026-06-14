@@ -26,9 +26,9 @@ test('decideOverlayView：有 active workflow → active（无视 buildInfo）',
   assert.strictEqual(r.workflow.id, 'w1');
 });
 
-test('decideOverlayView：无 active + dev → idle（启动入口）', () => {
+test('decideOverlayView：无 active（dev 也）→ hidden（启动入口移 dashboard，业务页空态不显示）', () => {
   const r = decideOverlayView(batchWith('done'), { isDev: true });
-  assert.strictEqual(r.view, 'idle');
+  assert.strictEqual(r.view, 'hidden');
   assert.strictEqual(r.workflow, null);
 });
 

@@ -34,6 +34,35 @@ l2cols.append(stepMount, rCol);
 
 contentEl.append(overviewMount, l2cols);
 
+// 启动入口（自动化操作集中在 dashboard；业务页 overlay 不再常驻空态入口、不挡 hub）。
+// label 必填 → 发 WF_START 给 SW（automation/bg-entry 的 WF_ handler 起编排，与原 overlay 启动同消息）。
+(function mountStartBar() {
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid #30363d';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = '商品 label（必填）';
+  input.style.cssText = 'flex:0 0 280px;padding:6px 10px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:13px sans-serif';
+  const btn = document.createElement('button');
+  btn.textContent = '▶ 开始流水线';
+  btn.style.cssText = 'padding:6px 14px;background:#1f6feb;color:#fff;border:none;border-radius:6px;cursor:pointer;font:13px sans-serif';
+  const msg = document.createElement('span');
+  msg.style.cssText = 'font-size:12px;color:#8b949e';
+  function start() {
+    const label = (input.value || '').trim();
+    if (!label) { input.focus(); msg.textContent = 'label 必填'; return; }
+    try {
+      chrome.runtime.sendMessage({ type: 'WF_START', data: { label } });
+      input.value = ''; msg.textContent = '已发起：' + label;
+    } catch (e) { msg.textContent = '发起失败：' + ((e && e.message) || e); }
+  }
+  btn.addEventListener('click', start);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+  bar.append(input, btn, msg);
+  const app = document.getElementById('app');
+  app.insertBefore(bar, app.querySelector('.main'));
+})();
+
 // 大脑流是有状态组件（增量 append），建一次实例
 const brainStream = createBrainStream(brainMount);
 

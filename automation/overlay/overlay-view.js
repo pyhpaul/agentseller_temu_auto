@@ -15,15 +15,13 @@
   }
 
   // 决定 overlay 渲染哪个视图：
-  //   有 active workflow  → 'active'（进度 / HITL / error，Plan 2 现状）
-  //   无 active + dev     → 'idle'（启动入口「开始流水线」，本刀新增）
-  //   无 active + release → 'hidden'（发版隔离：release overlay 沉睡，行为同 Plan 2）
-  // buildInfo = window.__AS_BUILD_INFO__（{ isDev }）；缺失按 release 处理（安全默认 hidden）。
+  //   有 active workflow → 'active'（进度 / HITL / error）
+  //   无 active         → 'hidden'：业务页浮层只在编排进行中出现；空态启动入口已移到 dashboard，
+  //                       业务页不再常驻浮窗挡 hub。buildInfo 参数保留向后兼容，当前不参与判断。
   function decideOverlayView(batch, buildInfo) {
     const wf = activeWorkflow(batch);
     if (wf) return { view: 'active', workflow: wf };
-    const isDev = !!(buildInfo && buildInfo.isDev);
-    return { view: isDev ? 'idle' : 'hidden', workflow: null };
+    return { view: 'hidden', workflow: null };
   }
 
   // 启动 label 规范化：去首尾空白；空 → null（label 必填，调用方据此拒发 WF_START）
