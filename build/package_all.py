@@ -123,70 +123,6 @@ def _set_manifest_version_for_release(extension_root: Path):
     print(f'[package] manifest.json version: {old} → {manifest_version} → {target.relative_to(ROOT)}')
 
 
-def _strip_dashboard_for_release(extension_root: Path):
-    """release 部署包剥离 dashboard 监控页（开发中的自动化监控系统扩展页，半成品不随员工包发布）。
-
-    dashboard（core/dashboard/）是独立扩展页，build_extension.py 的 copy_dashboard_assets
-    无条件拷进 dist 供 dev 本地验证；但员工发版包不含半成品。故在此从部署副本删除整个
-    dashboard/ 目录（不碰 dev 的 dist/extension/）。Hub「打开监控」入口另在 ui.js 用 isDev 守卫。
-
-    幂等：dashboard 目录不存在时静默跳过（如未来彻底移除或本次构建未含 dashboard）。
-    CSP（manifest content_security_policy）由 _strip_csp_for_release 单独剥离（dashboard 依赖项，
-    release manifest 与 main 基线零差异）。
-    """
-    dash = extension_root / 'dashboard'
-    if dash.exists():
-        try:
-            shutil.rmtree(dash)
-        except OSError as e:
-            print(f'[package] 错误：dashboard/ 剥离失败（{e}），release 包中止', file=sys.stderr)
-            sys.exit(2)
-        print('[package] dashboard/ 已从 release 部署包剥离（dev-only，半成品不随员工包发布）')
-    else:
-        print('[package] dashboard/ 不在部署包（未构建或已剥离），跳过')
-
-
-def _strip_windows_permission_for_release(extension_root: Path):
-    """release 部署包从 manifest 移除 windows permission（dashboard 监控入口 dev-only，release 剥离）。
-    OPEN_MONITOR（chrome.windows 打开 dashboard）是 dev-only：Hub 按钮 isDev 守卫 + dashboard 目录已剥离，
-    release 不触发它（即便触发也 tabs.create 兜底），故移除其依赖的 windows permission，
-    避免员工安装时出现多余「管理窗口」权限提示。manifest 无 windows 时静默跳过（幂等）。
-    """
-    target = extension_root / 'manifest.json'
-    if not target.exists():
-        print(f'[package] 警告：未找到 {target}，跳过 windows permission 剥离')
-        return
-    manifest = json.loads(target.read_text(encoding='utf-8'))
-    perms = manifest.get('permissions', [])
-    if 'windows' in perms:
-        manifest['permissions'] = [p for p in perms if p != 'windows']
-        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-        print('[package] windows permission 已从 release manifest 移除（dashboard 监控 dev-only）')
-    else:
-        print('[package] release manifest 无 windows permission，跳过')
-
-
-def _strip_csp_for_release(extension_root: Path):
-    """release 部署包从 manifest 移除 content_security_policy（dashboard 监控依赖，dev-only）。
-
-    CSP extension_pages（放行 ws://localhost）是 dashboard 监控页 + Plan 3 WS 的依赖，dev-only。
-    release 剥离 dashboard 后该字段无用，移除让 release manifest 与 main 基线零差异
-    （彻底响应「不影响发版内容」）。Plan 3 dashboard 转正纳入发版时再让 CSP 进 release。
-    manifest 无 content_security_policy 时静默跳过（幂等）。
-    """
-    target = extension_root / 'manifest.json'
-    if not target.exists():
-        print(f'[package] 警告：未找到 {target}，跳过 CSP 剥离')
-        return
-    manifest = json.loads(target.read_text(encoding='utf-8'))
-    if 'content_security_policy' in manifest:
-        del manifest['content_security_policy']
-        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-        print('[package] content_security_policy 已从 release manifest 移除（dashboard 监控 dev-only）')
-    else:
-        print('[package] release manifest 无 content_security_policy，跳过')
-
-
 def _disable_build_info_for_release(extension_root: Path):
     """release 部署包关闭 dev 构建时间戳显示 + 注入真实版本号到 build-info.js。
 
@@ -240,10 +176,9 @@ def build_installer():
 
 def main():
     print('[package] 1/5 构建 extension dist...')
-    # release 不装配 automation/（with_automation=False）→ 产物纯 hub：无 dashboard/overlay/
-    # orchestrator/automation-bg-entry/automation-register（📊 监控按钮）/windows/CSP。下方 3 个
-    # strip 函数（dashboard/windows/CSP）因 automation 未装配而成幂等 no-op，保留作双保险，
-    # 移除留文档同步 task。理由见 plan Task 1.7 Step 5。
+    # release 不装配 automation/（with_automation=False）→ 产物天然纯 hub：无 dashboard/overlay/
+    # orchestrator/automation-bg-entry/automation-register（📊 监控按钮）/windows/CSP。
+    # 由目录级装配隔离保证，无需 strip 补丁（旧 3 个 strip 函数已删，Task 1.8）。
     build_all(with_automation=False)
 
     print('[package] 2/5 构建 native_host EXE...')
@@ -268,9 +203,6 @@ def main():
     # 关掉 release 版的 TAL_DEBUG + dev build 时间戳显示，并把 manifest 版本号同步成 tag
     _replace_tal_debug_to_false(SETUP_DIR / 'extension')
     _disable_build_info_for_release(SETUP_DIR / 'extension')
-    _strip_dashboard_for_release(SETUP_DIR / 'extension')      # 新增：剥离半成品 dashboard
-    _strip_windows_permission_for_release(SETUP_DIR / 'extension')  # 剥离 dashboard 依赖的 windows permission
-    _strip_csp_for_release(SETUP_DIR / 'extension')                 # 剥离 dashboard 依赖的 CSP（release manifest 与 main 零差异）
     _set_manifest_version_for_release(SETUP_DIR / 'extension')
 
     # native_host EXE（native_host/build/build.bat 的 --distpath . 决定落点：native_host/）
