@@ -1813,11 +1813,11 @@
       <div class="tal-card">
         <div class="tal-card-title">当前商品</div>
         <div class="tal-product-empty" id="tal-product-empty">
-          ${isBarcodeManagementPage() ? '请点击商品行选择' : '请导航到条码管理页'}
+          ${isBarcodeManagementPage() ? '点击商品行选择（同一 SKC 的多个 SKU 可连续点选多行，一起生成）' : '请导航到条码管理页'}
         </div>
         <div id="tal-product-info" style="display:none">
-          <div class="tal-kv"><span class="tal-k">SKC货号</span><span id="tal-val-sku" class="tal-v"></span></div>
-          <div class="tal-kv"><span class="tal-k">SKC</span><span id="tal-val-skc" class="tal-v"></span></div>
+          <div class="tal-kv"><span class="tal-k">已选</span><span id="tal-val-sku" class="tal-v"></span></div>
+          <div class="tal-kv"><span class="tal-k">SKU货号</span><span id="tal-val-skc" class="tal-v"></span></div>
           <div class="tal-kv" id="tal-label-row" style="display:none">
             <span class="tal-k">标签文件</span><span id="tal-val-label" class="tal-v"></span>
           </div>
@@ -1972,7 +1972,7 @@
         if (uiState?.view === 'feature' && uiState.feature === 'auto_gen_label') {
           refreshProductUI();
           const el = document.getElementById('tal-product-empty');
-          if (el) el.textContent = isBarcodeManagementPage() ? '请点击商品行选择' : '请导航到条码管理页';
+          if (el) el.textContent = isBarcodeManagementPage() ? '点击商品行选择（同一 SKC 的多个 SKU 可连续点选多行，一起生成）' : '请导航到条码管理页';
         }
       });
     },
