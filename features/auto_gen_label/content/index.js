@@ -10,7 +10,7 @@
   const TAL_DEBUG = true;
 
   // ── feature 内部状态 ──
-  const fstate = { products: [] };  // 多SKU支持：[{ skcNumber, skcSku }, ...]
+  const fstate = { products: [] };  // 多SKU：[{ skcNumber(col4), skuId(col5), skcSku(col6), skuSku(col7) }, ...]
   let rowObserver = null;
   let clickDelegationBound = false;  // document 级 click 委托是否已绑定（幂等保护）
 

@@ -1,6 +1,6 @@
 // dashboard.js — ES module 入口。装配 store + 源 + 组件，订阅 store 重渲。
 // 骨架（topbar/queue-list/overview-bar/step-list/hitl-queue）全量重渲；大脑流增量 append（独立 update）。
-// 数据源：storage-source（真实 chrome.storage）+ ws-source（本 Plan mock，Plan 3 换真实 WS）。
+// 数据源：storage-source（真实 chrome.storage）+ ws-source（先连真实 WS，连不上降级 mock 回放）。
 import { renderTopbar } from './components/topbar.js';
 import { renderQueueList } from './components/queue-list.js';
 import { renderOverviewBar } from './components/overview-bar.js';
@@ -102,6 +102,6 @@ store.subscribe(renderAll);
 // 首屏渲染（store 初始为空 batch，先渲空态，源接入后再重渲）
 renderAll(store.getState());
 
-// 启动数据源：storage-source 接真实 chrome.storage；ws-source 本 Plan mock 回放大脑流
+// 启动数据源：storage-source 接真实 chrome.storage；ws-source 先尝试真实 WS、连不上降级 mock 回放大脑流
 startStorageSource(store);
 startWsSource(store);

@@ -1,7 +1,9 @@
 # Plan 2 编排器 Chrome 端到端验证清单
 
 > 自动化「上架→发货」确定性骨架（Plan 2，无 LLM）已合入 main（merge `3ea8990`）。
-> 本清单给「下次」照着在 Chrome 里跑。所有 SW console snippet 基于真实代码（`core/background/service-worker.js` + `orchestrator/engine.js` + `orchestrator/steps.js`）。
+> 本清单给「下次」照着在 Chrome 里跑。所有 SW console snippet 基于真实代码（`core/background/service-worker.js` + `automation/orchestrator/engine.js` + `automation/orchestrator/steps.js`）。
+>
+> 注：#61 后 orchestrator/ws-client 已迁至 `automation/`，本清单 console snippet（用 SW 全局符号名 `orchEngine`/`ORCH`/`orchStartWorkflow` 等，不依赖文件路径）仍有效，仅源码文件路径变更。
 > **硬约束：本清单全过之前不发版（不推 tag）。** 任一不可逆步翻车 → 停下回 debug，不发员工。
 
 ---

@@ -64,7 +64,7 @@
   }
   function getExtensions() { return extensions.slice(); }
   function collectPanelButtons() { return extensions.flatMap(e => e.panelButtons || []); }
-  // Phase 2（Task 1.4/2.x）：automation overlay 消费此接口挂载 HITL 浮层
+  // 预留接口：当前 overlay 经 content script 自注入自驱（监听 storage.onChanged），未走此路；保留待未来数据化挂载
   function getOverlays() { return extensions.flatMap(e => e.overlays || []); }
 
   async function sendNative(action, data) {

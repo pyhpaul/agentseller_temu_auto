@@ -1,6 +1,6 @@
-# brain/server.py — Plan 3 大脑进程 WS server（第一刀：管道连通，不诊断）。
-# 按 HELLO role 注册连接；PING→PONG；STEP_RESULT→回 log BRAIN_EVENT broadcast 给 dashboard。
-# 诊断 / 模型 / STATE_PATCH 留后续刀。
+# brain/server.py — 大脑进程 WS server（三判断点已接线）。
+# 按 HELLO role 注册连接；PING→PONG；STEP_RESULT→诊断 self-heal（diagnose→STATE_PATCH 回 bg + BRAIN_EVENT 给 dashboard）；
+# FILL_REQUEST→filler 回填提议（FILL_SUGGEST）；REVIEW_REQUEST→reviewer 不可逆复核（REVIEW_VERDICT）。
 import asyncio
 import time
 import websockets
@@ -10,7 +10,7 @@ from brain.filler import suggest
 from brain.reviewer import review
 from brain.model import MockModel
 
-# dashboard 连接集合（broadcast BRAIN_EVENT 用）。模块级：第一刀单进程单 batch，够用。
+# dashboard 连接集合（broadcast BRAIN_EVENT 用）。模块级：单进程单 batch，够用。
 _dashboards = set()
 
 # 诊断用模型（model-agnostic）。默认 MockModel；真实部署由 __main__ 按 env 注入 OpenAICompatModel。
@@ -33,7 +33,7 @@ async def handler(websocket):
                 await _handle_fill_request(websocket, data)
             elif mtype == "REVIEW_REQUEST":
                 await _handle_review_request(websocket, data)
-            # 其余类型第一刀忽略
+            # 其余类型忽略
     finally:
         _dashboards.discard(websocket)
 

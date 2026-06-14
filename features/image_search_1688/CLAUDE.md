@@ -50,7 +50,10 @@ features/image_search_1688/
 ## feature.json 特殊字段说明
 
 - `content_matches: []`：不向主 content_scripts 块添加新域，FAB 不出现在 1688 页面
-- `host_permissions: ["https://*.1688.com/*"]`：SW 需要此权限向 1688 tab 执行 scripting
+- `host_permissions: ["<all_urls>"]`：captureVisibleTab 截源 Temu tab 时内容脚本触发路径
+  不满足 activeTab 授权，必须 `<all_urls>` 才能截图；同时也供 SW 向 1688 tab 执行
+  scripting。配合 `content_matches: []` 置空，`<all_urls>` 不进主 content_scripts
+  matches，故 FAB 不注入 1688 页。
 - `extra_content_scripts`：injector.js 静态加载到 1688 搜索页（独立于主 content_scripts 块）
 - `extra_assets`：overlay.css / overlay.js 由构建拷贝到 dist，供 SW 动态注入使用
 

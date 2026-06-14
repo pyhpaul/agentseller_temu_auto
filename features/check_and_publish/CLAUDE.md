@@ -39,7 +39,7 @@ features/check_and_publish/
     ├── 标题.docx               # 违禁词清单（标题/描述共用）
     ├── 产品描述.docx           # 同源
     ├── 敏感属性.docx           # 暂未使用（用户暂不开放检测）
-    ├── 类目.docx               # 暂未使用
+    ├── 类目.docx               # category_forbidden 规则的违禁品类词库来源
     ├── 规则.txt                # 腾讯文档链接（个人整理，未抓取）
     └── 官方规则汇总.md          # 店小秘官方 + WebSearch 综合规则参考
 ```
@@ -48,8 +48,8 @@ features/check_and_publish/
 
 单文件 IIFE，按职责分段（出现顺序）：
 
-1. **常量与词库**：`BASE_FORBIDDEN` / `MARKETING_FORBIDDEN` / `CN_PUNCT_RE` / `CJK_RE` / `MULTIPACK_INDICATORS` / `IMG_MIN_SIZE` / `VARIATION_MAX`
-2. **DOM 取值层**：`isEditPage` / `findRequiredFormItems` / `isRequiredItemEmpty` / `findVariationTableRequiredEmpties` / 各字段 getter
+1. **常量与词库**：`BASE_FORBIDDEN` / `MARKETING_FORBIDDEN` / `CATEGORY_FORBIDDEN` / `CN_PUNCT_RE` / `CJK_RE` / `MULTIPACK_INDICATORS` / `IMG_MIN_SIZE` / `VARIATION_MAX`
+2. **DOM 取值层**：`isEditPage` / `findRequiredFormItems` / `isRequiredItemEmpty` / `findVariationTableRequiredEmpties` / `getCategoryField` / `findFormItemByLabelText` / `getCarouselImagesField` / 各字段 getter
 3. **规则辅助**：`matchWords`（≤4 字符英文词加 `\b` 边界保护，避免「ins」误中「instructions」）
 4. **规则注册表**：`RULES` 数组（见下表）
 5. **调度器**：`collectFields` / `runChecks` / `bucketize`
@@ -57,7 +57,7 @@ features/check_and_publish/
 7. **用户交互**：`onCheck` / `onPublish`（含 URL 检测、`clickPublishImmediate`）
 8. **注册**：`window.AgentSeller.registerFeature(...)`
 
-## 规则注册表（11 条）
+## 规则注册表（12 条）
 
 新增检查类型只需在 `RULES` 数组追加一条 `{id, name, field, severity, check(ctx)}`。
 
@@ -66,14 +66,15 @@ features/check_and_publish/
 | 1 | `title_length` | block | DOM `maxlength=250` + 店小秘官方 |
 | 2 | `title_forbidden` | block | `samples/标题.docx` |
 | 3 | `description_forbidden` | block | 同上（共用） |
-| 4 | `required_fields_empty` | block | `.ant-form-item-required` × 9 + 变种表 `<th><span class="required">` |
-| 5 | `chinese_punctuation` | block | 店小秘官方（含中文标点导致发布失败） |
-| 6 | `title_should_english` | block | 店小秘官方 |
-| 7 | `sku_no_chinese` | block | 店小秘官方 + `input[name="variationSku"]` |
-| 8 | `variation_count_le_20` | block | 店小秘官方 |
-| 9 | `forbidden_words_marketing` | block | WebSearch（免费/秒杀/sale/discount 等） |
-| 10 | `multipack_should_indicate` | warn | 多变种时标题应含 pcs/pack/set 等 |
-| 11 | `image_carousel_size` | warn | 店小秘官方（≥800×800, 1:1）— 信号源 naturalWidth 可能是缩略图，保 warn |
+| 4 | `category_forbidden` | block | `samples/类目.docx`（敏感品类：母婴/儿童/含电/医疗/化妆品等，命中即阻断，取值用 `.category-list` 全路径） |
+| 5 | `required_fields_empty` | block | `.ant-form-item-required` × 9 + 变种表 `<th><span class="required">` |
+| 6 | `chinese_punctuation` | block | 店小秘官方（含中文标点导致发布失败） |
+| 7 | `title_should_english` | block | 店小秘官方 |
+| 8 | `sku_no_chinese` | block | 店小秘官方 + `input[name="variationSku"]` |
+| 9 | `variation_count_le_20` | block | 店小秘官方 |
+| 10 | `forbidden_words_marketing` | block | WebSearch（免费/秒杀/sale/discount 等） |
+| 11 | `multipack_should_indicate` | warn | 多变种时标题应含 pcs/pack/set 等 |
+| 12 | `image_carousel_size` | warn | 店小秘官方（≥800×800, 1:1）— 信号源 naturalWidth 可能是缩略图，保 warn |
 
 `check(ctx)` 返回形态：
 - `{ pass: true }` — 通过
@@ -86,7 +87,10 @@ features/check_and_publish/
 `input.ant-input-sm[maxlength="250"]` — maxlength=250 是稳定锚点；页面有两个候选（中文标题 + 英文标题），取第一个 = 当前编辑中的主标题。
 
 ### 描述（不完美）
-DOM 上**无 `contenteditable` 节点** — 描述靠模态编辑器渲染，未打开模态时 4 层 fallback 都取不到，规则 skipped。这是店小秘产品设计决定，绕不开。
+描述靠模态编辑器渲染，**模态未打开时** 4 层 fallback（contenteditable→name=description→编辑描述按钮 preview→空 contenteditable 兜底）通常都取不到值，规则 skipped。这是店小秘产品设计决定，绕不开。
+
+### 产品分类
+取值优先读 `.category-list`（店小秘渲染的全路径文本，如「母婴用品 > 婴儿玩具 > 益智积木」）。ant-select 控件本身只显示末级，不含上层关键词，用全路径才能匹配 `CATEGORY_FORBIDDEN` 中的高层品类（如「母婴」「含电」）。若 `.category-list` 不存在，fallback 用 `findFormItemByLabelText('产品分类')` 找 form-item 内的 ant-select，仅能取末级文本。
 
 ### 必填字段（双机制）
 | 机制 | 选择器 | 实现 |
@@ -102,6 +106,21 @@ DOM 上**无 `contenteditable` 节点** — 描述靠模态编辑器渲染，未
 
 ### 中文标点
 不含 Unicode 弯引号 `""''`（U+201C/201D/2018/2019）— 视觉近似 ASCII 直引号，来源是 smart quotes 自动转换，跟"中文输入法"无关；如实测 Temu 也拒收再单独加规则。
+
+## 编排器桥接（CAP_PUBLISH）
+
+content world 注册 `chrome.runtime.onMessage` 监听，收到 `type === 'CAP_PUBLISH'` 后调 `capHandlePublish()`，完成检查+发布后通过 `sendResponse` 回报结果。
+
+特点：检查与发布在同一 tab 内完成，无需跨页导航，也无需写 `chrome.storage`（区别于 CPO / image_search 的跨 tab 编排）。
+
+**错误分层**（供编排器错误归因）：
+
+| 场景 | 回报 `category` |
+|------|----------------|
+| 非编辑页 / 取值读取失败 / 发布按钮找不到 | `'read'` |
+| 合规规则 block（任一条 severity=block 命中） | `'validate'`，附 `blockedRuleId`（阻断规则 id）+ `blockedReason`；编排器应将该批次转人工（CAP_CHECK_BLOCKED） |
+
+复用流程：`runChecks` 跑规则表 → `bucketize` 分桶 → 有 block 即返 validate 错误；全通过则 `clickPublishImmediate` 触发发布。
 
 ## 新增规则工作流
 

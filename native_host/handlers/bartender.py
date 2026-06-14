@@ -4,10 +4,10 @@ BarTender 2022 标签生成 - 使用 .NET SDK (pythonnet)
 
 模板 NamedSubStrings（经实测确认）：
   具名条形码 → 本地 PNG 文件路径
-  具名序列号 → SKC货号字符串
+  具名序列号 → SKU货号字符串（缺则退回 SKC货号）
 
 导出参数（经实测确认）：
-  Resolution(600)            → 600 DPI，1890×1417 像素（80×60mm 模板）
+  Resolution(EXPORT_DPI)     → 1200 DPI（80×60mm 模板）
   ImageType.PNG              → PNG 格式（= 3）
   ImageType.PDF              → PDF 格式（= 35）
   ColorDepth.ColorDepth24bit → 24-bit 真彩色（= 4）
@@ -145,9 +145,10 @@ def _save_b64_png(b64_data: str, name_hint: str) -> str:
     return tmp.name
 
 
-def _run_bartender(btw_path: str, png_path: str, skc_sku: str,
+def _run_bartender(btw_path: str, png_path: str,
+                   skc_sku: str,  # 此参数现承载 label_serial = SKU货号序列号（调用方传 sku_sku or skc_sku）
                    out_pdf: str, out_png: str, bt_dll: str) -> None:
-    """打开 BarTender 模板，写入数据，导出 600 DPI 的 PDF 和原始 PNG。"""
+    """打开 BarTender 模板，写入数据，导出 1200 DPI（EXPORT_DPI）的 PDF 和原始 PNG。"""
     import clr
     clr.AddReference(bt_dll)
     from Seagull.BarTender.Print import (

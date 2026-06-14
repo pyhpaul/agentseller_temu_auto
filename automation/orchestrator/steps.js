@@ -8,10 +8,10 @@
   'use strict';
 
   // type: 'auto' 调 feature / 'hitl' 人工卡点。reversible: 中断恢复用（spec §4.2），hitl 步为 null。
-  // domain: 目标平台域（导航 + 「前往」用）；精确 urlTemplate/readySignal 由 Plan 2-2 feature 改造补。
+  // domain: 目标平台域（导航 + 「前往」用）。auto 步（gen_label/pack_label/ship）已补真实 target.url+readySignal；
+  //   HITL 步 domain 仍为初值，按运营实际页校准。
   //   ⚠ Temu 系分两子域：create_sku/create_po 用 agentseller.temu.com（CPO 真实域），
   //   auto_gen_label/选品/返单价用 seller.temu.com（核实自各 feature.json host_permissions）。
-  //   HITL 步（选品/返单价）domain 为初值，Plan 2-2 按运营实际页校准。
   // create_sku 的 reversible=true 是 spec §3.2 △（写后读可检测已建，半可逆）的落地：
   //   恢复时重跑，由 feature 层做幂等校验，故按可逆处理。
   // hitlSpec: 回填型 HITL 的字段元数据（fields[{key,label,fieldType,required}]）。engine.buildHitl 读它

@@ -21,6 +21,14 @@
   仅「自动确认发货」开关存 chrome.storage.local['auto_ship_auto_confirm']
 - 主 index.js 在全域注入(项目既有行为，FAB 多域出现)；用到 logic 的路径被 isShipListPage 拦在发货单页
 
+**双触发入口**：
+(1) 人工——Hub「开始/单步」按钮；
+(2) 编排器——automation 大脑经 SW 发 `AUTO_SHIP_RUN_ONE` 命令（content 的
+  `chrome.runtime.onMessage → asHandleRunOne`，一次处理一单），由
+  `automation/bg-entry.js` 的 `orchAdapterShip` 驱动；编排器模式强制 `autoConfirm=true`
+  跳过逐单确认弹窗、返回结构化 `{status, result, error}`、发货后 `waitOrderGone`
+  等单消失确认。仍无 background/handler.js、无 native host。
+
 ## 关键设计
 
 - **一行一单**（重要，与初始假设不同）：每个 `[data-testid="beast-core-table-body-tr"]` =

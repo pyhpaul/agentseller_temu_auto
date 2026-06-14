@@ -79,9 +79,22 @@ PDF 字节用 ArrayBuffer 直接 transfer（免 base64）。捕获模式由 isol
 - 面板实时进度「打印中 i/N…」；完成显示「✅ 已存 N 个到 <path>」+ toast
 - **不自动打开文件夹**（避免给共享 native host 加 open_path；用面板强反馈替代）
 
-## 已知限制 / 待实测确认（Task 10）
+## 已知限制 / 改版风险点
 
-- 打印拦截基于「createElement iframe 抢先 load 监听置空 print」，Console 最小验证通过；
-  端到端批量下若个别页面拦不住，退化为"预览弹出但字节已存盘"（不丢数据）。
+- 打印拦截基于 createElement iframe 抢先 load 置空 print（已实测捕获+预览拦截通过）；
+  极端下个别页面若拦不住，退化为预览弹出但字节已存盘（不丢数据）。
 - confirm 弹窗「继续打印」按钮文案据补打变体样本；首次打印弹窗若文案不同需调 `findContinueBtn`。
 - 行→商品枚举选择器据 `samples/selected_row.txt`（rowspan 结构）；Temu 改版需复核。
+
+## 编排器命令入口（自动化态）
+
+`index.js` 注册 `chrome.runtime.onMessage` 监听 `PL_START_BATCH`（编排器经 SW 下发），
+fire-and-forget 模式：`plHandleStartBatch` 做就绪等待 + 取保存路径（`data.saveDir`
+优先，回退 `localStorage.plSavePath`）+ 校验有选中行后，立即 ack `{ok: true, started: true}`，
+**不 await** `runBatchPrint`；后台跑完把终态写 `chrome.storage.local['pl_state']`
+（`status: 'running'|'done'|'error'`，含 `ok/files/fails` 统计 + `errorCategory`）。
+
+**Why fire-forget + storage 回传**：长批量逼近 SW 5 分钟消息超时，无法同步等待；
+编排器轮询 `pl_state` 取终态，不占用消息通道。
+
+人工 `onStart`（Hub 按钮触发）与命令入口共用同一纯引擎 `runBatchPrint`，逻辑不重复。

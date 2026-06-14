@@ -23,7 +23,7 @@ window.TPD.selectors.*                                              (selectors)
 window.TPD.storage.*                                                (storage)
 window.TPD.actions.*                                                (actions)
 window.TPD.engine.*                                                 (engine)
-window.TPD.panel.mount()                                            (panel，当前未调用)
+window.TPD.panel.mount()                                            (panel/mount 代码块在 index.js 内、整块死代码，从未 mount；真实 UI 是 §UI 描述的 Hub feature view。该块内含已废弃的 stopOnError/refreshEvery/delayMultiplier 设置项，勿据其推断当前可配置项)
 ```
 
 状态机：`IDLE → RUNNING ⇄ PAUSED ⇄ STEPPING → IDLE/ERROR`
@@ -33,8 +33,12 @@ window.TPD.panel.mount()                                            (panel，当
 控制面板并入 AgentSeller Hub 的 feature view（不再弹独立 Shadow DOM 浮层）。
 
 Hub 面板设置项：
-- **不调整原因**：填写到弹窗 textarea 的文本（默认"已提交活动，没有利润"）
-- 失败固定暂停（stopOnError 硬编码 true，无法关闭）
+- **不调整原因**（唯一可配置项）：填写到弹窗 textarea 的文本（默认"已提交活动，没有利润"）
+
+失败处理（非可配置，硬编码在 mainLoop）：
+- `ConfirmModalStuck` → 跳过整组同 SPU+SKC，continue（连续 5 次 `MAX_CONSECUTIVE_FAILURES` 才 `setMode(PAUSED)`）
+- `RowVanished` → continue 跳过当前行
+- 其他错误 → `setMode(PAUSED)` 等人工介入
 
 ## 刷新同步机制（关键设计）
 
