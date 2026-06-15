@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl, buildReviewHitl } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl, pickProduct } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -70,7 +70,8 @@ test('buildHitl：带 hitlSpec.fields 的步 → editable=true + fields', () => 
 });
 
 test('buildHitl：无 hitlSpec 的纯确认步 → editable=false + fields 空', () => {
-  const h = buildHitl({ id: 'select_product', label: '选品' });
+  // wait_payment（等付款）是真纯确认步；select_product 现已带 sourceUrl hitlSpec（回填步）
+  const h = buildHitl({ id: 'wait_payment', label: '等财务付款' });
   assert.strictEqual(h.editable, false);
   assert.deepStrictEqual(h.fields, []);
 });
@@ -78,6 +79,19 @@ test('buildHitl：无 hitlSpec 的纯确认步 → editable=false + fields 空',
 test('buildHitl：hitlSpec.fields 空数组 → editable=false', () => {
   const h = buildHitl({ id: 'x', label: 'x', hitlSpec: { fields: [] } });
   assert.strictEqual(h.editable, false);
+});
+
+test('pickProduct：提取 sourceUrl（选品步回填的源商品锚点）', () => {
+  const out = pickProduct({ sourceUrl: 'https://seller.temu.com/goods/detail?id=123', skc: 'SKC1' });
+  assert.strictEqual(out.sourceUrl, 'https://seller.temu.com/goods/detail?id=123');
+  assert.strictEqual(out.skc, 'SKC1');
+});
+
+test('pickProduct：忽略未白名单字段、null 不覆盖', () => {
+  const out = pickProduct({ sourceUrl: null, bogus: 'x', poNo: 'PO9' });
+  assert.ok(!('sourceUrl' in out));   // null 不进（渐进填充不抹）
+  assert.ok(!('bogus' in out));       // 非白名单忽略
+  assert.strictEqual(out.poNo, 'PO9');
 });
 
 test('advance：多 auto 步连续推进到末尾 done', async () => {

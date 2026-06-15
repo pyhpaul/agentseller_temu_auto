@@ -18,7 +18,12 @@
   //   条件化 editable；overlay 据此渲染回填控件。无 hitlSpec 的 hitl 步为纯确认型（editable=false）。
   //   首版一 SKC 一 SKU、单值契约（多变种 per-SKU 数组留后续）。
   const STEP_DEFS = [
-    { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com' },
+    { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
+      // 记录选品的源商品 Temu 详情页 url（流水线第一个锚点）。当前仅记录进 product.sourceUrl；
+      // 后续方案承接：基于此 url 自动化完成店小秘一键采集（collect_dxm 升级为 url 驱动半自动）。
+      hitlSpec: { fields: [
+        { key: 'sourceUrl', label: 'Temu 商品详情页 URL', fieldType: 'text', required: true },
+      ] } },
     { id: 'collect_dxm',      label: '店小秘采集建品',        type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com',
       hitlSpec: { fields: [
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
@@ -42,12 +47,17 @@
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[data-testid="beast-core-table-body-tr"]' } },
   ];
 
+  // 初始 product 工厂（buildInitialWorkflow + orchestrator restart 重头共用，单一真源防字段漂移）。
+  function emptyProduct(label) {
+    return { label: label || null, sourceUrl: null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null };
+  }
+
   // idGen 注入（纯逻辑测试要确定性，不在模块内调 Date.now/random）。
   function buildInitialWorkflow(product, idGen) {
     product = product || {};
     return {
       id: idGen(),
-      product: { label: product.label || null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null },
+      product: emptyProduct(product.label),
       status: 'pending',
       cursor: 0,
       startedAt: null,
@@ -64,5 +74,5 @@
     };
   }
 
-  return { STEP_DEFS, buildInitialWorkflow };
+  return { STEP_DEFS, buildInitialWorkflow, emptyProduct };
 });

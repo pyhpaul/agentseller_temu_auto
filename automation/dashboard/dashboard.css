@@ -195,6 +195,23 @@ body{
 .btn.no{background:transparent;color:var(--st-error);border-color:rgba(248,81,73,.4)}
 .btn.no:hover{background:rgba(248,81,73,.1)}
 .hitl-empty{margin:12px 14px;padding:14px;text-align:center;font-size:15px;color:var(--text-2);border:1px dashed var(--border-muted);border-radius:var(--radius-sm)}
+/* 回填型字段控件（dashboard 操作中心） */
+.fill-row{padding:6px 12px;display:flex;flex-direction:column;gap:4px}
+.fill-label{font-size:14px;color:var(--text-2)}
+.fill-input{padding:7px 10px;background:var(--bg-1);color:var(--text-0);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:15px;width:100%;box-sizing:border-box}
+.fill-input:focus{outline:none;border-color:var(--st-paused)}
+.suggest-note{padding:8px 12px;font-size:14px;color:var(--st-done);display:flex;gap:6px;align-items:center;line-height:1.4}
+/* 复核型 */
+.review-reason{padding:8px 12px;font-size:14px;color:var(--st-paused);line-height:1.45}
+.concerns{margin:0;padding:6px 12px 6px 30px;font-size:14px;color:var(--st-error);line-height:1.5}
+/* error 卡 */
+.hitl-card.error{border-color:rgba(248,81,73,.42);background:rgba(248,81,73,.05)}
+.hitl-card .h .act.err{color:var(--st-error)}
+/* 中止批次按钮（panel-head 内，不撑满） */
+.abort-btn{flex:0 0 auto;padding:4px 10px;font-size:13px}
+/* 终态重启三档（重头/当前步/任意步下拉） */
+.restart-row{display:flex;gap:8px;padding:6px 12px;align-items:center}
+.restart-step{flex:1;margin:0}
 
 /* ── L2 空态 ── */
 .l2-empty{padding:40px 16px;text-align:center;color:var(--text-2);font-size:16px}
