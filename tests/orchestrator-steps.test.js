@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { STEP_DEFS, buildInitialWorkflow } = require('../automation/orchestrator/steps.js');
+const { STEP_DEFS, buildInitialWorkflow, emptyProduct } = require('../automation/orchestrator/steps.js');
 
 test('STEP_DEFS: 13 步、id 唯一、字段完整', () => {
   assert.strictEqual(STEP_DEFS.length, 13);
@@ -32,6 +32,7 @@ test('buildInitialWorkflow: 初始 workflow 结构正确', () => {
   assert.strictEqual(wf.status, 'pending');
   assert.strictEqual(wf.cursor, 0);
   assert.strictEqual(wf.product.label, '保温杯');
+  assert.strictEqual(wf.product.sourceUrl, null);                  // 选品步回填的源商品 Temu 详情页 url，初始 null
   assert.strictEqual(wf.product.spuId, null);                      // 渐进填充，初始 null
   assert.strictEqual(wf.product.url1688, null);                    // CPO create_sku 输入（比价/下单步回填）
   assert.strictEqual(wf.product.orderNo1688, null);                // CPO create_po 输入（下单步回填）
@@ -40,6 +41,28 @@ test('buildInitialWorkflow: 初始 workflow 结构正确', () => {
   assert.ok(wf.steps.every(s => s.status === 'pending'));
   assert.strictEqual(wf.steps[0].committing, false);
   assert.deepStrictEqual(wf.tmpTabs, []);
+});
+
+test('emptyProduct: 保留 label、其余字段 null（restart 重头复用，字段完整）', () => {
+  const p = emptyProduct('保温杯');
+  assert.strictEqual(p.label, '保温杯');
+  assert.strictEqual(p.sourceUrl, null);
+  assert.strictEqual(p.spuId, null);
+  assert.strictEqual(p.skc, null);
+  assert.strictEqual(p.skuNo, null);
+  assert.strictEqual(p.url1688, null);
+  assert.strictEqual(p.orderNo1688, null);
+  assert.strictEqual(p.poNo, null);
+  assert.strictEqual(emptyProduct().label, null);   // 缺 label 不抛
+});
+
+test('select_product: 回填步带 sourceUrl hitlSpec（记录选品源商品 url）', () => {
+  const sel = STEP_DEFS.find(d => d.id === 'select_product');
+  assert.ok(sel.hitlSpec && Array.isArray(sel.hitlSpec.fields), 'select_product 有 hitlSpec.fields');
+  const f = sel.hitlSpec.fields.find(x => x.key === 'sourceUrl');
+  assert.ok(f, 'hitlSpec 含 sourceUrl 字段');
+  assert.strictEqual(f.required, true, 'sourceUrl 必填');
+  assert.strictEqual(sel.type, 'hitl');
 });
 
 test('buildInitialWorkflow: 缺 product.label 不抛、label=null', () => {

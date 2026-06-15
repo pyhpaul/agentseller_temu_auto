@@ -509,6 +509,44 @@ async function orchRetry(workflowId) {
   await orchEngine.advance(workflowId);
 }
 
+// 删除记录（终态 done/aborted）：从 batch.workflows 彻底移除该 workflow（不可恢复，UI 已 confirm）。
+async function orchDeleteWorkflow(workflowId) {
+  await orchQueue.enqueue(skeleton => {
+    const wfs = skeleton.batch.workflows || [];
+    const idx = wfs.findIndex(w => w.id === workflowId);
+    if (idx < 0) return undefined;
+    wfs.splice(idx, 1);
+    if (skeleton.batch.activeWorkflowId === workflowId) {
+      skeleton.batch.activeWorkflowId = wfs.length ? wfs[wfs.length - 1].id : null;
+    }
+    return skeleton;
+  });
+}
+
+// 重启（终态恢复）：从 fromStep 起重置 step→pending + running + advance（重头/当前步/任意步）。
+// 重头（fromStep=0）额外清 product 为初始（保留 label，对齐用户「重头=完全重来」决策）；
+// fromStep>0 保留前序 product（渐进填充不回滚，从中间步续跑用前面填好的数据）。
+async function orchRestartWorkflow(workflowId, fromStep) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf) return undefined;
+    const from = Math.max(0, Math.min(fromStep | 0, wf.steps.length - 1));
+    wf.cursor = from;
+    wf.steps.forEach((s, i) => {
+      if (i >= from) {
+        s.status = 'pending'; s.error = null; s.committing = false;
+        s.result = null; s.reviewed = false; s.retryCount = 0;
+        s.startedAt = null; s.endedAt = null;
+      }
+    });
+    if (from === 0) wf.product = ORCH.steps.emptyProduct(wf.product && wf.product.label);
+    wf.status = 'running'; wf.hitl = null; wf.updatedAt = Date.now();
+    skeleton.batch.activeWorkflowId = wf.id;
+    return skeleton;
+  });
+  orchEngine.advance(workflowId).catch(e => console.warn('[orch] restart advance 异常', e));
+}
+
 // WF_* 命令入口：经 bg-router 的 registerHandler 注册（前缀匹配 'WF_'）。
 // 原 SW 的 chrome.runtime.onMessage.addListener((msg)=>{...WF_...}) 整体包进回调；
 // 行为不变：任何 WF_* 先 orchEnsureWs（按需连），再据 msg.type 分发；每分支 return true 异步回应。
@@ -552,6 +590,16 @@ self.AgentSellerBg.registerHandler('WF_', (msg, _sender, sendResponse) => {
   }
   if (msg.type === 'WF_REVIEW_APPROVE') {
     orchReviewApprove((msg.data || {}).workflowId)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_DELETE') {
+    orchDeleteWorkflow((msg.data || {}).workflowId)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_RESTART') {
+    orchRestartWorkflow((msg.data || {}).workflowId, (msg.data || {}).fromStep)
       .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }

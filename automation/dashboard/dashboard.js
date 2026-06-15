@@ -80,9 +80,17 @@ function onSelectStep(id) {
   renderStepList(stepMount, selectActiveWorkflow(store.getState().skeleton.batch), selectedStepId, onSelectStep);
 }
 
-// HITL 动作占位：本 Plan 仅 toast 提示，真实 message→background 回路留后续
-function onHitlAction(kind, hitl) {
-  console.log('[dashboard] HITL action（占位，回路待 Plan）：', kind, hitl?.id);
+// HITL 动作 → WF_* 回路：buildHitlMessage 映射后 sendMessage；回填校验失败 alert 提示。
+// onAction(act, {getField}) 由 hitl-queue 按钮触发；getField 闭包读 dashboard 输入框值（dashboard.js 不碰 DOM）。
+function onHitlAction(act, payload) {
+  const wf = selectActiveWorkflow(store.getState().skeleton.batch);
+  if (!wf) return;
+  const view = window.__AS_OVERLAY_VIEW__;
+  const getField = (payload && payload.getField) || (() => '');
+  const msg = window.__AS_DASH_HITL_ACTION__.buildHitlMessage(act, wf, getField, view, payload || {});
+  if (msg.error) { window.alert(msg.error.map(e => e.msg).join('\n')); return; }
+  try { chrome.runtime.sendMessage(msg); }
+  catch (e) { console.warn('[dashboard] HITL 发送失败', e); }
 }
 
 // 全量重渲骨架部分（topbar/queue/overview/step/hitl）；大脑流独立 update（增量）
