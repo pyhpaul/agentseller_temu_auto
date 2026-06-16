@@ -148,6 +148,113 @@ async function orchReviewApprove(workflowId) {
   await orchEngine.advance(workflowId);
 }
 
+// ══ publish 两段闸驱动（spec 2026-06-16）══════════════════════════════════════
+// engine 在 await-check 停下后，由 dashboard 经 WF_PUBLISH_CHECK / WF_PUBLISH_EXEC / WF_SKIP 驱动：
+// 检查（CAP_CHECK 回结果）→ block 转 blocked / 通过转 await-publish（自动发布则内联连发）→ 发布（CAP_PUBLISH_EXEC）。
+const PUBLISH_AUTO_KEY = 'as_publish_autopublish';
+
+// 检查（phase await-check）。持久化 autoPublish；找编辑页 tab 发 CAP_CHECK；
+// block→phase blocked；通过+autoPublish→内联发布；通过+手动→phase await-publish。
+async function orchPublishCheck(workflowId, autoPublish) {
+  try { await chrome.storage.local.set({ [PUBLISH_AUTO_KEY]: !!autoPublish }); } catch (_) {}
+  const found = await findDxmEditTab();
+  if (found.error) { await orchPublishSetError(workflowId, found.error); return; }
+  let resp;
+  try {
+    resp = await orchSendStepCommand(found.tab.id, 'CAP_CHECK', {}, { timeoutMs: 60000 });
+  } catch (e) {
+    await orchPublishSetError(workflowId, { category: 'read', code: 'CAP_CHECK_CMD_FAILED', message: '检查命令未送达:' + String(e?.message || e), recoverable: true });
+    return;
+  }
+  if (!resp || resp.status !== 'done') {
+    await orchPublishSetError(workflowId, (resp && resp.error) || { category: 'read', code: 'CAP_CHECK_NO_RESP', message: '检查命令无响应', recoverable: true });
+    return;
+  }
+  const checkResult = resp.result || {};
+  const blocked = Array.isArray(checkResult.blocks) && checkResult.blocks.length > 0;
+  if (blocked) { await orchPublishSetPhase(workflowId, 'blocked', checkResult); return; }
+  if (autoPublish) { await orchPublishExec(workflowId); return; }   // 通过+自动 → 直接连发
+  await orchPublishSetPhase(workflowId, 'await-publish', checkResult);
+}
+
+// 发布（phase await-publish 点发布 / 自动发布内联）。成功 done+advance；失败回 await-publish 显错。
+async function orchPublishExec(workflowId) {
+  const found = await findDxmEditTab();
+  if (found.error) { await orchPublishSetError(workflowId, found.error); return; }
+  await orchMarkCommitting(workflowId, true);   // 不可逆提交点：发命令前标 committing
+  let resp;
+  try {
+    resp = await orchSendStepCommand(found.tab.id, 'CAP_PUBLISH_EXEC', {}, { timeoutMs: 60000 });
+  } catch (e) {
+    await orchPublishSetPublishError(workflowId, { code: 'CAP_PUBLISH_CMD_FAILED', message: '发布命令未送达:' + String(e?.message || e) });
+    return;
+  }
+  if (resp && resp.status === 'done') {
+    await orchQueue.enqueue(skeleton => {
+      const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+      if (!wf) return undefined;
+      const s = wf.steps[wf.cursor];
+      s.status = 'done'; s.committing = false; s.endedAt = Date.now(); s.result = resp.result || null; s.error = null;
+      Object.assign(wf.product, ORCH.engine.pickProduct(resp.result));
+      wf.status = 'running'; wf.hitl = null; wf.updatedAt = Date.now();
+      return skeleton;
+    });
+    await orchEngine.advance(workflowId);
+    return;
+  }
+  await orchPublishSetPublishError(workflowId, (resp && resp.error) || { code: 'CAP_PUBLISH_NO_RESP', message: '发布命令无响应' });
+}
+
+// 跳过当前步（测试期）：标 skipped + advance（decideNext 已支持 skipped→advance-cursor）。
+async function orchSkipStep(workflowId) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf || wf.status !== 'paused') return undefined;
+    const s = wf.steps[wf.cursor];
+    s.status = 'skipped'; s.committing = false; s.endedAt = Date.now();
+    wf.status = 'running'; wf.hitl = null; wf.updatedAt = Date.now();
+    return skeleton;
+  });
+  await orchEngine.advance(workflowId);
+}
+
+// publish hitl phase 转移（保持 paused，仅改 hitl）。
+async function orchPublishSetPhase(workflowId, phase, checkResult) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf || !wf.hitl || wf.hitl.kind !== 'publish') return undefined;
+    wf.steps[wf.cursor].committing = false;
+    wf.hitl.phase = phase;
+    if (checkResult !== undefined) wf.hitl.checkResult = checkResult;
+    wf.hitl.publishError = null;
+    wf.updatedAt = Date.now();
+    return skeleton;
+  });
+}
+// 发布失败：回 await-publish 显错（可重点发布）。
+async function orchPublishSetPublishError(workflowId, publishError) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf || !wf.hitl || wf.hitl.kind !== 'publish') return undefined;
+    wf.steps[wf.cursor].committing = false;
+    wf.hitl.phase = 'await-publish';
+    wf.hitl.publishError = publishError;
+    wf.updatedAt = Date.now();
+    return skeleton;
+  });
+}
+// 读/命令类硬错误（tab 没开等）→ step.error + error 卡（recoverable 可重试整步）。
+async function orchPublishSetError(workflowId, error) {
+  await orchQueue.enqueue(skeleton => {
+    const wf = ORCH.engine.findWorkflow(skeleton, workflowId);
+    if (!wf) return undefined;
+    const s = wf.steps[wf.cursor];
+    s.status = 'error'; s.committing = false; s.error = error;
+    wf.status = 'error'; wf.hitl = null; wf.updatedAt = Date.now();
+    return skeleton;
+  });
+}
+
 // 按 domain 抓当前页 innerText 快照（截断 6000）。尽力而为：无匹配 tab / 报错 → null（filler 仅凭 workflow 上下文）。
 async function orchCapturePageSnapshot(domain) {
   if (!domain) return null;
@@ -362,51 +469,41 @@ async function orchAdapterGenLabel(step, wf) {
   return { status: 'error', error: { category: st.category || 'read', code: st.code || 'AGL_FAILED', message: st.message || '标签生成流程失败', recoverable: true } };
 }
 
-// ── check_and_publish adapter（publish,✗不可逆·复用上游店小秘编辑页 tab）──────────────
+// ── 店小秘编辑页 tab 查找（publish 两段闸 CAP_CHECK/CAP_PUBLISH_EXEC 共用）──────────────
 // publish 实操页是【店小秘 dianxiaomi.com 编辑页】（规则选择器/发布 UX 全按店小秘 DOM 建，samples 为证）。
 // ⚠ check_and_publish 经 build union 也注入到 Temu，但选择器是店小秘专属、在 Temu 抓不到 → 必须走店小秘。
 // 数据流死结:wf.product 无店小秘商品 URL 锚点（店小秘编辑页 URL 不可由 spuId 推导）→ 不导航,query 找
 // collect_dxm 留的店小秘编辑页 tab。自动打开待后续（随 collect_dxm 自动化捕获店小秘编辑页 URL 一起做）。
-// 直接回报(检查+发布同 tab,无跨页);committing 发命令前粗标(检查 block 也转人工=填表缺口本需人工)。
-async function orchAdapterPublish(step, wf) {
-  // 1. 找上游店小秘编辑页 tab(url 含 dianxiaomi + edit;不导航,无 URL 锚点)
+// 返回 {tab} 或 {error}（统一错误形态供两段闸调用方落 step.error）。
+async function findDxmEditTab() {
   let tabs;
   try {
     tabs = await chrome.tabs.query({ url: '*://*.dianxiaomi.com/*' });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'PUBLISH_TAB_QUERY_FAILED', message: 'tab 查询失败:' + String(e?.message || e), recoverable: true } };
+    return { error: { category: 'read', code: 'PUBLISH_TAB_QUERY_FAILED', message: 'tab 查询失败:' + String(e?.message || e), recoverable: true } };
   }
   const editTab = (tabs || []).find(t => /edit/i.test(t.url || ''));
   if (!editTab) {
-    return { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持店小秘编辑页打开)', recoverable: true } };
+    return { error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持店小秘编辑页打开)', recoverable: true } };
   }
-  // 2. 激活编辑页 tab(前台防 Ant dropdown 后台 tab 不展开)
+  // 激活编辑页 tab(前台防 Ant dropdown 后台 tab 不展开)
   try {
     await chrome.tabs.update(editTab.id, { active: true });
     await new Promise(res => setTimeout(res, 500));
   } catch (e) {
     console.warn('[orch][publish] 激活编辑页 tab 失败,继续尝试', e);
   }
-  // 3. ★不可逆提交点:发命令前标 committing(粗粒度;检查 block 也标→恢复转人工=填表本需人工,无副作用)
-  await orchMarkCommitting(wf.id, true);
-  // 4. 发命令,直接回报(检查+发布同 tab,无跨页/无 storage)
-  let resp;
-  try {
-    resp = await orchSendStepCommand(editTab.id, 'CAP_PUBLISH', {}, { timeoutMs: 60000 });
-  } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'PUBLISH_CMD_FAILED', message: '发布命令未送达:' + String(e?.message || e), recoverable: false } };
-  }
-  return resp || { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_RESP', message: '发布命令无响应', recoverable: false } };
+  return { tab: editTab };
 }
 
-// adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。未接入 AUTO 步 → stub fallback。
+// adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。
+// publish 不在此表：两段闸由 WF_PUBLISH_CHECK/EXEC 驱动，不走 stepRunner（engine 在 await-check 停下，从不给 publish 标 reviewed）。
 const ORCH_ADAPTERS = {
   create_sku: orchAdapterCreateSku,
   create_po: orchAdapterCreatePo,
   pack_label: orchAdapterPackLabel,
   ship: orchAdapterShip,
   gen_label: orchAdapterGenLabel,
-  publish: orchAdapterPublish,
 };
 
 // 真实 stepRunner：dispatch 到 adapter；无 adapter 的 step.id 直接报错（真实链路拒绝任何模拟成功）。
@@ -605,6 +702,21 @@ self.AgentSellerBg.registerHandler('WF_', (msg, _sender, sendResponse) => {
   }
   if (msg.type === 'WF_RESTART') {
     orchRestartWorkflow((msg.data || {}).workflowId, (msg.data || {}).fromStep)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_PUBLISH_CHECK') {
+    orchPublishCheck((msg.data || {}).workflowId, !!(msg.data || {}).autoPublish)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_PUBLISH_EXEC') {
+    orchPublishExec((msg.data || {}).workflowId)
+      .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === 'WF_SKIP') {
+    orchSkipStep((msg.data || {}).workflowId)
       .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
