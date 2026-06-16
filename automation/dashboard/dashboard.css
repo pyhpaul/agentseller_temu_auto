@@ -255,6 +255,17 @@ body{
 .pg-btn{padding:1px 8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:5px;cursor:pointer}
 .pg-btn[disabled]{opacity:.4;cursor:default}
 .pg-total{margin-left:auto}
+/* 选中步详情面板（点环节列表某步→显示其产物/状态/报错/指引） */
+.step-detail .sd{display:flex;flex-direction:column;gap:6px;font-size:12px}
+.sd-status{color:#e6edf3}
+.sd-sec{margin-top:4px;font-weight:600;color:#8b949e}
+.sd-sec.err{color:#cf1322}
+.sd-kv{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid #21262d}
+.sd-kv .sd-k{color:#8b949e;min-width:96px;flex-shrink:0}
+.sd-kv .sd-v{color:#e6edf3;word-break:break-all}
+.sd-empty{color:#6e7681;font-style:italic}
+.sd-err{color:#ff7875;background:#2a1215;border:1px solid #5c1a1f;border-radius:5px;padding:6px 8px;word-break:break-all}
+.sd-time{margin-top:4px;color:#6e7681;font-size:11px}
 /* 操作指引行（每步卡顶部「📋 操作指引：…」）：告诉人工该做什么配合 */
 .hitl-guide{margin:6px 0;padding:7px 9px;background:#11253a;border:1px solid #1f4060;border-radius:6px;font-size:12px;line-height:1.5;color:#9fd0ff}
 /* publish 两段闸卡：自动发布勾选行 */

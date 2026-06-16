@@ -5,6 +5,7 @@ import { renderTopbar } from './components/topbar.js';
 import { renderQueueList } from './components/queue-list.js';
 import { renderOverviewBar } from './components/overview-bar.js';
 import { renderStepList } from './components/step-list.js';
+import { renderStepDetail } from './components/step-detail.js';
 import { createBrainStream } from './components/brain-stream.js';
 import { renderHitlQueue } from './components/hitl-queue.js';
 import { startStorageSource } from './state/storage-source.js';
@@ -25,8 +26,15 @@ const store = createStore();
 const contentEl = document.getElementById('content');
 const overviewMount = document.createElement('div');
 const stepMount = document.createElement('div');
+const stepDetailMount = document.createElement('div');   // 选中步详情（产物/状态/报错/指引）
 const brainMount = document.createElement('div');
 const hitlMount = document.createElement('div');
+
+// 左列：环节列表 + 选中步详情（点上一步可查看其产物）
+const lCol = document.createElement('div');
+lCol.className = 'l-col';
+lCol.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+lCol.append(stepMount, stepDetailMount);
 
 const rCol = document.createElement('div');
 rCol.className = 'r-col';
@@ -35,7 +43,7 @@ rCol.append(brainMount, hitlMount);
 
 const l2cols = document.createElement('div');
 l2cols.className = 'l2-cols';
-l2cols.append(stepMount, rCol);
+l2cols.append(lCol, rCol);
 
 contentEl.append(overviewMount, l2cols);
 
@@ -105,8 +113,10 @@ function onSelectWorkflow(id) {
 }
 
 function onSelectStep(id) {
-  selectedStepId = id;
-  renderStepList(stepMount, selectActiveWorkflow(store.getState().skeleton.batch), selectedStepId, onSelectStep);
+  selectedStepId = (selectedStepId === id) ? null : id;   // 再点同一步 → 取消选中（收起详情）
+  const wf = selectActiveWorkflow(store.getState().skeleton.batch);
+  renderStepList(stepMount, wf, selectedStepId, onSelectStep);
+  renderStepDetail(stepDetailMount, wf, selectedStepId);
 }
 
 // HITL 动作 → WF_* 回路：buildHitlMessage 映射后 sendMessage；回填校验失败 alert 提示。
@@ -129,6 +139,7 @@ function renderAll(state) {
   renderQueue(state);
   renderOverviewBar(overviewMount, wf);
   renderStepList(stepMount, wf, selectedStepId, onSelectStep);
+  renderStepDetail(stepDetailMount, wf, selectedStepId);
   renderHitlQueue(hitlMount, wf, onHitlAction);
   brainStream.update(state);
 }
