@@ -371,6 +371,15 @@ test('buildPublishHitl 形态', () => {
   assert.strictEqual(h.stepId, 'publish');
 });
 
+test('三个 builder 都把 step.guide 带进 hitl（操作指引上卡）', () => {
+  const step = { id: 'x', label: 'L', guide: '去做某事再回来点确认' };
+  assert.strictEqual(buildHitl(step, {}).guide, '去做某事再回来点确认');
+  assert.strictEqual(buildReviewHitl(step, {}).guide, '去做某事再回来点确认');
+  assert.strictEqual(buildPublishHitl(step, {}).guide, '去做某事再回来点确认');
+  // 无 guide → 空串（非 undefined）
+  assert.strictEqual(buildHitl({ id: 'y', label: 'L' }, {}).guide, '');
+});
+
 test('reviewGate：可逆步(reversible:true) 不复核', async () => {
   const store = fakeStore(mkSkeleton([mkStep({ id: 'sku', reversible: true })]));
   const queue = makeMutationQueue(store.read, store.write);

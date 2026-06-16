@@ -45,7 +45,7 @@
       keyValues = m.ok ? m.display : { '核价': m.reason };
     }
     return {
-      action: step.label, stepId: step.id,
+      action: step.label, stepId: step.id, guide: step.guide || '',
       keyValues, reviewedBrief: '',
       editable: fields.length > 0,
       fieldType: null, options: null,   // 保留兼容（recovery 直构造不依赖这两）
@@ -61,7 +61,7 @@
   function buildPublishHitl(step, opts) {
     opts = opts || {};
     return {
-      action: step.label, stepId: step.id, kind: 'publish',
+      action: step.label, stepId: step.id, kind: 'publish', guide: step.guide || '',
       phase: opts.phase || 'await-check',
       checkResult: opts.checkResult || null,
       publishError: opts.publishError || null,
@@ -74,7 +74,7 @@
   // 不可逆复核 HOLD → review-kind HITL（concerns + reason；editable:false，人工确认提交/中止）
   function buildReviewHitl(step, verdict) {
     return {
-      action: '不可逆复核：' + step.label, stepId: step.id, kind: 'review',
+      action: '不可逆复核：' + step.label, stepId: step.id, kind: 'review', guide: step.guide || '',
       keyValues: {}, reviewedBrief: '',
       concerns: (verdict && verdict.concerns) || [],
       reason: (verdict && verdict.reason) || '',

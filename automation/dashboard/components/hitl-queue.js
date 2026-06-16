@@ -3,6 +3,11 @@
 // 复用 window.__AS_OVERLAY_VIEW__ 纯逻辑（isReviewHitl/hasSuggestion/mergeSuggestion）。
 import { h, icon } from './dom.js';
 
+// 操作指引行（hitl.guide）：告诉人工这一步该做什么来配合。无 guide → null（h 会跳过 null 子节点）。
+function guideRow(hitl) {
+  return hitl && hitl.guide ? h('div', { class: 'hitl-guide' }, '📋 操作指引：' + hitl.guide) : null;
+}
+
 function kvRows(keyValues) {
   const out = [];
   for (const [k, v] of Object.entries(keyValues || {})) {
@@ -65,7 +70,7 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
   }
   // 复核型（不可逆 hold）
   if (view.isReviewHitl(hitl)) {
-    const body = [head];
+    const body = [head, guideRow(hitl)];
     if (hitl.reason) body.push(h('div', { class: 'review-reason' }, hitl.reason));
     if (Array.isArray(hitl.concerns) && hitl.concerns.length) {
       body.push(h('ul', { class: 'concerns' }, hitl.concerns.map(c => h('li', {}, String(c)))));
@@ -80,6 +85,7 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
   if (hitl.editable && Array.isArray(hitl.fields) && hitl.fields.length) {
     return h('div', { class: 'hitl-card fill' }, [
       head,
+      guideRow(hitl),
       ...fillRows(hitl, view),
       h('div', { class: 'hitl-acts' }, [
         actBtn('ok', 'ic-check', '提交', 'submit', onAction, getField),
@@ -91,6 +97,7 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
   // 纯确认型
   return h('div', { class: 'hitl-card confirm' }, [
     head,
+    guideRow(hitl),
     h('div', { class: 'kv' }, kvRows(hitl.keyValues)),
     h('div', { class: 'hitl-acts' }, [
       actBtn('ok', 'ic-check', '确认完成', 'confirm', onAction, getField),
@@ -105,7 +112,7 @@ function publishCard(hitl, head, onAction) {
   const phase = hitl.phase || 'await-check';
   const cr = hitl.checkResult || {};
   const skipBtn = h('div', { class: 'btn no', onClick: () => onAction && onAction('skip', {}) }, [icon('ic-slash'), ' 跳过本步']);
-  const body = [head];
+  const body = [head, guideRow(hitl)];
 
   if (phase === 'await-check') {
     const autoDefault = !!window.__AS_PUBLISH_AUTO__;

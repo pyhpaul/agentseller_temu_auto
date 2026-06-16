@@ -157,3 +157,13 @@ test('buildInitialWorkflow 透传 publish 步的 gate 字段（防死代码）',
   const sel = wf.steps.find(s => s.id === 'select_product');
   assert.strictEqual(sel.gate, null, '未声明 gate 的步透传为 null（非 undefined）');
 });
+
+test('每步都有非空 guide（人工操作指引）且经工厂透传到 step 实例', () => {
+  STEP_DEFS.forEach(d => {
+    assert.ok(typeof d.guide === 'string' && d.guide.length > 0, `${d.id} STEP_DEFS 应有非空 guide`);
+  });
+  const wf = buildInitialWorkflow({}, () => 'w1');
+  wf.steps.forEach(s => {
+    assert.ok(typeof s.guide === 'string' && s.guide.length > 0, `${s.id} 实例应透传非空 guide`);
+  });
+});
