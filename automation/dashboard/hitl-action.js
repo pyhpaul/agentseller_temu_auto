@@ -8,6 +8,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
   // act: confirm(纯确认) / submit(回填提交) / approve(复核确认) / reject / retry / refresh / abort / delete / restart
+  //      / publish-check(两段闸检查,带 autoPublish) / publish-exec(两段闸发布) / skip(跳过本步)
   // opts: restart 用 opts.fromStep（重头=0 / 当前步=cursor / 任意步=下拉值）。
   // 回填 submit 校验失败返回 {error:[{key,msg}]}（调用方提示，不发消息）；其余返回 {type,data}。
   function buildHitlMessage(act, wf, getField, view, opts) {
@@ -30,6 +31,9 @@
       case 'abort':   return { type: 'WF_ABORT',         data: { workflowId } };
       case 'delete':  return { type: 'WF_DELETE',        data: { workflowId } };
       case 'restart': return { type: 'WF_RESTART',       data: { workflowId, fromStep: opts.fromStep | 0 } };
+      case 'publish-check': return { type: 'WF_PUBLISH_CHECK', data: { workflowId, autoPublish: !!opts.autoPublish } };
+      case 'publish-exec':  return { type: 'WF_PUBLISH_EXEC',  data: { workflowId } };
+      case 'skip':          return { type: 'WF_SKIP',          data: { workflowId } };
       default: return { error: [{ msg: '未知动作 ' + act }] };
     }
   }
