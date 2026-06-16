@@ -94,6 +94,13 @@ test('pickProduct：忽略未白名单字段、null 不覆盖', () => {
   assert.strictEqual(out.poNo, 'PO9');
 });
 
+test('pickProduct：提取核价字段 returnPrice/cost1688/domesticShipping（④⑤回填 → product）', () => {
+  const out = pickProduct({ returnPrice: '100', cost1688: '60', domesticShipping: '5' });
+  assert.strictEqual(out.returnPrice, '100');   // ④ 填的参考申报价必须进 product，否则 ⑥ 核价读不到
+  assert.strictEqual(out.cost1688, '60');
+  assert.strictEqual(out.domesticShipping, '5');
+});
+
 test('advance：多 auto 步连续推进到末尾 done', async () => {
   const { engine, store } = setupEngine(
     mkSkeleton([mkStep({ id: 'a' }), mkStep({ id: 'b' }), mkStep({ id: 'c' })]),
