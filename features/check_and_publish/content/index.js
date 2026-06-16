@@ -686,10 +686,11 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 编排器桥接（orch）：命令处理器 CAP_PUBLISH。检查+发布同 tab、直接回报（无跨页/无 storage）。
-  // 填表缺口降级：检查 block→validate 错误（含哪些字段）→转人工。复用 runChecks/bucketize/clickPublishImmediate。
+  // 编排器桥接（orch）：CAP_CHECK（只检查回结构化结果）+ CAP_PUBLISH_EXEC（只发布）。
+  // 两段化：检查与发布拆开，dashboard 上人工看检查结果再决定发布（spec 2026-06-16）。
+  // 复用 runChecks/bucketize/clickPublishImmediate；手动 Hub 路径(onCheck/onPublish)不受影响。
   // ═══════════════════════════════════════════════════════════════════════════
-  async function capHandlePublish() {
+  async function capHandleCheck() {
     if (!isEditPage()) {
       return { status: 'error', error: { category: 'read', code: 'CAP_NOT_EDIT_PAGE', message: '当前 tab 非店小秘编辑页（URL 不含 edit）', recoverable: true } };
     }
@@ -700,21 +701,38 @@
     } catch (e) {
       return { status: 'error', error: { category: 'read', code: 'CAP_CHECK_THREW', message: '合规检查异常：' + ((e && e.message) || e), recoverable: true } };
     }
-    if (buckets.blocks.length) {
-      const names = buckets.blocks.map(b => b.rule.name).join('、');
-      return { status: 'error', error: { category: 'validate', code: 'CAP_CHECK_BLOCKED', message: '合规检查未过（' + buckets.blocks.length + ' 阻断）：' + names + '。需人工修正/填表后重试', recoverable: true } };
+    // block 是正常检查产出（非 error）→ 回结构化结果，由 bg 判 phase（blocked / await-publish）。
+    return {
+      status: 'done',
+      result: {
+        passCount: buckets.passes.length,
+        blocks: buckets.blocks.map(b => ({ id: b.rule.id, name: b.rule.name, reason: b.reason || '' })),
+        warns: buckets.warns.map(w => ({ id: w.rule.id, name: w.rule.name, reason: w.reason || '' })),
+        skippeds: buckets.skippeds.length,
+      },
+      error: null,
+    };
+  }
+
+  async function capHandlePublishExec() {
+    if (!isEditPage()) {
+      return { status: 'error', error: { category: 'read', code: 'CAP_NOT_EDIT_PAGE', message: '当前 tab 非店小秘编辑页（URL 不含 edit）', recoverable: true } };
     }
     try {
       await clickPublishImmediate();
     } catch (e) {
       return { status: 'error', error: { category: 'read', code: 'CAP_PUBLISH_FAILED', message: '立即发布失败：' + ((e && e.message) || e), recoverable: false } };
     }
-    return { status: 'done', result: { published: true, warns: buckets.warns.map(w => w.rule.name), skipped: buckets.skippeds.length }, error: null };
+    return { status: 'done', result: { published: true }, error: null };
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.type !== 'CAP_PUBLISH') return;
-    capHandlePublish()
+    if (!msg) return;
+    let handler = null;
+    if (msg.type === 'CAP_CHECK') handler = capHandleCheck;
+    else if (msg.type === 'CAP_PUBLISH_EXEC') handler = capHandlePublishExec;
+    else return;
+    handler()
       .then(sendResponse)
       .catch((e) => sendResponse({ status: 'error', error: { category: 'read', code: 'CAP_HANDLER_THREW', message: String((e && e.message) || e), recoverable: false } }));
     return true;  // 异步 sendResponse
