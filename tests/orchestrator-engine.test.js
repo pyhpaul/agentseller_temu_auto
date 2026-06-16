@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl, buildReviewHitl, pickProduct } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -421,4 +421,78 @@ test('buildReviewHitl：review-kind + concerns', () => {
   assert.strictEqual(h.editable, false);
   assert.deepStrictEqual(h.concerns, ['c1']);
   assert.strictEqual(h.targetUrl, 'u');
+});
+
+// ── 利润率计算 computeMargin（确认申报价步核价分析；毛利率口径=(申报-成本-运费)/申报）──
+test('computeMargin：正常 → 毛利率=(申报-成本-运费)/申报，display 含各项', () => {
+  const m = computeMargin({ returnPrice: 100, cost1688: 60, domesticShipping: 5 });
+  assert.strictEqual(m.ok, true);
+  assert.ok(Math.abs(m.value - 0.35) < 1e-9);            // (100-60-5)/100
+  assert.strictEqual(m.display['毛利率'], '35.0%');
+  assert.strictEqual(m.display['参考申报价'], '100');
+  assert.strictEqual(m.display['1688成本价'], '60');
+  assert.strictEqual(m.display['国内运费'], '5');
+});
+
+test('computeMargin：字符串入参（HITL 输入框存 string）也解析', () => {
+  const m = computeMargin({ returnPrice: '80', cost1688: '50', domesticShipping: '0' });
+  assert.strictEqual(m.ok, true);
+  assert.ok(Math.abs(m.value - 0.375) < 1e-9);           // (80-50)/80
+});
+
+test('computeMargin：负利润 → ok:true 但 value/毛利率为负', () => {
+  const m = computeMargin({ returnPrice: 50, cost1688: 60, domesticShipping: 0 });
+  assert.strictEqual(m.ok, true);
+  assert.ok(m.value < 0);
+  assert.strictEqual(m.display['毛利率'], '-20.0%');     // (50-60)/50
+});
+
+test('computeMargin：运费缺省按 0 计', () => {
+  const m = computeMargin({ returnPrice: 100, cost1688: 60 });
+  assert.strictEqual(m.ok, true);
+  assert.ok(Math.abs(m.value - 0.40) < 1e-9);
+  assert.strictEqual(m.display['国内运费'], '0');
+});
+
+test('computeMargin：缺参考申报价 → ok:false 带 reason', () => {
+  const m = computeMargin({ cost1688: 60 });
+  assert.strictEqual(m.ok, false);
+  assert.ok(m.reason);
+});
+
+test('computeMargin：缺 1688 成本价 → ok:false', () => {
+  assert.strictEqual(computeMargin({ returnPrice: 100 }).ok, false);
+});
+
+test('computeMargin：申报价≤0 不能做分母 → ok:false', () => {
+  assert.strictEqual(computeMargin({ returnPrice: 0, cost1688: 10 }).ok, false);
+  assert.strictEqual(computeMargin({ returnPrice: -5, cost1688: 10 }).ok, false);
+});
+
+test('computeMargin：非数字串 → ok:false', () => {
+  assert.strictEqual(computeMargin({ returnPrice: 'abc', cost1688: 60 }).ok, false);
+});
+
+// ── buildHitl 对 analysis:'margin' 步注入核价 keyValues（复用纯确认型卡渲染）──
+test('buildHitl：analysis=margin + 齐全 product → keyValues 含毛利率，纯确认型', () => {
+  const step = { id: 'confirm_declare_price', label: '确认申报价格', analysis: 'margin' };
+  const h = buildHitl(step, { returnPrice: 100, cost1688: 60, domesticShipping: 5 });
+  assert.strictEqual(h.keyValues['毛利率'], '35.0%');
+  assert.strictEqual(h.keyValues['参考申报价'], '100');
+  assert.strictEqual(h.editable, false);                 // 无 hitlSpec.fields → 纯确认型卡
+});
+
+test('buildHitl：analysis=margin + 缺字段 → keyValues 提示无法核价', () => {
+  const h = buildHitl({ id: 'confirm_declare_price', label: 'X', analysis: 'margin' }, { returnPrice: 100 });
+  assert.ok(/无法核价/.test(h.keyValues['核价']));
+});
+
+test('buildHitl：analysis=margin 但不传 product → 不抛、提示无法核价（向后兼容）', () => {
+  const h = buildHitl({ id: 'confirm_declare_price', label: 'X', analysis: 'margin' });
+  assert.ok(h.keyValues['核价']);
+});
+
+test('buildHitl：非 analysis 步传 product → keyValues 不被污染（仍空）', () => {
+  const h = buildHitl({ id: 'wait_payment', label: '等付款' }, { returnPrice: 100, cost1688: 60 });
+  assert.deepStrictEqual(h.keyValues, {});
 });

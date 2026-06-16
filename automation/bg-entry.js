@@ -476,6 +476,11 @@ async function orchHitlConfirm({ workflowId, result }) {
     const s = wf.steps[wf.cursor];
     s.status = 'done';
     if (result) { s.result = result; Object.assign(wf.product, ORCH.engine.pickProduct(result)); }
+    // 确认申报价步（analysis:'margin'）：落毛利率快照入 product（核价决策留痕；确定性算，不依赖前端传值）。
+    if (s.analysis === 'margin') {
+      const m = ORCH.engine.computeMargin(wf.product);
+      if (m.ok) wf.product.grossMargin = m.value;
+    }
     if (wf.hitl) wf.hitl.status = 'confirmed';
     wf.status = 'running'; wf.updatedAt = Date.now();
     return skeleton;

@@ -14,7 +14,7 @@
   const { decideNext } = sm;
   const { decideRecovery } = rec;
 
-  const MAX_LOOP = 100;   // advance 循环上限防御（13 步 + cursor 推进正常 < 30 轮）
+  const MAX_LOOP = 100;   // advance 循环上限防御（14 步 + cursor 推进正常 < 30 轮）
   const MAX_RETRY = 2;    // self-heal 重试上限红线（spec §6；与 brain/diagnoser MAX_RETRY 对齐）
 
   function findWorkflow(skeleton, workflowId) {
@@ -34,12 +34,18 @@
 
   // HITL step → workflow.hitl 摘要。带 hitlSpec.fields 的步为回填型（editable+fields），否则纯确认。
   // recovery 的 hitl 在 recover 内直接构造、不走这（其 editable=false 语义不变）。targetUrl 供浮层「前往」。
-  function buildHitl(step) {
+  function buildHitl(step, product) {
     const spec = step.hitlSpec || null;
     const fields = (spec && Array.isArray(spec.fields)) ? spec.fields : [];
+    // analysis:'margin' 步 → 算核价分析填 keyValues，复用纯确认型卡 kvRows 渲染（零 dashboard 改动）。
+    let keyValues = {};
+    if (step.analysis === 'margin') {
+      const m = computeMargin(product || {});
+      keyValues = m.ok ? m.display : { '核价': m.reason };
+    }
     return {
       action: step.label, stepId: step.id,
-      keyValues: {}, reviewedBrief: '',
+      keyValues, reviewedBrief: '',
       editable: fields.length > 0,
       fieldType: null, options: null,   // 保留兼容（recovery 直构造不依赖这两）
       fields,
@@ -58,6 +64,36 @@
       editable: false, fields: [],
       targetUrl: (step.target && step.target.url) || null,
       status: 'pending',
+    };
+  }
+
+  // 利润率计算（确定性纯函数）：毛利率口径 = (参考申报价 − 1688成本价 − 国内运费) / 参考申报价。
+  // 确认申报价步（analysis:'margin'）的核价分析：buildHitl 用它填 keyValues 展示，orchHitlConfirm 用它落 grossMargin 快照。
+  // 入参值可能是 string（HITL 输入框存 string）或 number；运费缺省/非数按 0；
+  // 申报价或成本缺/非数、申报价≤0（不能做分母）→ ok:false（无法核价）。
+  function computeMargin(product) {
+    const num = (v) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = typeof v === 'number' ? v : parseFloat(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const p = product || {};
+    const rp = num(p.returnPrice);
+    const cost = num(p.cost1688);
+    const ship = num(p.domesticShipping) || 0;            // 运费缺省/非数 → 0
+    if (rp === null || rp <= 0 || cost === null) {
+      return { ok: false, reason: '数据不全无法核价（需参考申报价>0 + 1688成本价）' };
+    }
+    const value = (rp - cost - ship) / rp;
+    return {
+      ok: true,
+      value,
+      display: {
+        '参考申报价': String(rp),
+        '1688成本价': String(cost),
+        '国内运费': String(ship),
+        '毛利率': (value * 100).toFixed(1) + '%',
+      },
     };
   }
 
@@ -140,7 +176,7 @@
             await mutateWorkflow(workflowId, w => {
               w.steps[w.cursor].status = 'paused';
               w.status = 'paused';
-              w.hitl = buildHitl(w.steps[w.cursor]);
+              w.hitl = buildHitl(w.steps[w.cursor], w.product);   // 传 product 供 analysis 步算核价 keyValues
               w.updatedAt = now();
             });
             onPaused(workflowId);   // fire-forget：bg 据此为回填型步请求大脑提议（非回填步 bg 端自行过滤）
@@ -218,7 +254,7 @@
         await mutateWorkflow(workflowId, w => {
           const s = w.steps[w.cursor];
           s.status = 'paused'; w.status = 'paused';
-          w.hitl = buildHitl(s);
+          w.hitl = buildHitl(s, w.product);
           w.hitl.reviewedBrief = (patch.reason || '') + '（大脑转人工）';
           w.updatedAt = now();
         });
@@ -228,5 +264,5 @@
     return { advance, recover, applyDiagnosis };
   }
 
-  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl };
+  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl, computeMargin };
 });
