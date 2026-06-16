@@ -31,7 +31,7 @@
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
       ] } },
-    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, manualGate: true, domain: 'dianxiaomi.com' },
+    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, gate: 'publish', domain: 'dianxiaomi.com' },
     { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
       // 等 Temu 后台审核返回的参考申报价，人工从商家中心抄填（大脑无从推导 → noFill）。
       hitlSpec: { noFill: true, fields: [
@@ -82,7 +82,7 @@
         id: d.id, label: d.label, feature: d.feature, type: d.type,
         reversible: d.reversible, domain: d.domain, target: d.target || null,
         hitlSpec: d.hitlSpec || null,
-        manualGate: d.manualGate || false, analysis: d.analysis || null,
+        gate: d.gate || null, analysis: d.analysis || null,
         status: 'pending', startedAt: null, endedAt: null,
         result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0, reviewed: false,
       })),
