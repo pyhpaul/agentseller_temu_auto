@@ -6,8 +6,10 @@
 
 - **Feature ID**: `check_and_publish`
 - **作用**: 店小秘 ERP 商品编辑页的合规预检 + 模拟发布。检查通过后用户二次确认才触发店小秘原生「发布」按钮下拉 → 立即发布
-- **触发域名**: `*.dianxiaomi.com`（URL 含 `edit` 才放行检查动作）
-- **触发动作**: FAB → Hub → ✅ 检查与发布 → 点「检查并发布」按钮
+- **触发域名（实操）**: `*.dianxiaomi.com`（URL 含 `edit` 才放行）。**规则选择器/发布 UX 全按店小秘 DOM 建**（`samples/total_dom.txt` 是店小秘编辑页整页 DOM，2026-05-20 抓取，零 Temu 痕迹）。
+- **⚠️ 只在店小秘正确工作，别在 Temu 用**: build 把所有 feature 的 `content_matches` **求并集**注入同一 content_scripts 条目，故本 feature 的 index.js 也会出现在 Temu（agentseller.temu.com 等）域，`isEditPage()` 只看 url 含 `edit`（**域名无关**）→ 按钮也会冒出来。但发布相关选择器是**店小秘专属**（`button.btn-green` 含「发布」/`.ant-dropdown-menu-item[title="立即发布"]`/`.category-list`），在 Temu 抓不到、实际不工作。**publish 实操页就是店小秘。**（曾一度误判为 Temu，靠 samples 证据纠正回来。）
+- **自动化（orchestrator publish 步）**: `orchAdapterPublish` 找 collect_dxm 留下的店小秘编辑页 tab（url 含 `dianxiaomi` + `edit`）发 `CAP_PUBLISH`。店小秘编辑页 URL **不可由 spuId 推导**（无锚点）→ 需保持编辑页打开；自动打开编辑页**待后续**（随 collect_dxm 自动化捕获店小秘编辑页 URL 一起做）。
+- **触发动作（手动）**: FAB → Hub → ✅ 检查与发布 → 点「检查并发布」按钮
 
 ## feature.json
 

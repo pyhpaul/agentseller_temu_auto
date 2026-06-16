@@ -21,3 +21,7 @@ Thumbs.db
 
 # 密钥（chrome extension key 的 RSA 私钥；公钥已通过 manifest.template.json 的 "key" 字段公开）
 build/.keys/
+
+# 本地密钥/配置（含大脑真模型 API key；dev 持久化，绝不提交）
+.env.local
+.env

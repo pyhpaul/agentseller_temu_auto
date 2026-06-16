@@ -1,5 +1,5 @@
 // check_and_publish/content/index.js
-// 店小秘商品发布页：合规检查 + 模拟发布
+// 店小秘 dianxiaomi.com 商品编辑页：合规检查 + 模拟发布（规则选择器全按店小秘 DOM 建，samples 为证）
 // 流程：用户点「检查并发布」→ 跑所有 RULES → block 阻断 / 全过则二次确认 → 点「发布」下拉中的「立即发布」
 ;(function () {
   'use strict';
