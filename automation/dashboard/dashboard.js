@@ -136,6 +136,18 @@ function renderAll(state) {
 // 订阅 store：任一变更触发重渲
 store.subscribe(renderAll);
 
+// publish 自动发布开关：dashboard 读 storage 作 checkbox 初态（bg 在 WF_PUBLISH_CHECK 时写回）。
+// 用全局而非 store：它是 UI 偏好（治本次/记忆），不进权威骨架。
+window.__AS_PUBLISH_AUTO__ = false;
+try {
+  chrome.storage.local.get('as_publish_autopublish')
+    .then(o => { window.__AS_PUBLISH_AUTO__ = !!o.as_publish_autopublish; renderAll(store.getState()); })
+    .catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.as_publish_autopublish) window.__AS_PUBLISH_AUTO__ = !!changes.as_publish_autopublish.newValue;
+  });
+} catch (_) {}
+
 // 首屏渲染（store 初始为空 batch，先渲空态，源接入后再重渲）
 renderAll(store.getState());
 

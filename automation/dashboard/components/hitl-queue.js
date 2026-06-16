@@ -59,6 +59,10 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
     h('span', { class: 'act' }, hitl.action || '待确认'),
     h('span', { class: 'loc' }, locText),
   ]);
+  // publish 两段闸（kind:'publish'）：phase await-check / blocked / await-publish
+  if (hitl.kind === 'publish') {
+    return publishCard(hitl, head, onAction);
+  }
   // 复核型（不可逆 hold）
   if (view.isReviewHitl(hitl)) {
     const body = [head];
@@ -93,6 +97,53 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
       actBtn('no', 'ic-x', '拒绝', 'reject', onAction, getField),
     ]),
   ]);
+}
+
+// publish 两段闸卡：await-check（检查+自动发布勾选+跳过）/ blocked（阻断列表+重检+跳过）/ await-publish（通过+发布+跳过）。
+// 自动发布勾选在点检查前读 → 治当前次；初态来自 window.__AS_PUBLISH_AUTO__（dashboard.js 从 storage seed）。
+function publishCard(hitl, head, onAction) {
+  const phase = hitl.phase || 'await-check';
+  const cr = hitl.checkResult || {};
+  const skipBtn = h('div', { class: 'btn no', onClick: () => onAction && onAction('skip', {}) }, [icon('ic-slash'), ' 跳过本步']);
+  const body = [head];
+
+  if (phase === 'await-check') {
+    const autoDefault = !!window.__AS_PUBLISH_AUTO__;
+    body.push(h('div', { class: 'review-reason' }, '请先人工打开店小秘商品编辑页（URL 含 edit），再点检查。'));
+    const cb = h('input', autoDefault
+      ? { type: 'checkbox', id: 'dash-publish-auto', class: 'pub-auto', checked: 'checked' }
+      : { type: 'checkbox', id: 'dash-publish-auto', class: 'pub-auto' });
+    body.push(h('label', { class: 'pub-auto-row' }, [cb, ' 检查通过后自动发布']));
+    body.push(h('div', { class: 'hitl-acts' }, [
+      h('div', { class: 'btn ok', onClick: () => {
+        const el = document.getElementById('dash-publish-auto');
+        onAction && onAction('publish-check', { autoPublish: !!(el && el.checked) });
+      } }, [icon('ic-check'), ' 检查']),
+      skipBtn,
+    ]));
+  } else if (phase === 'blocked') {
+    const items = [...(cr.blocks || []).map(b => ['✗ 阻断', b.name, b.reason]),
+                   ...(cr.warns || []).map(w => ['⚠ 警告', w.name, w.reason])];
+    body.push(h('div', { class: 'review-reason' }, `检查未通过：${(cr.blocks || []).length} 阻断 / ${(cr.warns || []).length} 警告`));
+    body.push(h('ul', { class: 'concerns' }, items.map(([tag, name, reason]) => h('li', {}, `${tag} ${name}${reason ? '：' + reason : ''}`))));
+    body.push(h('div', { class: 'hitl-acts' }, [
+      h('div', { class: 'btn edit', onClick: () => onAction && onAction('publish-check', { autoPublish: false }) }, [icon('ic-refresh'), ' 重新检查']),
+      skipBtn,
+    ]));
+  } else {   // await-publish
+    body.push(h('div', { class: 'review-reason' }, `✓ 检查通过（${cr.passCount || 0} 项）${(cr.warns || []).length ? '，' + cr.warns.length + ' 警告' : ''}`));
+    if ((cr.warns || []).length) {
+      body.push(h('ul', { class: 'concerns' }, cr.warns.map(w => h('li', {}, `⚠ ${w.name}${w.reason ? '：' + w.reason : ''}`))));
+    }
+    if (hitl.publishError) {
+      body.push(h('div', { class: 'review-reason', style: 'color:var(--st-error,#cf1322)' }, '上次发布失败：' + (hitl.publishError.message || '')));
+    }
+    body.push(h('div', { class: 'hitl-acts' }, [
+      h('div', { class: 'btn ok', onClick: () => onAction && onAction('publish-exec', {}) }, [icon('ic-check'), ' 发布']),
+      skipBtn,
+    ]));
+  }
+  return h('div', { class: 'hitl-card publish' }, body);
 }
 
 // error 卡：分层错误 + 重试(recoverable)/转人工
