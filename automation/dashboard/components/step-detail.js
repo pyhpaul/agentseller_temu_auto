@@ -21,7 +21,7 @@ function kvRows(obj) {
     ]));
 }
 
-export function renderStepDetail(mountEl, workflow, selectedStepId) {
+export function renderStepDetail(mountEl, workflow, selectedStepId, onClose) {
   if (!workflow || !selectedStepId) { mountEl.replaceChildren(); return; }
   const step = (workflow.steps || []).find(s => s.id === selectedStepId);
   if (!step) { mountEl.replaceChildren(); return; }
@@ -46,10 +46,11 @@ export function renderStepDetail(mountEl, workflow, selectedStepId) {
   // 耗时
   inner.push(h('div', { class: 'sd-time' }, '开始 ' + fmtTime(step.startedAt) + ' · 结束 ' + fmtTime(step.endedAt)));
 
+  const head = h('div', { class: 'panel-head' }, [
+    h('span', {}, '🔎 步骤详情 · ' + step.label),
+    h('div', { class: 'btn no', style: 'margin-left:auto', onClick: () => onClose && onClose() }, '↩ 返回人工介入'),
+  ]);
   mountEl.replaceChildren(
-    h('div', { class: 'panel step-detail' }, [
-      h('div', { class: 'panel-head' }, '🔎 步骤详情 · ' + step.label),
-      h('div', { class: 'panel-body sd' }, inner),
-    ]),
+    h('div', { class: 'panel step-detail' }, [head, h('div', { class: 'panel-body sd' }, inner)]),
   );
 }
