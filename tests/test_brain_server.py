@@ -161,7 +161,8 @@ def test_review_request_returns_verdict():
             async with websockets.connect("ws://localhost:{}".format(port)) as bg:
                 await bg.send(encode("HELLO", {"role": "bg"}))
                 await bg.send(encode("REVIEW_REQUEST", {
-                    "workflowId": "w", "stepId": "gen_label", "product": {"skc": ""}, "context": {}}))
+                    "workflowId": "w", "stepId": "gen_label", "product": {"skc": ""},
+                    "context": {"pageSnapshot": "page text"}}))   # 非空快照→走模型路径（空快照已确定性短路 hold，见 test_brain_reviewer）
                 return decode(await asyncio.wait_for(bg.recv(), timeout=2))
 
     t, d = _run(scenario())

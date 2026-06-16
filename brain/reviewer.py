@@ -11,6 +11,16 @@ _log = logging.getLogger("brain.reviewer")
 def review(step_id, product, context, model):
     """product: 当前 workflow.product；context: {pageSnapshot}。
     返回 {"verdict":"pass"|"hold", "reason":str, "concerns":[str]}。fail-safe 默认 hold。"""
+    # 复核在【步骤执行前】跑，gen_label/create_po/ship 的目标页此刻还没打开 → 抓到空快照。
+    # 弱模型拿到空快照会乱编"页面快照未提供"之类的 hold 理由（误导人工）。结构性短路：
+    # 无快照不调模型，确定性 hold + 可操作理由（与"字段为空不该 hold"同思路——约束给结构而非 prompt）。
+    snapshot = ((context or {}).get("pageSnapshot") or "").strip()
+    if not snapshot:
+        return {
+            "verdict": "hold",
+            "reason": "复核在执行前进行、目标页尚未打开，无法自动核对页面——请人工确认已采集字段无误后点「确认提交」放行。",
+            "concerns": [],
+        }
     try:
         raw = model.decide(_build_messages(step_id, product, context))
     except Exception as e:
