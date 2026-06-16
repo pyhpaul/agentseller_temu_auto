@@ -16,25 +16,27 @@
   //   恢复时重跑，由 feature 层做幂等校验，故按可逆处理。
   // hitlSpec: 回填型 HITL 的字段元数据（fields[{key,label,fieldType,required}]）。engine.buildHitl 读它
   //   条件化 editable；overlay 据此渲染回填控件。无 hitlSpec 的 hitl 步为纯确认型（editable=false）。
+  //   hitlSpec.noFill=true：字段仍人工可输入，但值大脑无法推导（人工/外部产出，如 SKC 经店小秘插件采集），
+  //   故跳过大脑回填提议，避免弱模型幻觉出假值污染建议（bg-entry orchRequestFillSuggest 检测此标记）。
   //   首版一 SKC 一 SKU、单值契约（多变种 per-SKU 数组留后续）。
   const STEP_DEFS = [
     { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
       // 记录选品的源商品 Temu 详情页 url（流水线第一个锚点）。当前仅记录进 product.sourceUrl；
       // 后续方案承接：基于此 url 自动化完成店小秘一键采集（collect_dxm 升级为 url 驱动半自动）。
-      hitlSpec: { fields: [
+      hitlSpec: { noFill: true, fields: [
         { key: 'sourceUrl', label: 'Temu 商品详情页 URL', fieldType: 'text', required: true },
       ] } },
     { id: 'collect_dxm',      label: '店小秘采集建品',        type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com',
-      hitlSpec: { fields: [
+      hitlSpec: { noFill: true, fields: [
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
       ] } },
     { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, domain: 'dianxiaomi.com' },
     { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com' },
     { id: 'compare_1688',     label: '1688比价核价',          type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
-      hitlSpec: { fields: [{ key: 'url1688', label: '1688 货源链接', fieldType: 'text', required: true }] } },
+      hitlSpec: { noFill: true, fields: [{ key: 'url1688', label: '1688 货源链接', fieldType: 'text', required: true }] } },
     { id: 'order_1688',       label: '1688下单',              type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
-      hitlSpec: { fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
+      hitlSpec: { noFill: true, fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
     { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'seller.temu.com',
       target: { url: 'https://seller.temu.com/goods/label', readySignal: 'tr[data-testid="beast-core-table-body-tr"]' } },
     { id: 'create_sku',       label: '建店小秘SKU',           type: 'auto', feature: 'create_purchase_order', reversible: true,  domain: 'agentseller.temu.com' },

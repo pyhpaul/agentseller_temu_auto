@@ -74,8 +74,10 @@ async function orchRequestFillSuggest(workflowId) {
   const wf = ORCH.engine.findWorkflow(await orchRead(), workflowId);
   if (!wf || wf.status !== 'paused') return;
   const step = wf.steps[wf.cursor];
-  const fields = (step && step.hitlSpec && step.hitlSpec.fields) || [];
+  const spec = (step && step.hitlSpec) || null;
+  const fields = (spec && spec.fields) || [];
   if (!fields.length) return;                      // 仅回填型步
+  if (spec.noFill) return;                          // 人工/外部产出步（值大脑无法推导）：字段仍人工可输入，但不请求提议——避免弱模型幻觉假值
   const pageSnapshot = await orchCapturePageSnapshot(step.domain);
   orchWsClient.send('FILL_REQUEST', {
     workflowId, stepId: step.id, fields,
@@ -159,14 +161,6 @@ async function orchCapturePageSnapshot(domain) {
   } catch (e) {
     return null;
   }
-}
-
-// stub stepRunner（2-2a）：模拟 auto 步成功，让骨架端到端可验证。
-// 2-2b 换真实：导航 tab → waitForEl(step.target.readySignal) → 调 feature 命令 → 收结构化回报。
-async function orchStubStepRunner(step) {
-  await new Promise(r => setTimeout(r, 300));   // 模拟耗时
-  console.log(`[orch-stub] 自动步「${step.label}」(feature=${step.feature}) 模拟完成`);
-  return { status: 'done', result: { stub: step.id, feature: step.feature }, error: null };
 }
 
 // ── 通用 adapter 基建（无命令处理器 feature 接入；后续 ship/gen_label 复用）──────────────
@@ -368,11 +362,14 @@ async function orchAdapterGenLabel(step, wf) {
   return { status: 'error', error: { category: st.category || 'read', code: st.code || 'AGL_FAILED', message: st.message || '标签生成流程失败', recoverable: true } };
 }
 
-// ── check_and_publish adapter（publish,✗不可逆·复用上游编辑页 tab）──────────────
-// 数据流死结:wf.product 无店小秘商品 URL 锚点 → 不导航,query 找 collect_dxm 留的编辑页 tab。
+// ── check_and_publish adapter（publish,✗不可逆·复用上游店小秘编辑页 tab）──────────────
+// publish 实操页是【店小秘 dianxiaomi.com 编辑页】（规则选择器/发布 UX 全按店小秘 DOM 建，samples 为证）。
+// ⚠ check_and_publish 经 build union 也注入到 Temu，但选择器是店小秘专属、在 Temu 抓不到 → 必须走店小秘。
+// 数据流死结:wf.product 无店小秘商品 URL 锚点（店小秘编辑页 URL 不可由 spuId 推导）→ 不导航,query 找
+// collect_dxm 留的店小秘编辑页 tab。自动打开待后续（随 collect_dxm 自动化捕获店小秘编辑页 URL 一起做）。
 // 直接回报(检查+发布同 tab,无跨页);committing 发命令前粗标(检查 block 也转人工=填表缺口本需人工)。
 async function orchAdapterPublish(step, wf) {
-  // 1. 找上游编辑页 tab(url 含 dianxiaomi + edit;不导航,无 URL 锚点)
+  // 1. 找上游店小秘编辑页 tab(url 含 dianxiaomi + edit;不导航,无 URL 锚点)
   let tabs;
   try {
     tabs = await chrome.tabs.query({ url: '*://*.dianxiaomi.com/*' });
@@ -381,7 +378,7 @@ async function orchAdapterPublish(step, wf) {
   }
   const editTab = (tabs || []).find(t => /edit/i.test(t.url || ''));
   if (!editTab) {
-    return { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持编辑页打开)', recoverable: true } };
+    return { status: 'error', error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持店小秘编辑页打开)', recoverable: true } };
   }
   // 2. 激活编辑页 tab(前台防 Ant dropdown 后台 tab 不展开)
   try {
@@ -412,11 +409,14 @@ const ORCH_ADAPTERS = {
   publish: orchAdapterPublish,
 };
 
-// 真实 stepRunner：dispatch 到 adapter；未接入 step.id 回落 stub（13 步骨架仍端到端可跑）。
+// 真实 stepRunner：dispatch 到 adapter；无 adapter 的 step.id 直接报错（真实链路拒绝任何模拟成功）。
 // STEP_RESULT 上报移到 engine onStepSettled（覆盖 throw + 带 retryCount，Plan 3 第二刀）。
 async function orchRealStepRunner(step, wf) {
   const adapter = ORCH_ADAPTERS[step.id];
-  return adapter ? adapter(step, wf) : orchStubStepRunner(step);
+  if (!adapter) {
+    return { status: 'error', error: { category: 'business', code: 'NO_ADAPTER', message: `步骤「${step.label}」无真实 adapter（未接入），真实链路拒绝模拟成功`, recoverable: false } };
+  }
+  return adapter(step, wf);
 }
 
 const orchEngine = ORCH.engine.makeEngine({

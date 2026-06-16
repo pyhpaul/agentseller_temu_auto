@@ -104,7 +104,7 @@
             });
             let res;
             try {
-              res = await stepRunner(step, wf);                    // 调 feature（2-2a 是 stub）— 长操作，在 queue 外
+              res = await stepRunner(step, wf);                    // 调 feature 真实 adapter — 长操作，在 queue 外
             } catch (e) {
               res = { status: 'error', error: { category: 'read', code: 'STEP_THREW', message: String((e && e.message) || e), recoverable: false } };
             }

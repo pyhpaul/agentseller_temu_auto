@@ -31,12 +31,19 @@ def review(step_id, product, context, model):
 def _build_messages(step_id, product, context):
     ctx = context or {}
     snapshot = (ctx.get("pageSnapshot") or "")[:6000]
+    # 只把【已采集（非空）】字段交给模型复核：product 是流水线渐进填充的，未到的步骤其字段此刻为空属正常。
+    # 全量传入会让弱模型把"后续步字段为空"误报成"缺必填字段"而错误 hold（第③步 publish 误报缺
+    # url1688/orderNo1688/skuNo/poNo 即此坑）。required 字段的存在性校验由各 adapter 自己做（MISSING_* 错误），
+    # reviewer 只负责【已有值字段】的 sanity / 一致性 / 与页面是否对得上——结构性地不让模型看到空字段。
+    present = {k: v for k, v in (product or {}).items() if v not in (None, "", [], {})}
     return [
         {"role": "system", "content":
             "你是自动化流水线的不可逆动作复核员。这一步将执行【不可逆】操作（发布/生成标签/创建采购单/发货）。"
-            "复核 product 数据是否安全提交：格式 sanity、跨字段一致、与页面是否对得上。"
+            "复核【已采集字段】是否安全提交：格式 sanity、跨字段一致、与页面是否对得上。"
             "只回 JSON：{\"verdict\":\"pass\"|\"hold\",\"reason\":\"简述\",\"concerns\":[\"可疑点\"]}。"
-            "数据看起来安全 → pass；发现空/畸形/不匹配/页面态不符 → hold + concerns；拿不准 → hold。"},
+            "已采集字段的值安全 → pass；已采集字段出现畸形/矛盾/与页面不符 → hold + concerns；拿不准 → hold。"
+            "重要：只复核下方列出的【已采集字段】，绝不可因为某字段未出现/为空而 hold——"
+            "未列出的字段由后续步骤产生，此刻为空是正常的。"},
         {"role": "user", "content":
-            "当前不可逆步: {}\nproduct: {}\n页面快照(截断):\n{}".format(step_id, product, snapshot)},
+            "当前不可逆步: {}\n已采集字段: {}\n页面快照(截断):\n{}".format(step_id, present, snapshot)},
     ]
