@@ -58,12 +58,12 @@
       guide: '在 1688 对该货源下单付款 → 把 1688 订单号填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
     { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'seller.temu.com',
-      guide: '确认上方已采集字段无误 → 点「确认提交」放行；系统会自动打开 Temu 货号/标签页生成货号+标签+合规+标签图。',
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动打开 Temu 货号/标签页生成货号+标签+合规+标签图。',
       target: { url: 'https://seller.temu.com/goods/label', readySignal: 'tr[data-testid="beast-core-table-body-tr"]' } },
     { id: 'create_sku',       label: '建店小秘SKU',           type: 'auto', feature: 'create_purchase_order', reversible: true,  domain: 'agentseller.temu.com',
       guide: '自动步：系统据 1688 链接在店小秘自动建 SKU，无需操作；若报错按错误卡提示处理。' },
     { id: 'create_po',        label: '创建采购单',            type: 'auto', feature: 'create_purchase_order', reversible: false, domain: 'dianxiaomi.com',
-      guide: '确认上方字段无误 → 点「确认提交」放行；系统会自动在店小秘创建采购单（填 1688 订单号 + 配对）。' },
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动在店小秘创建采购单（填 1688 订单号 + 配对）。' },
     { id: 'wait_payment',     label: '等财务付款',            type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com',
       guide: '等财务在店小秘完成采购单付款 → 付款后点「确认完成」推进。' },
     { id: 'wait_arrival',     label: '等到货',                type: 'hitl', feature: null,                   reversible: null,  domain: 'kuajingmaihuo.com',
@@ -72,7 +72,7 @@
       guide: '自动步：系统自动打开发货台打印打包标签，无需操作；若报错按错误卡提示处理。',
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[class*="shipping-list_choose"]' } },
     { id: 'ship',             label: '确认发货',              type: 'auto', feature: 'auto_ship',             reversible: false, domain: 'kuajingmaihuo.com',
-      guide: '确认上方字段无误 → 点「确认提交」放行；系统会自动打开发货台执行确认发货。',
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动打开发货台执行确认发货。',
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[data-testid="beast-core-table-body-tr"]' } },
   ];
 

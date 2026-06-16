@@ -71,6 +71,11 @@ function hitlCard(wf, locText, onAction, view, mountEl) {
   // 复核型（不可逆 hold）
   if (view.isReviewHitl(hitl)) {
     const body = [head, guideRow(hitl)];
+    // 放行前已采集数据（engine 把非空 product 字段塞进 keyValues）→ 人工据此核对再确认提交
+    if (hitl.keyValues && Object.keys(hitl.keyValues).length) {
+      body.push(h('div', { class: 'review-data-h' }, '已采集数据（放行前核对）'));
+      body.push(h('div', { class: 'kv' }, kvRows(hitl.keyValues)));
+    }
     if (hitl.reason) body.push(h('div', { class: 'review-reason' }, hitl.reason));
     if (Array.isArray(hitl.concerns) && hitl.concerns.length) {
       body.push(h('ul', { class: 'concerns' }, hitl.concerns.map(c => h('li', {}, String(c)))));

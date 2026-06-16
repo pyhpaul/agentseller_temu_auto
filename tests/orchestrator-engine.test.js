@@ -450,6 +450,14 @@ test('buildReviewHitl：review-kind + concerns', () => {
   assert.strictEqual(h.targetUrl, 'u');
 });
 
+test('buildReviewHitl 带 product → keyValues 只含非空字段（复核卡可核对放行前数据）', () => {
+  const h = buildReviewHitl({ id: 'gen_label', label: 'L' }, { concerns: [] }, { skc: 'S1', spuId: '', poNo: null, orderNo1688: 'O9' });
+  assert.strictEqual(h.keyValues.skc, 'S1');
+  assert.strictEqual(h.keyValues.orderNo1688, 'O9');
+  assert.ok(!('spuId' in h.keyValues), '空串字段不显示');
+  assert.ok(!('poNo' in h.keyValues), 'null 字段不显示');
+});
+
 // ── 利润率计算 computeMargin（确认申报价步核价分析；毛利率口径=(申报-成本-运费)/申报）──
 test('computeMargin：正常 → 毛利率=(申报-成本-运费)/申报，display 含各项', () => {
   const m = computeMargin({ returnPrice: 100, cost1688: 60, domesticShipping: 5 });

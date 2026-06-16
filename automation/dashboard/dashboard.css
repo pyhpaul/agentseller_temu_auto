@@ -255,6 +255,8 @@ body{
 .pg-btn{padding:1px 8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:5px;cursor:pointer}
 .pg-btn[disabled]{opacity:.4;cursor:default}
 .pg-total{margin-left:auto}
+/* 复核卡「已采集数据」小标题（放行前核对） */
+.review-data-h{margin:6px 0 2px;font-size:12px;font-weight:600;color:#8b949e}
 /* 选中步详情面板（点环节列表某步→显示其产物/状态/报错/指引） */
 .step-detail .sd{display:flex;flex-direction:column;gap:6px;font-size:12px}
 .sd-status{color:#e6edf3}

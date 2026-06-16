@@ -71,11 +71,16 @@
     };
   }
 
-  // 不可逆复核 HOLD → review-kind HITL（concerns + reason；editable:false，人工确认提交/中止）
-  function buildReviewHitl(step, verdict) {
+  // 不可逆复核 HOLD → review-kind HITL（concerns + reason；editable:false，人工确认提交/中止）。
+  // keyValues：放行前供人工核对的【已采集（非空）字段】（dashboard 复核卡渲染，guide「确认下方数据」落地）。
+  function buildReviewHitl(step, verdict, product) {
+    const present = {};
+    for (const [k, v] of Object.entries(product || {})) {
+      if (v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)) present[k] = v;
+    }
     return {
       action: '不可逆复核：' + step.label, stepId: step.id, kind: 'review', guide: step.guide || '',
-      keyValues: {}, reviewedBrief: '',
+      keyValues: present, reviewedBrief: '',
       concerns: (verdict && verdict.concerns) || [],
       reason: (verdict && verdict.reason) || '',
       editable: false, fields: [],
@@ -156,7 +161,7 @@
                 if (verdict && verdict.verdict === 'hold') {
                   await mutateWorkflow(workflowId, w => {
                     w.steps[w.cursor].status = 'paused'; w.status = 'paused';
-                    w.hitl = buildReviewHitl(w.steps[w.cursor], verdict);
+                    w.hitl = buildReviewHitl(w.steps[w.cursor], verdict, w.product);
                     w.updatedAt = now();
                   });
                   return;                                            // 不跑 adapter，等人工确认提交/中止
