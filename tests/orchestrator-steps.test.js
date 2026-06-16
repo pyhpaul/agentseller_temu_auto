@@ -134,8 +134,9 @@ test('buildInitialWorkflow: ship step 带 target（续刀 auto_ship）', () => {
 test('buildInitialWorkflow: gen_label step 带 target（续刀 auto_gen_label）', () => {
   const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
   const gl = wf.steps.find(s => s.id === 'gen_label');
-  assert.strictEqual(gl.target.url, 'https://seller.temu.com/goods/label');
-  assert.strictEqual(gl.target.readySignal, 'tr[data-testid="beast-core-table-body-tr"]');
+  assert.strictEqual(gl.target.url, 'https://agentseller.temu.com/goods/label');   // 真实后台域 agentseller（seller.temu.com 用户未登录→no-auth）
+  // readySignal 用搜索框（页面加载即在），不用表格行（搜索后才出现，等行会死锁超时）
+  assert.strictEqual(gl.target.readySignal, 'input#goodsSearchType');
 });
 
 test('buildInitialWorkflow: step 带 retryCount=0（Plan 3 self-heal 重试上限）', () => {

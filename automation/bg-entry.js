@@ -278,7 +278,18 @@ async function orchCapturePageSnapshot(domain) {
 // ⚠ readySignal 检查依赖 manifest host_permissions 含目标域(scripting 权限 CPO cpoCloseTab 已在用);
 //   executeScript 失败(权限/页面未就绪)→ false 继续轮询,超时才抛——content handler 首行 waitForEl 再兜一层。
 async function orchNavigateAndWait(url, readySignal, { tabTimeoutMs = 30000, readyTimeoutMs = 30000 } = {}) {
-  const tab = await chrome.tabs.create({ url, active: true });
+  // 在【普通浏览窗口】建 tab（非 dashboard 的 popup 窗口）：从 SW 调 tabs.create 不带 windowId 会落到
+  // 最后聚焦窗口——常是 dashboard popup → 用户看不见且非常规浏览上下文。显式找 type:'normal' 窗口并聚焦，
+  // 确保自动打开的页面落在用户登录态、可见的主浏览窗口。无普通窗口则新建一个。
+  let windowId;
+  try {
+    const wins = await chrome.windows.getAll({ windowTypes: ['normal'] });
+    const normal = (wins || []).find(w => w.type === 'normal');
+    windowId = normal ? normal.id : undefined;
+  } catch (_) { windowId = undefined; }
+  const createOpts = windowId ? { url, active: true, windowId } : { url, active: true };
+  const tab = await chrome.tabs.create(createOpts);
+  if (windowId) { try { await chrome.windows.update(windowId, { focused: true }); } catch (_) {} }
   await self.AgentSellerBg.util.waitTabComplete(tab.id, tabTimeoutMs);
   if (!readySignal) return tab.id;
   const deadline = Date.now() + readyTimeoutMs;
@@ -426,7 +437,7 @@ async function orchAdapterShip(step, wf) {
 // committing 用 onTick 在 content 报告"合规提交"阶段标（比 ship 发命令前粗标精准）。
 async function orchAdapterGenLabel(step, wf) {
   const target = step.target || {};
-  const url = target.url || 'https://seller.temu.com/goods/label';
+  const url = target.url || 'https://agentseller.temu.com/goods/label';
   // 1. 清旧 agl_state(防读到上次残留终态)
   await chrome.storage.local.remove('agl_state');
   // 2. 导航条码页 + 等表格行就绪(前台 active 防失焦不渲染)

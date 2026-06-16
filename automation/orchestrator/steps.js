@@ -10,8 +10,8 @@
   // type: 'auto' 调 feature / 'hitl' 人工卡点。reversible: 中断恢复用（spec §4.2），hitl 步为 null。
   // domain: 目标平台域（导航 + 「前往」用）。auto 步（gen_label/pack_label/ship）已补真实 target.url+readySignal；
   //   HITL 步 domain 仍为初值，按运营实际页校准。
-  //   ⚠ Temu 系分两子域：create_sku/create_po 用 agentseller.temu.com（CPO 真实域），
-  //   auto_gen_label/选品/返单价用 seller.temu.com（核实自各 feature.json host_permissions）。
+  //   ⚠ Temu 卖家后台真实域 = agentseller.temu.com（用户实测：seller.temu.com 未登录→no-auth.html）。
+  //   选品/返单价/确认申报价/gen_label/create_sku/create_po 全用 agentseller.temu.com。
   // create_sku 的 reversible=true 是 spec §3.2 △（写后读可检测已建，半可逆）的落地：
   //   恢复时重跑，由 feature 层做幂等校验，故按可逆处理。
   // hitlSpec: 回填型 HITL 的字段元数据（fields[{key,label,fieldType,required}]）。engine.buildHitl 读它
@@ -20,7 +20,7 @@
   //   故跳过大脑回填提议，避免弱模型幻觉出假值污染建议（bg-entry orchRequestFillSuggest 检测此标记）。
   //   首版一 SKC 一 SKU、单值契约（多变种 per-SKU 数组留后续）。
   const STEP_DEFS = [
-    { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
+    { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'agentseller.temu.com',
       // 记录选品的源商品 Temu 详情页 url（流水线第一个锚点）。当前仅记录进 product.sourceUrl；
       // 后续方案承接：基于此 url 自动化完成店小秘一键采集（collect_dxm 升级为 url 驱动半自动）。
       guide: '在 Temu 商家中心选定要做的商品 → 复制该商品详情页 URL 填入下方 → 点提交。',
@@ -35,7 +35,7 @@
       ] } },
     { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, gate: 'publish', domain: 'dianxiaomi.com',
       guide: '先在店小秘打开该商品编辑页（URL 含 edit）→ 点「检查」看合规结果 → 通过后点「发布」（或勾「自动发布」让检查通过即发）。' },
-    { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
+    { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'agentseller.temu.com',
       // 等 Temu 后台审核返回的参考申报价，人工从商家中心抄填（大脑无从推导 → noFill）。
       guide: '等 Temu 后台审核返回参考申报价（小时/天级）→ 在商家中心查到后把参考申报价填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [
@@ -52,14 +52,17 @@
     // 确认申报价格：HITL 人工确认步，内嵌核价分析（analysis:'margin'）。
     // engine.buildHitl 据 analysis 标记调 computeMargin 把毛利率填进 keyValues 展示（复用纯确认型卡）；
     // 人工在商家中心实点「确认申报价格」后于 dashboard 点确认 → orchHitlConfirm 落 grossMargin 快照 → 推进。
-    { id: 'confirm_declare_price', label: '确认申报价格',     type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com', analysis: 'margin',
+    { id: 'confirm_declare_price', label: '确认申报价格',     type: 'hitl', feature: null,                   reversible: null,  domain: 'agentseller.temu.com', analysis: 'margin',
       guide: '核对下方毛利率，可接受则在 Temu 商家中心实际点「确认申报价格」→ 回此点「确认完成」推进。' },
     { id: 'order_1688',       label: '1688下单',              type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
       guide: '在 1688 对该货源下单付款 → 把 1688 订单号填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
-    { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'seller.temu.com',
+    { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'agentseller.temu.com',
       guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动打开 Temu 货号/标签页生成货号+标签+合规+标签图。',
-      target: { url: 'https://seller.temu.com/goods/label', readySignal: 'tr[data-testid="beast-core-table-body-tr"]' } },
+      // ⚠ 真实卖家后台域是 agentseller.temu.com（非 seller.temu.com）——后者用户未登录→no-auth.html。
+      // readySignal 用搜索框（页面加载即在），不用表格行——条码页搜索驱动，行要按 SKC 搜索后才出现，
+      // content 的 AGL_GEN_LABEL 自己 ensureSkcSearchInput→搜索→等行；等表格行当就绪会死锁超时。
+      target: { url: 'https://agentseller.temu.com/goods/label', readySignal: 'input#goodsSearchType' } },
     { id: 'create_sku',       label: '建店小秘SKU',           type: 'auto', feature: 'create_purchase_order', reversible: true,  domain: 'agentseller.temu.com',
       guide: '自动步：系统据 1688 链接在店小秘自动建 SKU，无需操作；若报错按错误卡提示处理。' },
     { id: 'create_po',        label: '创建采购单',            type: 'auto', feature: 'create_purchase_order', reversible: false, domain: 'dianxiaomi.com',
