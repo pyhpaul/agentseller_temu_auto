@@ -1,5 +1,5 @@
 // automation/orchestrator/steps.js
-// 13 原子 step 声明表 + 初始 workflow 工厂。真源 spec §3.2。UMD 双模式（sw importScripts + node 单测）。
+// 14 原子 step 声明表 + 初始 workflow 工厂。真源 spec §3.2。UMD 双模式（sw importScripts + node 单测）。
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -32,9 +32,22 @@
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
       ] } },
     { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, manualGate: true, domain: 'dianxiaomi.com' },
-    { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com' },
+    { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
+      // 等 Temu 后台审核返回的参考申报价，人工从商家中心抄填（大脑无从推导 → noFill）。
+      hitlSpec: { noFill: true, fields: [
+        { key: 'returnPrice', label: 'Temu 参考申报价', fieldType: 'number', required: true },
+      ] } },
     { id: 'compare_1688',     label: '1688比价核价',          type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
-      hitlSpec: { noFill: true, fields: [{ key: 'url1688', label: '1688 货源链接', fieldType: 'text', required: true }] } },
+      // 核价输入：货源链接 + 1688成本价 + 国内运费（供下一步「确认申报价」算毛利率）。运费可空按 0 计。
+      hitlSpec: { noFill: true, fields: [
+        { key: 'url1688',          label: '1688 货源链接', fieldType: 'text',   required: true },
+        { key: 'cost1688',         label: '1688 成本价',   fieldType: 'number', required: true },
+        { key: 'domesticShipping', label: '国内运费/头程', fieldType: 'number', required: false },
+      ] } },
+    // 确认申报价格：HITL 人工确认步，内嵌核价分析（analysis:'margin'）。
+    // engine.buildHitl 据 analysis 标记调 computeMargin 把毛利率填进 keyValues 展示（复用纯确认型卡）；
+    // 人工在商家中心实点「确认申报价格」后于 dashboard 点确认 → orchHitlConfirm 落 grossMargin 快照 → 推进。
+    { id: 'confirm_declare_price', label: '确认申报价格',     type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com', analysis: 'margin' },
     { id: 'order_1688',       label: '1688下单',              type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
       hitlSpec: { noFill: true, fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
     { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'seller.temu.com',
@@ -51,7 +64,8 @@
 
   // 初始 product 工厂（buildInitialWorkflow + orchestrator restart 重头共用，单一真源防字段漂移）。
   function emptyProduct(label) {
-    return { label: label || null, sourceUrl: null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null };
+    return { label: label || null, sourceUrl: null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null,
+      returnPrice: null, cost1688: null, domesticShipping: null, grossMargin: null };
   }
 
   // idGen 注入（纯逻辑测试要确定性，不在模块内调 Date.now/random）。
@@ -68,6 +82,7 @@
         id: d.id, label: d.label, feature: d.feature, type: d.type,
         reversible: d.reversible, domain: d.domain, target: d.target || null,
         hitlSpec: d.hitlSpec || null,
+        manualGate: d.manualGate || false, analysis: d.analysis || null,
         status: 'pending', startedAt: null, endedAt: null,
         result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0, reviewed: false,
       })),
