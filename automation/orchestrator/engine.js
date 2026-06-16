@@ -86,16 +86,28 @@
         switch (decision.kind) {
           case 'run-auto': {
             const step = wf.steps[wf.cursor];                      // 本轮快照的 step 定义
-            // 不可逆复核（后续刀）：reversible===false 且未复核 + reviewGate 注入 → 复核闸（阻塞 advance 等 verdict）
-            if (step.reversible === false && reviewGate && !step.reviewed) {
-              const verdict = await reviewGate(workflowId, step, wf);   // bg 实现：WS 往返+超时；离线/超时→null=proceed
-              if (verdict && verdict.verdict === 'hold') {
+            // 不可逆步闸（reversible===false 且未复核）：
+            //   manualGate 步 → 无条件人工硬闸（不依赖大脑），永远停下等 dashboard「确认提交」启动（publish 用）；
+            //   其余 → 大脑复核闸（reviewGate 注入时；hold→停，pass/离线/超时→proceed）。
+            if (step.reversible === false && !step.reviewed) {
+              if (step.manualGate) {
                 await mutateWorkflow(workflowId, w => {
                   w.steps[w.cursor].status = 'paused'; w.status = 'paused';
-                  w.hitl = buildReviewHitl(w.steps[w.cursor], verdict);
+                  w.hitl = buildReviewHitl(w.steps[w.cursor], { reason: '请先人工打开店小秘商品编辑页，确认无误后点击「确认提交」启动检查与发布', concerns: [] });
                   w.updatedAt = now();
                 });
-                return;                                                // 不跑 adapter，等人工确认提交/中止
+                return;                                              // 人工硬闸：不跑 adapter，等 WF_REVIEW_APPROVE
+              }
+              if (reviewGate) {
+                const verdict = await reviewGate(workflowId, step, wf);   // bg 实现：WS 往返+超时；离线/超时→null=proceed
+                if (verdict && verdict.verdict === 'hold') {
+                  await mutateWorkflow(workflowId, w => {
+                    w.steps[w.cursor].status = 'paused'; w.status = 'paused';
+                    w.hitl = buildReviewHitl(w.steps[w.cursor], verdict);
+                    w.updatedAt = now();
+                  });
+                  return;                                            // 不跑 adapter，等人工确认提交/中止
+                }
               }
             }
             await mutateWorkflow(workflowId, w => {

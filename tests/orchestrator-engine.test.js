@@ -324,6 +324,35 @@ test('reviewGate：null（离线/超时）→ 照常跑 adapter', async () => {
   assert.strictEqual(ran, true);
 });
 
+test('manualGate：硬闸——即使大脑判 pass 也停下等人工，不跑 adapter', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+    reviewGate: async () => ({ verdict: 'pass' }),   // 大脑放行也不放行：硬闸不依赖大脑判断
+  });
+  await engine.advance('w1');
+  assert.strictEqual(ran, false);
+  assert.strictEqual(wf0(store).status, 'paused');
+  assert.strictEqual(wf0(store).hitl.kind, 'review');
+});
+
+test('manualGate：无 reviewGate 注入也硬闸停下（不依赖大脑）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+  const queue = makeMutationQueue(store.read, store.write);
+  let ran = false;
+  const engine = makeEngine({
+    read: store.read, queue, now: () => 1,
+    stepRunner: async () => { ran = true; return { status: 'done' }; },
+  });
+  await engine.advance('w1');
+  assert.strictEqual(ran, false);
+  assert.strictEqual(wf0(store).status, 'paused');
+  assert.strictEqual(wf0(store).hitl.kind, 'review');
+});
+
 test('reviewGate：可逆步(reversible:true) 不复核', async () => {
   const store = fakeStore(mkSkeleton([mkStep({ id: 'sku', reversible: true })]));
   const queue = makeMutationQueue(store.read, store.write);

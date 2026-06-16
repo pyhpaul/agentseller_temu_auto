@@ -31,7 +31,7 @@
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
       ] } },
-    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, domain: 'dianxiaomi.com' },
+    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, manualGate: true, domain: 'dianxiaomi.com' },
     { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com' },
     { id: 'compare_1688',     label: '1688比价核价',          type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
       hitlSpec: { noFill: true, fields: [{ key: 'url1688', label: '1688 货源链接', fieldType: 'text', required: true }] } },
