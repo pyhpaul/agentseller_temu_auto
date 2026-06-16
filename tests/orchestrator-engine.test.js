@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl, buildReviewHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl, buildPublishHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -331,23 +331,24 @@ test('reviewGate：null（离线/超时）→ 照常跑 adapter', async () => {
   assert.strictEqual(ran, true);
 });
 
-test('manualGate：硬闸——即使大脑判 pass 也停下等人工，不跑 adapter', async () => {
-  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+test('publish 两段闸：即使大脑判 pass 也停 await-check，不跑 adapter', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, gate: 'publish' })]));
   const queue = makeMutationQueue(store.read, store.write);
   let ran = false;
   const engine = makeEngine({
     read: store.read, queue, now: () => 1,
     stepRunner: async () => { ran = true; return { status: 'done' }; },
-    reviewGate: async () => ({ verdict: 'pass' }),   // 大脑放行也不放行：硬闸不依赖大脑判断
+    reviewGate: async () => ({ verdict: 'pass' }),   // 大脑放行也不放行：publish 闸不依赖大脑判断
   });
   await engine.advance('w1');
   assert.strictEqual(ran, false);
   assert.strictEqual(wf0(store).status, 'paused');
-  assert.strictEqual(wf0(store).hitl.kind, 'review');
+  assert.strictEqual(wf0(store).hitl.kind, 'publish');
+  assert.strictEqual(wf0(store).hitl.phase, 'await-check');
 });
 
-test('manualGate：无 reviewGate 注入也硬闸停下（不依赖大脑）', async () => {
-  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+test('publish 两段闸：无 reviewGate 注入也停 await-check（不依赖大脑）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, gate: 'publish' })]));
   const queue = makeMutationQueue(store.read, store.write);
   let ran = false;
   const engine = makeEngine({
@@ -357,7 +358,17 @@ test('manualGate：无 reviewGate 注入也硬闸停下（不依赖大脑）', a
   await engine.advance('w1');
   assert.strictEqual(ran, false);
   assert.strictEqual(wf0(store).status, 'paused');
-  assert.strictEqual(wf0(store).hitl.kind, 'review');
+  assert.strictEqual(wf0(store).hitl.kind, 'publish');
+  assert.strictEqual(wf0(store).hitl.phase, 'await-check');
+});
+
+test('buildPublishHitl 形态', () => {
+  const h = buildPublishHitl({ id: 'publish', label: '合规预检+发布' }, { phase: 'await-publish', checkResult: { passCount: 3 } });
+  assert.strictEqual(h.kind, 'publish');
+  assert.strictEqual(h.phase, 'await-publish');
+  assert.strictEqual(h.checkResult.passCount, 3);
+  assert.strictEqual(h.editable, false);
+  assert.strictEqual(h.stepId, 'publish');
 });
 
 test('reviewGate：可逆步(reversible:true) 不复核', async () => {

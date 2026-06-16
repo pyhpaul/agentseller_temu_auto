@@ -55,6 +55,22 @@
     };
   }
 
+  // publish 两段闸 HITL（kind:'publish'）：phase await-check → blocked / await-publish。
+  // 进入 publish 步即停在 await-check（替代旧 manualGate）；bg 据 CAP_CHECK 结果转 phase。
+  // 不携带 autoPublish：engine 纯函数不读 storage，开关初态由 dashboard 直接读 storage key。
+  function buildPublishHitl(step, opts) {
+    opts = opts || {};
+    return {
+      action: step.label, stepId: step.id, kind: 'publish',
+      phase: opts.phase || 'await-check',
+      checkResult: opts.checkResult || null,
+      publishError: opts.publishError || null,
+      editable: false, fields: [],
+      targetUrl: (step.target && step.target.url) || null,
+      status: 'pending',
+    };
+  }
+
   // 不可逆复核 HOLD → review-kind HITL（concerns + reason；editable:false，人工确认提交/中止）
   function buildReviewHitl(step, verdict) {
     return {
@@ -124,16 +140,16 @@
           case 'run-auto': {
             const step = wf.steps[wf.cursor];                      // 本轮快照的 step 定义
             // 不可逆步闸（reversible===false 且未复核）：
-            //   manualGate 步 → 无条件人工硬闸（不依赖大脑），永远停下等 dashboard「确认提交」启动（publish 用）；
+            //   gate==='publish' 步 → 两段闸（不依赖大脑），停在 await-check，等 WF_PUBLISH_CHECK；
             //   其余 → 大脑复核闸（reviewGate 注入时；hold→停，pass/离线/超时→proceed）。
             if (step.reversible === false && !step.reviewed) {
-              if (step.manualGate) {
+              if (step.gate === 'publish') {
                 await mutateWorkflow(workflowId, w => {
                   w.steps[w.cursor].status = 'paused'; w.status = 'paused';
-                  w.hitl = buildReviewHitl(w.steps[w.cursor], { reason: '请先人工打开店小秘商品编辑页，确认无误后点击「确认提交」启动检查与发布', concerns: [] });
+                  w.hitl = buildPublishHitl(w.steps[w.cursor], { phase: 'await-check' });
                   w.updatedAt = now();
                 });
-                return;                                              // 人工硬闸：不跑 adapter，等 WF_REVIEW_APPROVE
+                return;                                              // publish 两段闸：不跑 adapter，等 WF_PUBLISH_CHECK
               }
               if (reviewGate) {
                 const verdict = await reviewGate(workflowId, step, wf);   // bg 实现：WS 往返+超时；离线/超时→null=proceed
@@ -265,5 +281,5 @@
     return { advance, recover, applyDiagnosis };
   }
 
-  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl, computeMargin };
+  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl, buildPublishHitl, computeMargin };
 });
