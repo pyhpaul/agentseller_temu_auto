@@ -9,9 +9,14 @@ import { createBrainStream } from './components/brain-stream.js';
 import { renderHitlQueue } from './components/hitl-queue.js';
 import { startStorageSource } from './state/storage-source.js';
 import { startWsSource } from './state/ws-source.js';
+import { renderFilterBar } from './components/filter-bar.js';
+import { buildMockBatch } from './mock/mock-workflows.js';
 
 const { createStore } = window.__AS_DASH_STORE__;
 const { selectActiveWorkflow } = window.__AS_DASH_SELECT__;
+const { filterWorkflows } = window.__AS_DASH_FILTER__;
+const { paginate } = window.__AS_DASH_PAGINATE__;
+const PAGE_SIZE = 20;
 
 const store = createStore();
 
@@ -69,6 +74,30 @@ const brainStream = createBrainStream(brainMount);
 // 选中态（环节行 / 大脑流条点击高亮）——本地 UI 态，不进 store
 let selectedStepId = null;
 
+// 过滤/分页：纯 UI 态，不进 store（spec §3）。filter-bar 与列表分别挂在 #queue-list 内两个子节点。
+let filterCriteria = { text: '', statuses: [], stepId: null, marginMin: null, marginMax: null };
+let filterUi = { panelOpen: false };
+let page = 1;
+
+const queueEl = document.getElementById('queue-list');
+const filterBarMount = document.createElement('div');
+const listMount = document.createElement('div');
+queueEl.append(filterBarMount, listMount);
+
+function onFilterChange(c, ui) { filterCriteria = c; filterUi = ui; page = 1; renderQueue(store.getState()); }
+function onPageChange(p) { page = p; renderQueue(store.getState()); }
+
+// 过滤 → updatedAt 倒序 → 分页 → 渲染 filter-bar + 扁平列表
+function renderQueue(state) {
+  const workflows = state.skeleton.batch.workflows || [];
+  const activeId = state.skeleton.batch.activeWorkflowId;
+  const stepOptions = (workflows[0]?.steps || []).map(s => ({ id: s.id, label: s.label }));
+  renderFilterBar(filterBarMount, filterCriteria, filterUi, stepOptions, onFilterChange);
+  const filtered = filterWorkflows(workflows, filterCriteria)
+    .slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  renderQueueList(listMount, paginate(filtered, page, PAGE_SIZE), activeId, onSelectWorkflow, onPageChange);
+}
+
 // 切 activeWorkflowId：本 Plan 单 workflow，点击仅切本地视图（真实写 storage→bg 留后续）
 function onSelectWorkflow(id) {
   store.getState().skeleton.batch.activeWorkflowId = id;
@@ -97,7 +126,7 @@ function onHitlAction(act, payload) {
 function renderAll(state) {
   const wf = selectActiveWorkflow(state.skeleton.batch);
   renderTopbar(document.getElementById('topbar'), state);
-  renderQueueList(document.getElementById('queue-list'), state, onSelectWorkflow);
+  renderQueue(state);
   renderOverviewBar(overviewMount, wf);
   renderStepList(stepMount, wf, selectedStepId, onSelectStep);
   renderHitlQueue(hitlMount, wf, onHitlAction);
@@ -110,6 +139,12 @@ store.subscribe(renderAll);
 // 首屏渲染（store 初始为空 batch，先渲空态，源接入后再重渲）
 renderAll(store.getState());
 
-// 启动数据源：storage-source 接真实 chrome.storage；ws-source 先尝试真实 WS、连不上降级 mock 回放大脑流
-startStorageSource(store);
-startWsSource(store);
+// ?mock=N：dev-only，灌 N 个假 workflow 测列表 UI，纯内存、不启真实数据源
+const mockParam = new URLSearchParams(location.search).get('mock');
+if (mockParam) {
+  store.setSkeleton(buildMockBatch(parseInt(mockParam, 10) || 20));
+} else {
+  // 启动数据源：storage-source 接真实 chrome.storage；ws-source 先尝试真实 WS、连不上降级 mock 回放大脑流
+  startStorageSource(store);
+  startWsSource(store);
+}
