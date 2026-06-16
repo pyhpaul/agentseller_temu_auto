@@ -46,3 +46,18 @@ test('未知动作 → error', () => {
   const m = buildHitlMessage('bogus', wfConfirm, () => '', view);
   assert.ok(m.error && !m.type);
 });
+
+test('publish-check → WF_PUBLISH_CHECK 带 autoPublish（来自 opts）', () => {
+  const m = buildHitlMessage('publish-check', wfConfirm, () => '', view, { autoPublish: true });
+  assert.deepStrictEqual(m, { type: 'WF_PUBLISH_CHECK', data: { workflowId: 'w1', autoPublish: true } });
+});
+
+test('publish-check 缺 opts → autoPublish 默认 false', () => {
+  const m = buildHitlMessage('publish-check', wfConfirm, () => '', view);
+  assert.deepStrictEqual(m, { type: 'WF_PUBLISH_CHECK', data: { workflowId: 'w1', autoPublish: false } });
+});
+
+test('publish-exec / skip → 对应 WF_*，data 只含 workflowId', () => {
+  assert.deepStrictEqual(buildHitlMessage('publish-exec', wfConfirm, () => '', view), { type: 'WF_PUBLISH_EXEC', data: { workflowId: 'w1' } });
+  assert.deepStrictEqual(buildHitlMessage('skip', wfConfirm, () => '', view), { type: 'WF_SKIP', data: { workflowId: 'w1' } });
+});

@@ -110,14 +110,6 @@ test('buildInitialWorkflow: analysis 透传到 step + product 含核价字段', 
   assert.strictEqual(wf.product.grossMargin, null);
 });
 
-test('buildInitialWorkflow: manualGate 透传到 step（否则 engine 硬闸死代码）', () => {
-  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
-  const pub = wf.steps.find(s => s.id === 'publish');
-  assert.strictEqual(pub.manualGate, true);                       // #72 硬闸：map 必须透传，否则 engine if(step.manualGate) 永 undefined
-  const sel = wf.steps.find(s => s.id === 'select_product');
-  assert.strictEqual(sel.manualGate, false);                      // 未声明透传为 false（非 undefined）
-});
-
 test('buildInitialWorkflow: 缺 product.label 不抛、label=null', () => {
   const wf = buildInitialWorkflow({}, () => 'w1');
   assert.strictEqual(wf.product.label, null);
@@ -154,4 +146,24 @@ test('buildInitialWorkflow: step 带 retryCount=0（Plan 3 self-heal 重试上�
 test('buildInitialWorkflow：每步含 reviewed:false', () => {
   const wf = buildInitialWorkflow({ label: 'A' }, () => 'id');
   assert.ok(wf.steps.every(s => s.reviewed === false));
+});
+
+test('buildInitialWorkflow 透传 publish 步的 gate 字段（防死代码）', () => {
+  let n = 0;
+  const wf = buildInitialWorkflow({}, () => 'w' + (++n));
+  const publish = wf.steps.find(s => s.id === 'publish');
+  assert.ok(publish, 'publish 步应存在');
+  assert.strictEqual(publish.gate, 'publish', 'publish 步实例必须带 gate:"publish"（经工厂透传，非仅 STEP_DEFS）');
+  const sel = wf.steps.find(s => s.id === 'select_product');
+  assert.strictEqual(sel.gate, null, '未声明 gate 的步透传为 null（非 undefined）');
+});
+
+test('每步都有非空 guide（人工操作指引）且经工厂透传到 step 实例', () => {
+  STEP_DEFS.forEach(d => {
+    assert.ok(typeof d.guide === 'string' && d.guide.length > 0, `${d.id} STEP_DEFS 应有非空 guide`);
+  });
+  const wf = buildInitialWorkflow({}, () => 'w1');
+  wf.steps.forEach(s => {
+    assert.ok(typeof s.guide === 'string' && s.guide.length > 0, `${s.id} 实例应透传非空 guide`);
+  });
 });

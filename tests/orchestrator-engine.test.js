@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl, buildReviewHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl, buildPublishHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -331,23 +331,24 @@ test('reviewGate：null（离线/超时）→ 照常跑 adapter', async () => {
   assert.strictEqual(ran, true);
 });
 
-test('manualGate：硬闸——即使大脑判 pass 也停下等人工，不跑 adapter', async () => {
-  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+test('publish 两段闸：即使大脑判 pass 也停 await-check，不跑 adapter', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, gate: 'publish' })]));
   const queue = makeMutationQueue(store.read, store.write);
   let ran = false;
   const engine = makeEngine({
     read: store.read, queue, now: () => 1,
     stepRunner: async () => { ran = true; return { status: 'done' }; },
-    reviewGate: async () => ({ verdict: 'pass' }),   // 大脑放行也不放行：硬闸不依赖大脑判断
+    reviewGate: async () => ({ verdict: 'pass' }),   // 大脑放行也不放行：publish 闸不依赖大脑判断
   });
   await engine.advance('w1');
   assert.strictEqual(ran, false);
   assert.strictEqual(wf0(store).status, 'paused');
-  assert.strictEqual(wf0(store).hitl.kind, 'review');
+  assert.strictEqual(wf0(store).hitl.kind, 'publish');
+  assert.strictEqual(wf0(store).hitl.phase, 'await-check');
 });
 
-test('manualGate：无 reviewGate 注入也硬闸停下（不依赖大脑）', async () => {
-  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, manualGate: true })]));
+test('publish 两段闸：无 reviewGate 注入也停 await-check（不依赖大脑）', async () => {
+  const store = fakeStore(mkSkeleton([mkStep({ id: 'pub', reversible: false, gate: 'publish' })]));
   const queue = makeMutationQueue(store.read, store.write);
   let ran = false;
   const engine = makeEngine({
@@ -357,7 +358,26 @@ test('manualGate：无 reviewGate 注入也硬闸停下（不依赖大脑）', a
   await engine.advance('w1');
   assert.strictEqual(ran, false);
   assert.strictEqual(wf0(store).status, 'paused');
-  assert.strictEqual(wf0(store).hitl.kind, 'review');
+  assert.strictEqual(wf0(store).hitl.kind, 'publish');
+  assert.strictEqual(wf0(store).hitl.phase, 'await-check');
+});
+
+test('buildPublishHitl 形态', () => {
+  const h = buildPublishHitl({ id: 'publish', label: '合规预检+发布' }, { phase: 'await-publish', checkResult: { passCount: 3 } });
+  assert.strictEqual(h.kind, 'publish');
+  assert.strictEqual(h.phase, 'await-publish');
+  assert.strictEqual(h.checkResult.passCount, 3);
+  assert.strictEqual(h.editable, false);
+  assert.strictEqual(h.stepId, 'publish');
+});
+
+test('三个 builder 都把 step.guide 带进 hitl（操作指引上卡）', () => {
+  const step = { id: 'x', label: 'L', guide: '去做某事再回来点确认' };
+  assert.strictEqual(buildHitl(step, {}).guide, '去做某事再回来点确认');
+  assert.strictEqual(buildReviewHitl(step, {}).guide, '去做某事再回来点确认');
+  assert.strictEqual(buildPublishHitl(step, {}).guide, '去做某事再回来点确认');
+  // 无 guide → 空串（非 undefined）
+  assert.strictEqual(buildHitl({ id: 'y', label: 'L' }, {}).guide, '');
 });
 
 test('reviewGate：可逆步(reversible:true) 不复核', async () => {
@@ -428,6 +448,14 @@ test('buildReviewHitl：review-kind + concerns', () => {
   assert.strictEqual(h.editable, false);
   assert.deepStrictEqual(h.concerns, ['c1']);
   assert.strictEqual(h.targetUrl, 'u');
+});
+
+test('buildReviewHitl 带 product → keyValues 只含非空字段（复核卡可核对放行前数据）', () => {
+  const h = buildReviewHitl({ id: 'gen_label', label: 'L' }, { concerns: [] }, { skc: 'S1', spuId: '', poNo: null, orderNo1688: 'O9' });
+  assert.strictEqual(h.keyValues.skc, 'S1');
+  assert.strictEqual(h.keyValues.orderNo1688, 'O9');
+  assert.ok(!('spuId' in h.keyValues), '空串字段不显示');
+  assert.ok(!('poNo' in h.keyValues), 'null 字段不显示');
 });
 
 // ── 利润率计算 computeMargin（确认申报价步核价分析；毛利率口径=(申报-成本-运费)/申报）──

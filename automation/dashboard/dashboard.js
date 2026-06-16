@@ -5,6 +5,7 @@ import { renderTopbar } from './components/topbar.js';
 import { renderQueueList } from './components/queue-list.js';
 import { renderOverviewBar } from './components/overview-bar.js';
 import { renderStepList } from './components/step-list.js';
+import { renderStepDetail } from './components/step-detail.js';
 import { createBrainStream } from './components/brain-stream.js';
 import { renderHitlQueue } from './components/hitl-queue.js';
 import { startStorageSource } from './state/storage-source.js';
@@ -25,13 +26,15 @@ const store = createStore();
 const contentEl = document.getElementById('content');
 const overviewMount = document.createElement('div');
 const stepMount = document.createElement('div');
+const stepDetailMount = document.createElement('div');   // 选中步详情（产物/状态/报错/指引）
 const brainMount = document.createElement('div');
 const hitlMount = document.createElement('div');
 
+// 右列：大脑流 + （人工介入卡 ⇄ 选中步详情 同位切换）。看历史步→收 hitl 显详情；回当前步→还原 hitl。
 const rCol = document.createElement('div');
 rCol.className = 'r-col';
 rCol.style.cssText = 'display:flex;flex-direction:column;gap:14px';
-rCol.append(brainMount, hitlMount);
+rCol.append(brainMount, hitlMount, stepDetailMount);
 
 const l2cols = document.createElement('div');
 l2cols.className = 'l2-cols';
@@ -105,8 +108,37 @@ function onSelectWorkflow(id) {
 }
 
 function onSelectStep(id) {
-  selectedStepId = id;
-  renderStepList(stepMount, selectActiveWorkflow(store.getState().skeleton.batch), selectedStepId, onSelectStep);
+  selectedStepId = (selectedStepId === id) ? null : id;   // 再点同一步 → 取消选中（还原人工介入卡）
+  const wf = selectActiveWorkflow(store.getState().skeleton.batch);
+  renderStepList(stepMount, wf, selectedStepId, onSelectStep);
+  renderRightPanels(wf);
+}
+
+function onCloseDetail() {   // 详情面板「返回」→ 取消选中，还原人工介入卡
+  selectedStepId = null;
+  const wf = selectActiveWorkflow(store.getState().skeleton.batch);
+  renderStepList(stepMount, wf, selectedStepId, onSelectStep);
+  renderRightPanels(wf);
+}
+
+// 右列同位切换：选中了【非当前步】→ 收起人工介入卡、原位显示该步详情；否则显示人工介入卡。
+// 选中步不在当前 workflow（如切了批次）→ 回退显示人工介入卡，不留空白。
+function renderRightPanels(wf) {
+  const steps = (wf && wf.steps) || [];
+  const curId = steps[wf && wf.cursor] ? steps[wf.cursor].id : null;
+  const sel = selectedStepId && steps.find(s => s.id === selectedStepId);
+  const showDetail = !!(sel && selectedStepId !== curId);
+  if (showDetail) {
+    hitlMount.style.display = 'none';
+    hitlMount.replaceChildren();
+    stepDetailMount.style.display = '';
+    renderStepDetail(stepDetailMount, wf, selectedStepId, onCloseDetail);
+  } else {
+    stepDetailMount.style.display = 'none';
+    stepDetailMount.replaceChildren();
+    hitlMount.style.display = '';
+    renderHitlQueue(hitlMount, wf, onHitlAction);
+  }
 }
 
 // HITL 动作 → WF_* 回路：buildHitlMessage 映射后 sendMessage；回填校验失败 alert 提示。
@@ -129,12 +161,24 @@ function renderAll(state) {
   renderQueue(state);
   renderOverviewBar(overviewMount, wf);
   renderStepList(stepMount, wf, selectedStepId, onSelectStep);
-  renderHitlQueue(hitlMount, wf, onHitlAction);
+  renderRightPanels(wf);
   brainStream.update(state);
 }
 
 // 订阅 store：任一变更触发重渲
 store.subscribe(renderAll);
+
+// publish 自动发布开关：dashboard 读 storage 作 checkbox 初态（bg 在 WF_PUBLISH_CHECK 时写回）。
+// 用全局而非 store：它是 UI 偏好（治本次/记忆），不进权威骨架。
+window.__AS_PUBLISH_AUTO__ = false;
+try {
+  chrome.storage.local.get('as_publish_autopublish')
+    .then(o => { window.__AS_PUBLISH_AUTO__ = !!o.as_publish_autopublish; renderAll(store.getState()); })
+    .catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.as_publish_autopublish) window.__AS_PUBLISH_AUTO__ = !!changes.as_publish_autopublish.newValue;
+  });
+} catch (_) {}
 
 // 首屏渲染（store 初始为空 batch，先渲空态，源接入后再重渲）
 renderAll(store.getState());

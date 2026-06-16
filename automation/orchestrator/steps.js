@@ -23,22 +23,27 @@
     { id: 'select_product',   label: '选品',                  type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
       // 记录选品的源商品 Temu 详情页 url（流水线第一个锚点）。当前仅记录进 product.sourceUrl；
       // 后续方案承接：基于此 url 自动化完成店小秘一键采集（collect_dxm 升级为 url 驱动半自动）。
+      guide: '在 Temu 商家中心选定要做的商品 → 复制该商品详情页 URL 填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [
         { key: 'sourceUrl', label: 'Temu 商品详情页 URL', fieldType: 'text', required: true },
       ] } },
     { id: 'collect_dxm',      label: '店小秘采集建品',        type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com',
+      guide: '用店小秘插件对该商品一键采集建品并完成编辑 → 把生成的 SKC（SPU ID 若有）填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
       ] } },
-    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, manualGate: true, domain: 'dianxiaomi.com' },
+    { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, gate: 'publish', domain: 'dianxiaomi.com',
+      guide: '先在店小秘打开该商品编辑页（URL 含 edit）→ 点「检查」看合规结果 → 通过后点「发布」（或勾「自动发布」让检查通过即发）。' },
     { id: 'get_return_price', label: '获取返单价',            type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com',
       // 等 Temu 后台审核返回的参考申报价，人工从商家中心抄填（大脑无从推导 → noFill）。
+      guide: '等 Temu 后台审核返回参考申报价（小时/天级）→ 在商家中心查到后把参考申报价填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [
         { key: 'returnPrice', label: 'Temu 参考申报价', fieldType: 'number', required: true },
       ] } },
     { id: 'compare_1688',     label: '1688比价核价',          type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
       // 核价输入：货源链接 + 1688成本价 + 国内运费（供下一步「确认申报价」算毛利率）。运费可空按 0 计。
+      guide: '在 1688 找到货源 → 把货源链接、成本价、国内运费（可空按 0）填入下方 → 点提交；下一步据此算毛利率。',
       hitlSpec: { noFill: true, fields: [
         { key: 'url1688',          label: '1688 货源链接', fieldType: 'text',   required: true },
         { key: 'cost1688',         label: '1688 成本价',   fieldType: 'number', required: true },
@@ -47,18 +52,27 @@
     // 确认申报价格：HITL 人工确认步，内嵌核价分析（analysis:'margin'）。
     // engine.buildHitl 据 analysis 标记调 computeMargin 把毛利率填进 keyValues 展示（复用纯确认型卡）；
     // 人工在商家中心实点「确认申报价格」后于 dashboard 点确认 → orchHitlConfirm 落 grossMargin 快照 → 推进。
-    { id: 'confirm_declare_price', label: '确认申报价格',     type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com', analysis: 'margin' },
+    { id: 'confirm_declare_price', label: '确认申报价格',     type: 'hitl', feature: null,                   reversible: null,  domain: 'seller.temu.com', analysis: 'margin',
+      guide: '核对下方毛利率，可接受则在 Temu 商家中心实际点「确认申报价格」→ 回此点「确认完成」推进。' },
     { id: 'order_1688',       label: '1688下单',              type: 'hitl', feature: null,                   reversible: null,  domain: '1688.com',
+      guide: '在 1688 对该货源下单付款 → 把 1688 订单号填入下方 → 点提交。',
       hitlSpec: { noFill: true, fields: [{ key: 'orderNo1688', label: '1688 订单号', fieldType: 'text', required: true }] } },
     { id: 'gen_label',        label: '货号+标签+合规+标签图', type: 'auto', feature: 'auto_gen_label',        reversible: false, domain: 'seller.temu.com',
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动打开 Temu 货号/标签页生成货号+标签+合规+标签图。',
       target: { url: 'https://seller.temu.com/goods/label', readySignal: 'tr[data-testid="beast-core-table-body-tr"]' } },
-    { id: 'create_sku',       label: '建店小秘SKU',           type: 'auto', feature: 'create_purchase_order', reversible: true,  domain: 'agentseller.temu.com' },
-    { id: 'create_po',        label: '创建采购单',            type: 'auto', feature: 'create_purchase_order', reversible: false, domain: 'dianxiaomi.com' },
-    { id: 'wait_payment',     label: '等财务付款',            type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com' },
-    { id: 'wait_arrival',     label: '等到货',                type: 'hitl', feature: null,                   reversible: null,  domain: 'kuajingmaihuo.com' },
+    { id: 'create_sku',       label: '建店小秘SKU',           type: 'auto', feature: 'create_purchase_order', reversible: true,  domain: 'agentseller.temu.com',
+      guide: '自动步：系统据 1688 链接在店小秘自动建 SKU，无需操作；若报错按错误卡提示处理。' },
+    { id: 'create_po',        label: '创建采购单',            type: 'auto', feature: 'create_purchase_order', reversible: false, domain: 'dianxiaomi.com',
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动在店小秘创建采购单（填 1688 订单号 + 配对）。' },
+    { id: 'wait_payment',     label: '等财务付款',            type: 'hitl', feature: null,                   reversible: null,  domain: 'dianxiaomi.com',
+      guide: '等财务在店小秘完成采购单付款 → 付款后点「确认完成」推进。' },
+    { id: 'wait_arrival',     label: '等到货',                type: 'hitl', feature: null,                   reversible: null,  domain: 'kuajingmaihuo.com',
+      guide: '等货到仓 → 到货后点「确认完成」推进。' },
     { id: 'pack_label',       label: '打印打包标签',          type: 'auto', feature: 'packing_label',         reversible: true,  domain: 'seller.kuajingmaihuo.com',
+      guide: '自动步：系统自动打开发货台打印打包标签，无需操作；若报错按错误卡提示处理。',
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[class*="shipping-list_choose"]' } },
     { id: 'ship',             label: '确认发货',              type: 'auto', feature: 'auto_ship',             reversible: false, domain: 'kuajingmaihuo.com',
+      guide: '确认下方已采集数据无误 → 点「确认提交」放行；系统会自动打开发货台执行确认发货。',
       target: { url: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list', readySignal: '[data-testid="beast-core-table-body-tr"]' } },
   ];
 
@@ -82,7 +96,7 @@
         id: d.id, label: d.label, feature: d.feature, type: d.type,
         reversible: d.reversible, domain: d.domain, target: d.target || null,
         hitlSpec: d.hitlSpec || null,
-        manualGate: d.manualGate || false, analysis: d.analysis || null,
+        gate: d.gate || null, analysis: d.analysis || null, guide: d.guide || '',
         status: 'pending', startedAt: null, endedAt: null,
         result: null, brainBrief: '(确定性)', note: null, committing: false, error: null, retryCount: 0, reviewed: false,
       })),
