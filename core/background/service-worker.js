@@ -164,6 +164,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'OPTIMIZE_IMAGE') {
+    sendToNativeHost({
+      action: 'optimize_image',
+      imageUrl: msg.data.imageUrl,
+      options: msg.data.options || {}
+    })
+      .then(result => sendResponse({ success: true, result }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (msg.type === 'GET_STATUS') {
     sendResponse({ connected: nativePort !== null });
   }

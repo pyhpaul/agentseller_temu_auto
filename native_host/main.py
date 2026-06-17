@@ -43,6 +43,12 @@ def _generate_label(msg: dict) -> dict:
     return bartender.handle(msg)
 
 
+def _optimize_image(msg: dict) -> dict:
+    """主图优化，惰性 import image_optimize（urllib 下载 + 可插拔 provider，对齐 _generate_label 惰性）。"""
+    from handlers import image_optimize
+    return image_optimize.handle(msg)
+
+
 def _get_installed_version(_msg: dict) -> dict:
     """读 EXE 同目录的 installed_version.txt，返回 installer 写入的版本号。
 
@@ -67,6 +73,7 @@ def _get_installed_version(_msg: dict) -> dict:
 # 通用文件能力走 file_ops；feature 专属 handler（generate_label）惰性 import。
 DISPATCH = {
     'generate_label': _generate_label,
+    'optimize_image': _optimize_image,
     'get_installed_version': _get_installed_version,
     'pick_file': file_ops.pick_file,
     'pick_folder': file_ops.pick_folder,
