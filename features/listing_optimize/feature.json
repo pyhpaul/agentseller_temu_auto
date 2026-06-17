@@ -1,11 +1,11 @@
 {
-  "id": "check_and_publish",
-  "icon": "✅",
-  "label": "检查与发布",
+  "id": "listing_optimize",
+  "icon": "✨",
+  "label": "标题主图优化",
   "locked": false,
-  "order": 3,
+  "order": 4,
   "content_script": "content/index.js",
   "host_permissions": ["https://www.dianxiaomi.com/*", "https://*.dianxiaomi.com/*"],
   "content_matches": ["https://www.dianxiaomi.com/*", "https://*.dianxiaomi.com/*"],
-  "permissions": ["storage"]
+  "permissions": ["storage", "nativeMessaging"]
 }
