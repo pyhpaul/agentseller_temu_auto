@@ -155,10 +155,13 @@
   }
 
   function getTitleField() {
-    const el = document.querySelector('input.ant-input-sm[maxlength="250"]')
-      || document.querySelector('input[maxlength="250"]');
+    // 店小秘 temu/edit：产品标题在 label「产品标题」form-item 内（ant-input-sm，无 maxlength）。
+    // 旧 maxlength=250 selector 在改版后失效（实测命中 0）；用 label 定位最稳。
+    // 区别于「英文标题」(常空) / sourceUrl(供货 URL，maxlength=1000)。
+    const item = findFormItemByLabelText('产品标题');
+    const el = item && (item.querySelector('input.ant-input-sm') || item.querySelector('input.ant-input') || item.querySelector('input'));
     return el
-      ? { value: el.value || '', el, source: 'maxlength=250' }
+      ? { value: el.value || '', el, source: '产品标题 form-item' }
       : { value: null, el: null, source: null };
   }
 
