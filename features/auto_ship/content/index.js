@@ -201,6 +201,14 @@
     return c.length ? c[c.length - 1] : null;
   }
   function isVisible(el) { return !!(el && el.getClientRects().length); }
+  // 轮询等 fn() 返回真值（drawer 内字段异步渲染：容器先出、子控件后补，直接查会扑空）。
+  // 超时返回 fn() 最后一次结果（可能 falsy），由调用方报错。
+  async function waitFor(fn, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 6000);
+    let r = fn();
+    while (!r && Date.now() < deadline) { await U.sleep(150); r = fn(); }
+    return r;
+  }
   // Popover/Popconfirm 容器（Beast 二次确认走 popover，非 modal——见 samples/first_ship_small_modal.txt）
   function topPopover() {
     const pops = Array.from(document.querySelectorAll('[class*="popoverContent"]')).filter(isVisible);
@@ -357,12 +365,14 @@
   // ── 编辑页（Drawer）填写：包装方式 radio + 箱数 input，按 form-item id 精确定位 + 写后读校验 ──
   async function selectPackType(label) {
     const scope = editScope();
-    const formItem = scope.querySelector('#packagingType') || scope;
-    const radios = Array.from(formItem.querySelectorAll('[data-testid="beast-core-radio"]'));
-    const radio = radios.find((r) => {
-      const t = r.querySelector('[class*="textWrapper"]') || r;
-      return U.normText(t.textContent) === label;
-    });
+    // 等目标 radio 渲染：#packagingType 容器会先于内部 radio 子项出现，直接查会拿到空数组（字段级等待缺口）
+    const radio = await waitFor(() => {
+      const formItem = scope.querySelector('#packagingType') || scope;
+      return Array.from(formItem.querySelectorAll('[data-testid="beast-core-radio"]')).find((r) => {
+        const t = r.querySelector('[class*="textWrapper"]') || r;
+        return U.normText(t.textContent) === label;
+      });
+    }, 6000);
     if (!radio) throw markRead(new Error(`读取失败：编辑页未找到包装方式「${label}」`));
     radio.click();                                   // radio 是 label，label.click 才触发（同 checkbox）
     await U.sleep(300);
@@ -371,9 +381,16 @@
   }
   async function fillBoxCount(want) {
     const scope = editScope();
-    const formItem = scope.querySelector('#expressPackageNum') || scope;
-    const input = formItem.querySelector('input[data-testid="beast-core-inputNumber-htmlInput"]')
-      || formItem.querySelector('input[placeholder*="箱"]') || formItem.querySelector('input');
+    // 等箱数输入框渲染：fillEditPage 只等了 #packagingType，#expressPackageNum 可能更晚出现（字段级等待缺口）。
+    // 优先等 #expressPackageNum 内 inputNumber；超时再退 placeholder/裸 input 兜底（不让兜底抢跑等待）。
+    let input = await waitFor(() => {
+      const fi = scope.querySelector('#expressPackageNum');
+      return fi && fi.querySelector('input[data-testid="beast-core-inputNumber-htmlInput"]');
+    }, 6000);
+    if (!input) {
+      const fi = scope.querySelector('#expressPackageNum') || scope;
+      input = fi.querySelector('input[placeholder*="箱"]') || fi.querySelector('input');
+    }
     if (!input) throw markRead(new Error('读取失败：编辑页未找到「发货总箱/包数」输入框'));
     U.setInputValue(input, String(want));
     await U.sleep(200);
@@ -472,14 +489,32 @@
     }
     throw markRead(new Error('读取失败：未出现「确认装箱完毕并发货」二次确认弹窗'));
   }
+  // 清残留 modal/popover：失败可能发生在 drawer 之前的弹窗阶段（先发货后打印 / 去装箱发货确认），
+  // 此时 closeEditPage 的 drawer 分支清不到，残留弹窗的遮罩层会拦截后续所有单的点击 → 大面积连锁失败。
+  // 正常无残留时为 no-op（modals 空、无 topModal/topPopover 不派发 ESC），安全。
+  async function dismissStaleLayers() {
+    const modals = Array.from(document.querySelectorAll('[data-testid="beast-core-modal-inner"]')).filter(isVisible);
+    for (const m of modals) {
+      const dialog = m.closest('[role="dialog"]') || m;
+      const btn = findClickableByText(m, '取消')
+        || dialog.querySelector('[data-testid="beast-core-icon-close"]');
+      if (btn) { btn.click(); await U.sleep(150); }
+    }
+    if (topModal() || topPopover()) {                // 仍有残留 → ESC 兜底（Beast 弹层多数响应）
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      await U.sleep(200);
+    }
+  }
   async function closeEditPage() {
     const scope = editScope();
-    if (scope === document) return;                  // 没有 drawer，无需关
-    const footer = scope.querySelector('[class*="footer"]');
-    const btn = (footer && findClickableByText(footer, '取消'))
-      || scope.querySelector('[data-testid="beast-core-icon-close"]');
-    if (btn) btn.click();
-    await waitEditGone(5000);
+    if (scope !== document) {                         // 有 drawer：点 footer「取消」或标题 X 关闭
+      const footer = scope.querySelector('[class*="footer"]');
+      const btn = (footer && findClickableByText(footer, '取消'))
+        || scope.querySelector('[data-testid="beast-core-icon-close"]');
+      if (btn) btn.click();
+      await waitEditGone(5000);
+    }
+    await dismissStaleLayers();                        // 无论有无 drawer，都清残留 modal/popover
   }
 
   // ════════ OFF 模式逐单确认框（可拖动，不超时）════════
@@ -557,6 +592,7 @@
 
   // 取下一个未处理发货单号 + 更新 run.total；本轮无 → 切 tab 刷新再确认一次（防刷新延迟脏数据）。
   async function scanForPick() {
+    await dismissStaleLayers();                        // 取单前清上一单残留弹层（遮罩会拦截 tab 切换/扫描/点击）
     await ensureOnPendingTab();                        // 每次都先切回待装箱发货 tab
     let live = await scanOrderNos();
     // 发货后 Temu 异步刷新表格：上一个已发货单还在扫描结果里 = 表格还是旧数据（中间态）。
