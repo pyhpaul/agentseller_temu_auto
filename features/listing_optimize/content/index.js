@@ -31,8 +31,10 @@
   }
 
   function getTitleField() {
-    const el = document.querySelector('input.ant-input-sm[maxlength="250"]')
-      || document.querySelector('input[maxlength="250"]');
+    // 店小秘 temu/edit：产品标题在 label「产品标题」的 form-item 内（ant-input-sm，无 maxlength）。
+    // 区别于「英文标题」(常空) / sourceUrl(供货 URL，maxlength=1000)。用 label 定位最稳。
+    const item = findFormItemByLabelText('产品标题');
+    const el = item && (item.querySelector('input.ant-input-sm') || item.querySelector('input.ant-input') || item.querySelector('input'));
     return el ? { value: el.value || '', el } : { value: null, el: null };
   }
 
@@ -145,7 +147,9 @@
     const item = findFormItemByLabelText('产品轮播图');
     if (!item) return { ok: false, error: '读取失败：未找到产品轮播图区域' };
     const input = item.querySelector('input[type="file"]');
-    if (!input) return { ok: false, error: '读取失败：未找到轮播图上传控件（待 e2e 校准 selector）' };
+    // 店小秘轮播图上传是「选择图片」弹窗/图片库流程（实测无裸 input[type=file]），File 注入行不通。
+    // 自动替换需逆向该上传弹窗（待后续）；先明确报业务约束，不假装成功（对齐错误分层）。
+    if (!input) return { ok: false, error: '店小秘轮播图是「选择图片」弹窗流程（无直接上传框），暂不支持自动替换主图；请对照优化图在店小秘手动替换' };
     const prevCount = item.querySelectorAll('img').length;
     const dt = new DataTransfer();
     dt.items.add(b64ToFile(imageB64, 'optimized-main.png', 'image/png'));
