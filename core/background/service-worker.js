@@ -175,6 +175,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'REFINE_TITLE') {
+    sendToNativeHost({
+      action: 'refine_title',
+      original: msg.data.original,
+      constraints: msg.data.constraints || {}
+    })
+      .then(result => sendResponse({ success: true, result }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (msg.type === 'GET_STATUS') {
     sendResponse({ connected: nativePort !== null });
   }

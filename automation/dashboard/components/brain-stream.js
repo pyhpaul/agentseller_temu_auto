@@ -1,6 +1,6 @@
 // brain-stream.js — ③ 大脑实时流。增量 append（不全量重渲）：维护已渲染游标，只追加新事件，自动滚底。
-// kind ∈ review|diagnose|selfheal|suggest|refine|log，对应 .bevent.<kind> 着色（spec §5.3）。
-// suggest（回填）/refine（标题润色）无专属着色，走默认 .bevent 渲染（通用：kind 文本 + 基础样式）。
+// kind ∈ review|diagnose|selfheal|suggest|log，对应 .bevent.<kind> 着色（spec §5.3）。
+// suggest（回填）无专属着色，走默认 .bevent 渲染（通用：kind 文本 + 基础样式）。
 import { h, icon } from './dom.js';
 
 function fmtTs(ts) {
