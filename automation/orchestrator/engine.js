@@ -27,7 +27,7 @@
     const out = {};
     if (!result) return out;
     // grossMargin 不在白名单：它是 ⑥ 确认时 orchHitlConfirm 服务端 computeMargin 算落，不从 step.result 回填。
-    for (const k of ['sourceUrl', 'spuId', 'skc', 'skuNo', 'url1688', 'orderNo1688', 'poNo', 'returnPrice', 'cost1688', 'domesticShipping']) {
+    for (const k of ['sourceUrl', 'dxmEditUrl', 'spuId', 'skc', 'skuNo', 'url1688', 'orderNo1688', 'poNo', 'returnPrice', 'cost1688', 'domesticShipping']) {
       if (result[k] != null) out[k] = result[k];
     }
     return out;

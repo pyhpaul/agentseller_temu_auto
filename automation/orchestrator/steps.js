@@ -32,6 +32,8 @@
       hitlSpec: { noFill: true, fields: [
         { key: 'skc',   label: 'SKC（采集后创建，唯一）', fieldType: 'text', required: true },
         { key: 'spuId', label: 'SPU ID（可选）',          fieldType: 'text', required: false },
+        // dxmEditUrl：店小秘编辑页 URL，发布步（publish）取页锚点。可选——缺则 publish 退回旧域名 query（向后兼容）。
+        { key: 'dxmEditUrl', label: '店小秘编辑页 URL（发布步用）', fieldType: 'text', required: false },
       ] } },
     { id: 'publish',          label: '合规预检+发布',         type: 'auto', feature: 'check_and_publish',     reversible: false, gate: 'publish', domain: 'dianxiaomi.com',
       guide: '先在店小秘打开该商品编辑页（URL 含 edit）→ 点「检查」看合规结果 → 通过后点「发布」（或勾「自动发布」让检查通过即发）。' },
@@ -81,7 +83,7 @@
 
   // 初始 product 工厂（buildInitialWorkflow + orchestrator restart 重头共用，单一真源防字段漂移）。
   function emptyProduct(label) {
-    return { label: label || null, sourceUrl: null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null,
+    return { label: label || null, sourceUrl: null, dxmEditUrl: null, spuId: null, skc: null, skuNo: null, url1688: null, orderNo1688: null, poNo: null,
       returnPrice: null, cost1688: null, domesticShipping: null, grossMargin: null };
   }
 

@@ -168,3 +168,17 @@ test('每步都有非空 guide（人工操作指引）且经工厂透传到 step
     assert.ok(typeof s.guide === 'string' && s.guide.length > 0, `${s.id} 实例应透传非空 guide`);
   });
 });
+
+test('collect_dxm: hitlSpec 加 dxmEditUrl 字段（可选、发布步取页锚点）', () => {
+  const s = STEP_DEFS.find(d => d.id === 'collect_dxm');
+  const f = s.hitlSpec.fields.find(x => x.key === 'dxmEditUrl');
+  assert.ok(f, 'collect_dxm 含 dxmEditUrl 字段');
+  assert.strictEqual(f.required, false, 'dxmEditUrl 可选（缺则退回旧 query，向后兼容）');
+  assert.strictEqual(f.fieldType, 'text');
+});
+
+test('emptyProduct + buildInitialWorkflow: 含 dxmEditUrl=null', () => {
+  assert.strictEqual(emptyProduct('X').dxmEditUrl, null);
+  const wf = buildInitialWorkflow({ label: 'X' }, () => 'w1');
+  assert.strictEqual(wf.product.dxmEditUrl, null);
+});
