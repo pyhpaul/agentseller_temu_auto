@@ -65,7 +65,7 @@ features/check_and_publish/
 
 | # | id | severity | 数据源 |
 |---|----|---|---|
-| 1 | `title_length` | block | DOM `maxlength=250` + 店小秘官方 |
+| 1 | `title_length` | block | label「产品标题」form-item + 店小秘官方（上限 250） |
 | 2 | `title_forbidden` | block | `samples/标题.docx` |
 | 3 | `description_forbidden` | block | 同上（共用） |
 | 4 | `category_forbidden` | block | `samples/类目.docx`（敏感品类：母婴/儿童/含电/医疗/化妆品等，命中即阻断，取值用 `.category-list` 全路径） |
@@ -86,7 +86,8 @@ features/check_and_publish/
 ## 关键 DOM 策略
 
 ### 标题
-`input.ant-input-sm[maxlength="250"]` — maxlength=250 是稳定锚点；页面有两个候选（中文标题 + 英文标题），取第一个 = 当前编辑中的主标题。
+`findFormItemByLabelText('产品标题')` 定位 label「产品标题」的 form-item，取其内 `input.ant-input-sm`（退化到 `.ant-input`/`input`）。
+**旧锚点 `input[maxlength="250"]` 在店小秘改版后失效**（属性已去除，实测命中 0）——#85 改走 label 定位（2026-06-17 e2e 实测 temu/edit 校准）。区别于「英文标题」（常空）/ sourceUrl 供货 URL（maxlength=1000）。length 上限 250 由 `title_length` 规则单独校验。
 
 ### 描述（不完美）
 描述靠模态编辑器渲染，**模态未打开时** 4 层 fallback（contenteditable→name=description→编辑描述按钮 preview→空 contenteditable 兜底）通常都取不到值，规则 skipped。这是店小秘产品设计决定，绕不开。
@@ -155,5 +156,5 @@ python build/dev.py    # watch 同步源 → dist
 # chrome 加载 dist/extension/ → 店小秘编辑页 → FAB → Hub → ✅
 ```
 
-取值层问题：DevTools console 跑 `document.querySelectorAll('input[maxlength="250"]')` 等手动验证选择器。
+取值层问题：DevTools console 手动验证选择器，如标题 `[...document.querySelectorAll('.ant-form-item-required')].find(i=>i.textContent.includes('产品标题'))`、分类 `document.querySelector('.category-list')`。（2026-06-17 e2e 校准：除标题旧 maxlength 锚点失效外，其余 selector 均有效。）
 发布失败：看 Toast 错误文案 — 找不到按钮 / 下拉未展开 / 找不到「立即发布」分别对应不同选择器问题。
