@@ -643,6 +643,8 @@
     }
     const refineBtn = makeBtn('✨ 润色标题', '#1677ff', () => onRefineTitle(viewEl, refineBtn));
     viewEl.appendChild(refineBtn);
+    const optimizeBtn = makeBtn('🖼 优化主图', '#1677ff', () => onOptimizeImage(viewEl, optimizeBtn));
+    viewEl.appendChild(optimizeBtn);
     viewEl.appendChild(makeBtn('✓ 确认发布', '#52c41a', () => onPublish(viewEl)));
     viewEl.appendChild(makeBtn('取消', '#888', () => resetAndRender(viewEl)));
   }
@@ -752,6 +754,86 @@
       if (!ap.ok) { showToast(ap.error, 'err'); return; }
       showToast('标题已更新，已重新检查', 'ok');
       onCheck(viewEl);   // 改了标题 → 重跑全部检查（对比卡随之刷新）
+    }));
+    viewEl.appendChild(makeBtn('放弃', '#888', () => renderInternal(viewEl)));
+  }
+
+  // ─── 主图优化（保留主体换背景降重，走 native host provider；spec 2026-06-17）──────
+  // 读轮播图主图 url → sendNative('OPTIMIZE_IMAGE') → 收 image_b64。失败/未接入 → 保留原图（不阻断）。
+  async function capOptimizeImage() {
+    const imgs = getCarouselImagesField();
+    const first = imgs.value && imgs.value[0];
+    if (!first || !first.src) return { available: false, error: '读取失败：未找到主图' };
+    let resp;
+    try {
+      resp = await window.AgentSeller.sendNative('OPTIMIZE_IMAGE', { imageUrl: first.src, options: {} });
+    } catch (e) {
+      return { available: false, error: '优化不可用：' + ((e && e.message) || e) + '，保留原图' };
+    }
+    if (!resp || !resp.success) return { available: false, error: (resp && resp.error) || '优化失败，保留原图' };
+    return { available: true, originalSrc: first.src, imageB64: resp.image_b64 };
+  }
+
+  function b64ToFile(b64, name, mime) {
+    const bin = atob(b64); const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name, { type: mime });
+  }
+
+  // 采用：base64 → File → 注入轮播图上传 input + 写后读（等轮播图 img 新增）。
+  // ⚠ 注入=新增优化图到轮播图（append 语义）；「替换原主图/置首」需店小秘删图/调序 UI，待 e2e dump DOM 定。
+  // selector 用 getCarouselImagesField 同款「产品轮播图」form-item 内 input[type=file]，e2e 校准。
+  async function capApplyImage(imageB64) {
+    const item = findFormItemByLabelText('产品轮播图');
+    if (!item) return { ok: false, error: '读取失败：未找到产品轮播图区域' };
+    const input = item.querySelector('input[type="file"]');
+    if (!input) return { ok: false, error: '读取失败：未找到轮播图上传控件（待 e2e 校准 selector）' };
+    const prevCount = item.querySelectorAll('img').length;
+    const dt = new DataTransfer();
+    dt.items.add(b64ToFile(imageB64, 'optimized-main.png', 'image/png'));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    for (let i = 0; i < 20; i++) {            // 写后读：等轮播图 img 数量增加（最多 ~4s）
+      await U.sleep(200);
+      if (item.querySelectorAll('img').length > prevCount) return { ok: true };
+    }
+    return { ok: false, error: '数据校验：主图上传未生效，请重试或手动上传' };
+  }
+
+  // 优化交互：点按钮 → capOptimizeImage → 原/优化图对比 → 采用/放弃。
+  async function onOptimizeImage(viewEl, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '🖼 优化中…'; }
+    const r = await capOptimizeImage();
+    if (btn) { btn.disabled = false; btn.textContent = '🖼 优化主图'; }
+    if (!r.available) { showToast(r.error || '优化不可用', 'err'); return; }
+    renderImageCompare(viewEl, r);
+  }
+
+  function renderImageCompare(viewEl, r) {
+    const card = document.createElement('div');
+    card.className = 'tal-card';
+    card.innerHTML = '<div class="tal-card-title">主图优化（核对后采用）</div>';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;margin:6px 0;';
+    const mk = (label, src) => {
+      const box = document.createElement('div');
+      box.style.cssText = 'flex:1;text-align:center;font-size:11px;color:#888;';
+      box.innerHTML = `<div>${label}</div>`;
+      const im = document.createElement('img');
+      im.src = src;
+      im.style.cssText = 'width:100%;max-height:120px;object-fit:contain;border:1px solid #eee;border-radius:4px;margin-top:4px;';
+      box.appendChild(im);
+      return box;
+    };
+    row.appendChild(mk('原图', r.originalSrc));
+    row.appendChild(mk('优化图', 'data:image/png;base64,' + r.imageB64));
+    card.appendChild(row);
+    viewEl.appendChild(card);
+    viewEl.appendChild(makeBtn('采用并替换', '#1677ff', async () => {
+      const ap = await capApplyImage(r.imageB64);
+      if (!ap.ok) { showToast(ap.error, 'err'); return; }
+      showToast('主图已上传，建议重新检查', 'ok');
+      onCheck(viewEl);
     }));
     viewEl.appendChild(makeBtn('放弃', '#888', () => renderInternal(viewEl)));
   }
