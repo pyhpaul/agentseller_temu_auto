@@ -8,7 +8,6 @@ from brain.protocol import encode, decode
 from brain.diagnoser import diagnose
 from brain.filler import suggest
 from brain.reviewer import review
-from brain.refiner import refine_title
 from brain.model import MockModel
 
 # dashboard 连接集合（broadcast BRAIN_EVENT 用）。模块级：单进程单 batch，够用。
@@ -34,8 +33,6 @@ async def handler(websocket):
                 await _handle_fill_request(websocket, data)
             elif mtype == "REVIEW_REQUEST":
                 await _handle_review_request(websocket, data)
-            elif mtype == "TITLE_REFINE_REQUEST":
-                await _handle_title_refine_request(websocket, data)
             # 其余类型忽略
     finally:
         _dashboards.discard(websocket)
@@ -119,28 +116,6 @@ async def _handle_review_request(websocket, data):
         await websocket.send(encode("REVIEW_VERDICT", {
             "workflowId": data.get("workflowId"), "stepId": data.get("stepId"),
             "verdict": result["verdict"], "reason": result["reason"], "concerns": result["concerns"],
-        }))
-    except Exception:
-        pass
-
-
-async def _handle_title_refine_request(websocket, data):
-    """TITLE_REFINE_REQUEST → refiner 润色 → TITLE_REFINE_SUGGEST 回 bg + refine 类 BRAIN_EVENT。
-    fail-safe：refiner 任何抛点兜底退回原标题（不编造、不阻断发布）。to_thread 防阻塞模型冻结。"""
-    original = data.get("original") or ""
-    try:
-        result = await asyncio.to_thread(
-            refine_title, original, data.get("constraints") or {}, _model)
-    except Exception as e:
-        result = {"refined": original, "changes": "润色异常兜底（{}），保留原标题".format(type(e).__name__), "confidence": 0.0}
-    await _broadcast_dashboards(_brain_event(
-        data, "refine", "润色：{}".format(result["changes"])))
-    try:
-        await websocket.send(encode("TITLE_REFINE_SUGGEST", {
-            "requestId": data.get("requestId"),   # 透传供 bg 请求-响应配对（content/dashboard 入口）
-            "workflowId": data.get("workflowId"), "stepId": data.get("stepId"),
-            "original": original, "refined": result["refined"],
-            "changes": result["changes"], "confidence": result["confidence"],
         }))
     except Exception:
         pass
