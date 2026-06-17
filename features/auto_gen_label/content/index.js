@@ -304,6 +304,17 @@
     return null;
   }
 
+  // 数该 SKC 的 SKU 行数（条码页每行=一个 SKU）——编排护栏用：≥2 则自动链路不处理、转手动
+  function countRowsBySkc(skc) {
+    if (!skc) return 0;
+    let n = 0;
+    const rows = document.querySelectorAll('tr[data-testid="beast-core-table-body-tr"]');
+    for (const row of rows) {
+      if (extractRowData(row)?.skcNumber === skc) n++;
+    }
+    return n;
+  }
+
   // 按 SKU ID 精确找行——多 SKU 场景必须用这个（同 SKC 多行，按 skcNumber 会都命中首行）
   function findRowBySku(skuId) {
     if (!skuId) return null;
@@ -1900,6 +1911,10 @@
     if (!templatePath || !outputDir) return { ok: true, started: false, reason: 'NO_PATHS' };
     const skc = data && data.skc;
     if (!skc) return { ok: true, started: false, reason: 'NO_SKC' };
+    // 护栏：该 SKC 含多个 SKU 变体 → 自动链路暂只支持单 SKU（findRowBySkc 取首行会静默只做首个）
+    // → fail-fast 报错转手动 feature（手动模式手选同 SKC 多行可全做）。见 project_multisku_boundary。
+    const skuCount = countRowsBySkc(skc);
+    if (skuCount > 1) return { ok: true, started: false, reason: 'MULTI_SKU', skuCount };
     const row = findRowBySkc(skc);
     if (!row) return { ok: true, started: false, reason: 'ROW_NOT_FOUND' };
     const rowData = extractRowData(row);
