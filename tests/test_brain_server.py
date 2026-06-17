@@ -186,3 +186,43 @@ def test_review_request_reviewer_crash_holds():   # fail-safe：reviewer 抛 →
         t, d = _run(scenario())
     assert t == "REVIEW_VERDICT"
     assert d["verdict"] == "hold"
+
+
+def test_title_refine_request_returns_suggest():
+    server._dashboards.clear()
+    server._model = MockModel(canned='{"refined":"New Title ANC Earbuds","changes":"语序","confidence":0.7}')
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("HELLO", {"role": "bg"}))
+                await bg.send(encode("TITLE_REFINE_REQUEST", {
+                    "requestId": "tr_1", "workflowId": "w1", "stepId": "publish",
+                    "original": "Old Title Earbuds", "constraints": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    t, d = _run(scenario())
+    assert t == "TITLE_REFINE_SUGGEST"
+    assert d["refined"] == "New Title ANC Earbuds"
+    assert d["original"] == "Old Title Earbuds"
+    assert d["requestId"] == "tr_1"          # 透传供 bg 请求-响应配对
+
+
+def test_title_refine_crash_falls_back_to_original():   # fail-safe：refiner 抛 → 退回原标题、不阻断
+    server._dashboards.clear()
+
+    async def scenario():
+        async with websockets.serve(server.handler, "localhost", 0) as s:
+            port = s.sockets[0].getsockname()[1]
+            async with websockets.connect("ws://localhost:{}".format(port)) as bg:
+                await bg.send(encode("TITLE_REFINE_REQUEST", {
+                    "requestId": "tr_2", "workflowId": "w", "stepId": "publish",
+                    "original": "Keep This", "constraints": {}}))
+                return decode(await asyncio.wait_for(bg.recv(), timeout=2))
+
+    with mock.patch("brain.server.refine_title", side_effect=RuntimeError("boom")):
+        t, d = _run(scenario())
+    assert t == "TITLE_REFINE_SUGGEST"
+    assert d["refined"] == "Keep This"       # 兜底退回原标题
+    server._model = MockModel()              # 复位免污染其他用例
