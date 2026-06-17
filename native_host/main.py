@@ -49,6 +49,12 @@ def _optimize_image(msg: dict) -> dict:
     return image_optimize.handle(msg)
 
 
+def _refine_title(msg: dict) -> dict:
+    """标题润色，惰性 import text_refine（urllib 调 LLM + 可插拔 provider，对齐 _optimize_image 惰性）。"""
+    from handlers import text_refine
+    return text_refine.handle(msg)
+
+
 def _get_installed_version(_msg: dict) -> dict:
     """读 EXE 同目录的 installed_version.txt，返回 installer 写入的版本号。
 
@@ -74,6 +80,7 @@ def _get_installed_version(_msg: dict) -> dict:
 DISPATCH = {
     'generate_label': _generate_label,
     'optimize_image': _optimize_image,
+    'refine_title': _refine_title,
     'get_installed_version': _get_installed_version,
     'pick_file': file_ops.pick_file,
     'pick_folder': file_ops.pick_folder,
