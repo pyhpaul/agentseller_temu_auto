@@ -78,7 +78,7 @@ async function orchRequestFillSuggest(workflowId) {
   const fields = (spec && spec.fields) || [];
   if (!fields.length) return;                      // 仅回填型步
   if (spec.noFill) return;                          // 人工/外部产出步（值大脑无法推导）：字段仍人工可输入，但不请求提议——避免弱模型幻觉假值
-  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  const pageSnapshot = await orchCapturePageSnapshot(step, wf);
   orchWsClient.send('FILL_REQUEST', {
     workflowId, stepId: step.id, fields,
     context: {
@@ -110,7 +110,7 @@ const ORCH_REVIEW_TIMEOUT_MS = 15000;
 async function orchReviewGate(workflowId, step, wf) {
   if (!orchWsClient) return null;             // 大脑离线 → proceed（守不变量3：release 无 ws 永不复核）
   const key = workflowId + ':' + step.id;
-  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  const pageSnapshot = await orchCapturePageSnapshot(step, wf);
   return new Promise(resolve => {
     const timer = setTimeout(() => { orchReviewPending.delete(key); resolve(null); }, ORCH_REVIEW_TIMEOUT_MS);  // 超时→proceed
     orchReviewPending.set(key, { resolve, timer });
@@ -257,13 +257,17 @@ async function orchPublishSetError(workflowId, error) {
   });
 }
 
-// 按 domain 抓当前页 innerText 快照（截断 6000）。尽力而为：无匹配 tab / 报错 → null（filler 仅凭 workflow 上下文）。
-async function orchCapturePageSnapshot(domain) {
-  if (!domain) return null;
+// 按 step 锚点抓当前页 innerText 快照（截断 6000）。尽力而为：resolvePageTab(navigate:false) 命中即抓，
+// 不命中（页没开/无锚点退回 domain 也空）→ null，大脑凭 workflow 上下文兜底。绝不为喂快照主动开 tab。
+async function orchCapturePageSnapshot(step, wf) {
+  if (!step) return null;
+  let tab = null;
   try {
-    const tabs = await chrome.tabs.query({ url: `*://*.${domain}/*` });
-    const tab = tabs && tabs[0];
-    if (!tab) return null;
+    const r = await resolvePageTab(step, wf, { navigate: false });
+    tab = r && r.tab;
+  } catch (_) { tab = null; }
+  if (!tab || !tab.id) return null;
+  try {
     const arr = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => document.body.innerText });
     const text = arr && arr[0] && arr[0].result;
     return typeof text === 'string' ? text.slice(0, 6000) : null;
