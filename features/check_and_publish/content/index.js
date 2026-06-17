@@ -641,6 +641,8 @@
     if (warns.length || skippeds.length) {
       viewEl.appendChild(renderResultList([...warns, ...skippeds]));
     }
+    const refineBtn = makeBtn('✨ 润色标题', '#1677ff', () => onRefineTitle(viewEl, refineBtn));
+    viewEl.appendChild(refineBtn);
     viewEl.appendChild(makeBtn('✓ 确认发布', '#52c41a', () => onPublish(viewEl)));
     viewEl.appendChild(makeBtn('取消', '#888', () => resetAndRender(viewEl)));
   }
@@ -683,6 +685,75 @@
       state.phase = 'passed';
     }
     renderInternal(viewEl);
+  }
+
+  // ─── 标题润色（措辞独特化降重，brain 文本判断点；spec 2026-06-17）────────────
+  // 读当前标题 → SW(CAP_TITLE_REFINE) 转发 brain → 收 refined。brain 离线/失败 → 退回原标题（不阻断）。
+  async function capRefineTitle() {
+    const t = getTitleField();
+    if (!t.el || t.value == null) return { available: false, error: '读取失败：未找到标题输入框' };
+    let resp;
+    try {
+      resp = await chrome.runtime.sendMessage({ type: 'CAP_TITLE_REFINE', data: { original: t.value, constraints: { maxLen: 250 } } });
+    } catch (e) {
+      return { available: false, original: t.value, error: '润色不可用：大脑离线，保留原标题' };
+    }
+    if (!resp || !resp.ok) return { available: false, original: t.value, error: (resp && resp.error) || '润色不可用，保留原标题' };
+    return { available: true, original: t.value, refined: resp.refined || t.value, changes: resp.changes || '' };
+  }
+
+  // 写回标题 + 写后读校验 + 重跑 title 类规则（约束给结构：不合规则弃用，不让违规标题写回）。
+  function capApplyTitle(value) {
+    const t = getTitleField();
+    if (!t.el) return { ok: false, error: '读取失败：未找到标题输入框' };
+    U.setInputValue(t.el, value);
+    if ((t.el.value || '') !== value) {
+      return { ok: false, error: `数据校验：标题写入未生效，期望「${value}」实际「${t.el.value}」` };
+    }
+    const ctx = { fields: collectFields() };   // 重读 DOM（含刚写回的标题）；ctx 形态对齐 runChecks
+    const titleRuleIds = ['title_length', 'title_forbidden', 'chinese_punctuation', 'title_should_english', 'forbidden_words_marketing'];
+    const failed = RULES.filter(r => titleRuleIds.includes(r.id))
+      .map(r => { try { return { name: r.name, res: r.check(ctx) }; } catch (e) { return { name: r.name, res: { pass: false } }; } })
+      .filter(x => x.res && x.res.pass === false && !x.res.skipped);
+    if (failed.length) return { ok: false, error: `数据校验：润色结果不合规（${failed.map(f => f.name).join('、')}），请重试或手动改` };
+    return { ok: true, value };
+  }
+
+  // 润色交互：点按钮 → capRefineTitle → 渲染原/润色对比（可编辑）→ 采用/放弃。
+  async function onRefineTitle(viewEl, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '✨ 润色中…'; }
+    const r = await capRefineTitle();
+    if (btn) { btn.disabled = false; btn.textContent = '✨ 润色标题'; }
+    if (!r.available) { showToast(r.error || '润色不可用', 'err'); return; }
+    renderRefineCompare(viewEl, r);
+  }
+
+  function renderRefineCompare(viewEl, r) {
+    const card = document.createElement('div');
+    card.className = 'tal-card';
+    card.innerHTML = `<div class="tal-card-title">标题润色（核对后采用）</div>
+      <div class="tal-kv"><span class="tal-k">原标题</span></div>
+      <div style="font-size:12px;color:#888;margin:2px 0 8px;word-break:break-word;">${escapeHtml(r.original)}</div>
+      <div class="tal-kv"><span class="tal-k">润色（可编辑）</span></div>`;
+    const ta = document.createElement('textarea');
+    ta.value = r.refined;
+    ta.maxLength = 250;
+    ta.style.cssText = 'width:100%;min-height:54px;font-size:12px;margin:2px 0 6px;box-sizing:border-box;';
+    card.appendChild(ta);
+    if (r.changes) {
+      const ch = document.createElement('div');
+      ch.style.cssText = 'font-size:11px;color:#888;margin-bottom:6px;';
+      ch.textContent = '改动：' + r.changes;
+      card.appendChild(ch);
+    }
+    viewEl.appendChild(card);
+    viewEl.appendChild(makeBtn('采用并写回', '#1677ff', () => {
+      const ap = capApplyTitle((ta.value || '').trim());
+      if (!ap.ok) { showToast(ap.error, 'err'); return; }
+      showToast('标题已更新，已重新检查', 'ok');
+      onCheck(viewEl);   // 改了标题 → 重跑全部检查（对比卡随之刷新）
+    }));
+    viewEl.appendChild(makeBtn('放弃', '#888', () => renderInternal(viewEl)));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

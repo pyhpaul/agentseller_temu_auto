@@ -45,6 +45,7 @@ function orchEnsureWs() {
         orchApplyFillSuggest(data).catch(e => console.warn('[orch-ws] FILL_SUGGEST 写入失败', e));
       },
       REVIEW_VERDICT: (data) => { orchResolveReview(data); },
+      TITLE_REFINE_SUGGEST: (data) => { orchResolveTitleRefine(data); },
     },
   });
 }
@@ -131,6 +132,35 @@ function orchResolveReview(data) {
   clearTimeout(pending.timer);
   orchReviewPending.delete(key);
   pending.resolve({ verdict: data.verdict, reason: data.reason, concerns: data.concerns });
+}
+
+// ── 标题润色请求-响应配对（content CAP_TITLE_REFINE → ws 往返 brain → 回 content）──
+// 区别于 fire-forget 的 FILL：润色需把 SUGGEST 回给发起方，故 requestId 配对 + 超时兜底。
+const orchTitlePending = new Map();   // requestId → {resolve, timer}
+let orchTitleSeq = 0;
+const ORCH_TITLE_TIMEOUT_MS = 20000;
+
+function orchRequestTitleRefine({ original, constraints, workflowId, stepId } = {}) {
+  orchEnsureWs();
+  if (!orchWsClient) return Promise.resolve({ ok: false, error: '润色不可用：大脑离线，保留原标题' });
+  const requestId = 'tr_' + (++orchTitleSeq);
+  return new Promise(resolve => {
+    const timer = setTimeout(() => { orchTitlePending.delete(requestId); resolve({ ok: false, error: '润色超时：大脑无响应' }); }, ORCH_TITLE_TIMEOUT_MS);
+    orchTitlePending.set(requestId, { resolve, timer });
+    try {
+      orchWsClient.send('TITLE_REFINE_REQUEST', { requestId, original, constraints, workflowId, stepId });
+    } catch (e) {
+      clearTimeout(timer); orchTitlePending.delete(requestId);
+      resolve({ ok: false, error: '润色发送失败：' + String(e?.message || e) });
+    }
+  });
+}
+
+function orchResolveTitleRefine(data) {
+  const p = orchTitlePending.get(data.requestId);
+  if (!p) return;                          // 超时已 resolve / 无对应 → 忽略
+  clearTimeout(p.timer); orchTitlePending.delete(data.requestId);
+  p.resolve({ ok: true, original: data.original, refined: data.refined, changes: data.changes, confidence: data.confidence });
 }
 
 // 人工确认提交不可逆动作：标 reviewed=true + running + advance（这次 reviewGate 被 !reviewed 跳过 → 跑 adapter）。
@@ -788,6 +818,15 @@ self.AgentSellerBg.registerHandler('WF_', (msg, _sender, sendResponse) => {
       .then(() => sendResponse({ ok: true })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
+});
+
+// 标题润色入口（check_and_publish content 发 CAP_TITLE_REFINE → 经 ws 往返 brain → 回 content）。
+// 在 automation/bg-entry.js（dev-only）：release 不装配 → 无此 handler → content sendMessage 失败 →
+// capRefineTitle 走 catch 退「大脑离线」禁用态（标题润色依赖 brain 本就 dev-only，天然优雅降级）。
+self.AgentSellerBg.registerHandler('CAP_TITLE_REFINE', (msg, _sender, sendResponse) => {
+  orchRequestTitleRefine((msg && msg.data) || {})
+    .then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+  return true;
 });
 // ── end orchestrator ─────────────────────────────────────────────────────────
 

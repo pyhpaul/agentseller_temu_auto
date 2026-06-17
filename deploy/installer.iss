@@ -111,10 +111,23 @@ end;
 // + Windows kernel 释放 exe 文件 mapping。
 //
 // 注：taskkill 在进程不存在时返回 errorlevel 128，我们不区分（首装/升级都正常）。
+//
+// ⚠️ taskkill 只是兜底，不可靠：Chrome 若仍开着，其 service worker 可能在 taskkill
+// 之后立刻重连 native messaging、重新拉起 host 进程又锁住 EXE → 覆盖失败，且这之后
+// 员工再怎么重启 Chrome 也救不回来（磁盘上根本没有新 EXE），只能重装。所以装文件前
+// 先弹框提示员工【手动完全退出 Chrome】——人工关 Chrome 才是确定性的解锁手段，
+// taskkill 仅作为"员工没关干净时"的补救。
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
+  MsgBox('安装前请先【完全退出 Chrome】（关闭所有窗口，并确认任务管理器里没有 chrome.exe）。'
+         + #13#10 + #13#10 +
+         '原因：Chrome 正在运行时会占用本程序的核心文件，导致本次更新无法生效，'
+         + '而且之后重启 Chrome 也补救不了，只能重新安装一次。'
+         + #13#10 + #13#10 +
+         '已退出 Chrome 后，点「确定」继续安装。',
+         mbInformation, MB_OK);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM TemuLabelHost.exe',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(2500);
