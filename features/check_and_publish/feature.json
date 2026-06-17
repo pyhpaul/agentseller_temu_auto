@@ -7,5 +7,5 @@
   "content_script": "content/index.js",
   "host_permissions": ["https://www.dianxiaomi.com/*", "https://*.dianxiaomi.com/*"],
   "content_matches": ["https://www.dianxiaomi.com/*", "https://*.dianxiaomi.com/*"],
-  "permissions": ["storage", "nativeMessaging"]
+  "permissions": ["storage"]
 }
