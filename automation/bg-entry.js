@@ -297,6 +297,19 @@ async function orchNavigateAndWait(url, readySignal, { tabTimeoutMs = 30000, rea
   const tab = await chrome.tabs.create(createOpts);
   if (windowId) { try { await chrome.windows.update(windowId, { focused: true }); } catch (_) {} }
   await self.AgentSellerBg.util.waitTabComplete(tab.id, tabTimeoutMs);
+  // 落地未登录检测：取 tab.url 判 isUnauthUrl → 抛业务拦截（区别于 readySignal 超时的「读取」错误）。
+  // 取 url 失败不阻断（继续走 readySignal 轮询，不引入新脆点）。
+  try {
+    const landed = await chrome.tabs.get(tab.id);
+    if (ORCH.engine.isUnauthUrl(landed && landed.url)) {
+      let host = url; try { host = new URL(url).hostname; } catch (_) {}
+      const err = new Error('未登录：请先登录 ' + host + ' 后重试');
+      err.category = 'business';
+      throw err;
+    }
+  } catch (e) {
+    if (e && e.category === 'business') throw e;   // 未登录错误向上抛；tabs.get 自身异常吞掉继续
+  }
   if (!readySignal) return tab.id;
   const deadline = Date.now() + readyTimeoutMs;
   while (Date.now() < deadline) {
@@ -395,7 +408,7 @@ async function orchAdapterPackLabel(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'PACK_NAV_FAILED', message: '打包标签页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'PACK_NAV_FAILED', message: '打包标签页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // 3. 发命令(fire-forget:content 立即 ack started,后台自驱跑)
   let ack;
@@ -424,7 +437,7 @@ async function orchAdapterShip(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'SHIP_NAV_FAILED', message: '发货页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'SHIP_NAV_FAILED', message: '发货页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // ★强不可逆提交点:发命令前标 committing(粗粒度取安全;正常 engine 收尾清,回收留 true→转人工不自动重发)
   await orchMarkCommitting(wf.id, true);
@@ -451,7 +464,7 @@ async function orchAdapterGenLabel(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'AGL_NAV_FAILED', message: '条码管理页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'AGL_NAV_FAILED', message: '条码管理页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // 3. 发命令(fire-forget:content 立即 ack started,后台跑 Phase1+跨页自驱)
   let ack;
