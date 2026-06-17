@@ -56,17 +56,17 @@
     return b;
   }
 
-  // ─── 标题润色（复用 brain refiner，CAP_TITLE_REFINE 经 SW 往返）────────────────
+  // ─── 标题润色（走 native host text_refine provider，员工可用；配 LLM_API_KEY 否则 mock 返原标题）──
   async function capRefineTitle() {
     const t = getTitleField();
     if (!t.el || t.value == null) return { available: false, error: '读取失败：未找到标题输入框' };
     let resp;
     try {
-      resp = await chrome.runtime.sendMessage({ type: 'CAP_TITLE_REFINE', data: { original: t.value, constraints: { maxLen: 250 } } });
+      resp = await window.AgentSeller.sendNative('REFINE_TITLE', { original: t.value, constraints: { maxLen: 250 } });
     } catch (e) {
-      return { available: false, error: '润色不可用：大脑离线，保留原标题' };
+      return { available: false, error: '润色不可用：' + ((e && e.message) || e) + '，保留原标题' };
     }
-    if (!resp || !resp.ok) return { available: false, error: (resp && resp.error) || '润色不可用，保留原标题' };
+    if (!resp || !resp.success) return { available: false, error: (resp && resp.error) || '润色不可用，保留原标题' };
     return { available: true, original: t.value, refined: resp.refined || t.value, changes: resp.changes || '' };
   }
 
