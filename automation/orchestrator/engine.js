@@ -27,7 +27,7 @@
     const out = {};
     if (!result) return out;
     // grossMargin 不在白名单：它是 ⑥ 确认时 orchHitlConfirm 服务端 computeMargin 算落，不从 step.result 回填。
-    for (const k of ['sourceUrl', 'spuId', 'skc', 'skuNo', 'url1688', 'orderNo1688', 'poNo', 'returnPrice', 'cost1688', 'domesticShipping']) {
+    for (const k of ['sourceUrl', 'dxmEditUrl', 'spuId', 'skc', 'skuNo', 'url1688', 'orderNo1688', 'poNo', 'returnPrice', 'cost1688', 'domesticShipping']) {
       if (result[k] != null) out[k] = result[k];
     }
     return out;
@@ -117,6 +117,32 @@
         '毛利率': (value * 100).toFixed(1) + '%',
       },
     };
+  }
+
+  // step.id → product 锚点字段映射（auto 步用 target.url，HITL/无 target 步用此表回退 product）。
+  const ANCHOR_FIELD_BY_STEP = { publish: 'dxmEditUrl' };
+  const UNAUTH_PATTERNS = ['no-auth', 'login', 'passport'];
+
+  // 取页锚点 URL：target.url 优先（auto 主流程），否则按 step.id 映射 product 字段，都无 → null。
+  function resolveAnchorUrl(step, product) {
+    if (step && step.target && step.target.url) return step.target.url;
+    const field = step && ANCHOR_FIELD_BY_STEP[step.id];
+    const v = field && product && product[field];
+    return v || null;
+  }
+
+  // 落地页是否未登录态（URL 含 no-auth/login/passport 等标志）。非字符串/空 → false（不误判）。
+  function isUnauthUrl(url) {
+    if (typeof url !== 'string' || !url) return false;
+    const low = url.toLowerCase();
+    return UNAUTH_PATTERNS.some(p => low.includes(p));
+  }
+
+  // tab.url 是否匹配锚点（忽略 query/hash，比 origin+pathname）。店小秘编辑页 id 在 query → 必须忽略。
+  function matchAnchorTab(tabUrl, anchorUrl) {
+    if (typeof tabUrl !== 'string' || typeof anchorUrl !== 'string') return false;
+    const strip = (u) => { const i = u.search(/[?#]/); return i < 0 ? u : u.slice(0, i); };
+    return strip(tabUrl) === strip(anchorUrl);
   }
 
   function makeEngine(deps) {
@@ -286,5 +312,6 @@
     return { advance, recover, applyDiagnosis };
   }
 
-  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl, buildPublishHitl, computeMargin };
+  return { makeEngine, findWorkflow, pickProduct, buildHitl, buildReviewHitl, buildPublishHitl, computeMargin,
+    resolveAnchorUrl, isUnauthUrl, matchAnchorTab };
 });

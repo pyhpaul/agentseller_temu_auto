@@ -78,7 +78,7 @@ async function orchRequestFillSuggest(workflowId) {
   const fields = (spec && spec.fields) || [];
   if (!fields.length) return;                      // 仅回填型步
   if (spec.noFill) return;                          // 人工/外部产出步（值大脑无法推导）：字段仍人工可输入，但不请求提议——避免弱模型幻觉假值
-  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  const pageSnapshot = await orchCapturePageSnapshot(step, wf);
   orchWsClient.send('FILL_REQUEST', {
     workflowId, stepId: step.id, fields,
     context: {
@@ -110,7 +110,7 @@ const ORCH_REVIEW_TIMEOUT_MS = 15000;
 async function orchReviewGate(workflowId, step, wf) {
   if (!orchWsClient) return null;             // 大脑离线 → proceed（守不变量3：release 无 ws 永不复核）
   const key = workflowId + ':' + step.id;
-  const pageSnapshot = await orchCapturePageSnapshot(step.domain);
+  const pageSnapshot = await orchCapturePageSnapshot(step, wf);
   return new Promise(resolve => {
     const timer = setTimeout(() => { orchReviewPending.delete(key); resolve(null); }, ORCH_REVIEW_TIMEOUT_MS);  // 超时→proceed
     orchReviewPending.set(key, { resolve, timer });
@@ -157,7 +157,8 @@ const PUBLISH_AUTO_KEY = 'as_publish_autopublish';
 // block→phase blocked；通过+autoPublish→内联发布；通过+手动→phase await-publish。
 async function orchPublishCheck(workflowId, autoPublish) {
   try { await chrome.storage.local.set({ [PUBLISH_AUTO_KEY]: !!autoPublish }); } catch (_) {}
-  const found = await findDxmEditTab();
+  const wf = ORCH.engine.findWorkflow(await orchRead(), workflowId);
+  const found = await findDxmEditTab(wf);
   if (found.error) { await orchPublishSetError(workflowId, found.error); return; }
   let resp;
   try {
@@ -179,7 +180,8 @@ async function orchPublishCheck(workflowId, autoPublish) {
 
 // 发布（phase await-publish 点发布 / 自动发布内联）。成功 done+advance；失败回 await-publish 显错。
 async function orchPublishExec(workflowId) {
-  const found = await findDxmEditTab();
+  const wf = ORCH.engine.findWorkflow(await orchRead(), workflowId);
+  const found = await findDxmEditTab(wf);
   if (found.error) { await orchPublishSetError(workflowId, found.error); return; }
   await orchMarkCommitting(workflowId, true);   // 不可逆提交点：发命令前标 committing
   let resp;
@@ -255,13 +257,17 @@ async function orchPublishSetError(workflowId, error) {
   });
 }
 
-// 按 domain 抓当前页 innerText 快照（截断 6000）。尽力而为：无匹配 tab / 报错 → null（filler 仅凭 workflow 上下文）。
-async function orchCapturePageSnapshot(domain) {
-  if (!domain) return null;
+// 按 step 锚点抓当前页 innerText 快照（截断 6000）。尽力而为：resolvePageTab(navigate:false) 命中即抓，
+// 不命中（页没开/无锚点退回 domain 也空）→ null，大脑凭 workflow 上下文兜底。绝不为喂快照主动开 tab。
+async function orchCapturePageSnapshot(step, wf) {
+  if (!step) return null;
+  let tab = null;
   try {
-    const tabs = await chrome.tabs.query({ url: `*://*.${domain}/*` });
-    const tab = tabs && tabs[0];
-    if (!tab) return null;
+    const r = await resolvePageTab(step, wf, { navigate: false });
+    tab = r && r.tab;
+  } catch (_) { tab = null; }
+  if (!tab || !tab.id) return null;
+  try {
     const arr = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => document.body.innerText });
     const text = arr && arr[0] && arr[0].result;
     return typeof text === 'string' ? text.slice(0, 6000) : null;
@@ -291,6 +297,19 @@ async function orchNavigateAndWait(url, readySignal, { tabTimeoutMs = 30000, rea
   const tab = await chrome.tabs.create(createOpts);
   if (windowId) { try { await chrome.windows.update(windowId, { focused: true }); } catch (_) {} }
   await self.AgentSellerBg.util.waitTabComplete(tab.id, tabTimeoutMs);
+  // 落地未登录检测：取 tab.url 判 isUnauthUrl → 抛业务拦截（区别于 readySignal 超时的「读取」错误）。
+  // 取 url 失败不阻断（继续走 readySignal 轮询，不引入新脆点）。
+  try {
+    const landed = await chrome.tabs.get(tab.id);
+    if (ORCH.engine.isUnauthUrl(landed && landed.url)) {
+      let host = url; try { host = new URL(url).hostname; } catch (_) {}
+      const err = new Error('未登录：请先登录 ' + host + ' 后重试');
+      err.category = 'business';
+      throw err;
+    }
+  } catch (e) {
+    if (e && e.category === 'business') throw e;   // 未登录错误向上抛；tabs.get 自身异常吞掉继续
+  }
   if (!readySignal) return tab.id;
   const deadline = Date.now() + readyTimeoutMs;
   while (Date.now() < deadline) {
@@ -389,7 +408,7 @@ async function orchAdapterPackLabel(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'PACK_NAV_FAILED', message: '打包标签页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'PACK_NAV_FAILED', message: '打包标签页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // 3. 发命令(fire-forget:content 立即 ack started,后台自驱跑)
   let ack;
@@ -418,7 +437,7 @@ async function orchAdapterShip(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'SHIP_NAV_FAILED', message: '发货页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'SHIP_NAV_FAILED', message: '发货页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // ★强不可逆提交点:发命令前标 committing(粗粒度取安全;正常 engine 收尾清,回收留 true→转人工不自动重发)
   await orchMarkCommitting(wf.id, true);
@@ -445,7 +464,7 @@ async function orchAdapterGenLabel(step, wf) {
   try {
     tabId = await orchNavigateAndWait(url, target.readySignal, { readyTimeoutMs: 30000 });
   } catch (e) {
-    return { status: 'error', error: { category: 'read', code: 'AGL_NAV_FAILED', message: '条码管理页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
+    return { status: 'error', error: { category: (e && e.category) || 'read', code: 'AGL_NAV_FAILED', message: '条码管理页打不开或未就绪:' + String(e?.message || e), recoverable: true } };
   }
   // 3. 发命令(fire-forget:content 立即 ack started,后台跑 Phase1+跨页自驱)
   let ack;
@@ -480,31 +499,65 @@ async function orchAdapterGenLabel(step, wf) {
   return { status: 'error', error: { category: st.category || 'read', code: st.code || 'AGL_FAILED', message: st.message || '标签生成流程失败', recoverable: true } };
 }
 
+// ── 统一锚点取页 resolvePageTab（收三处散落 query 的单一入口）──────────────────────────
+// 解析 step 应在的确切 URL（target.url 优先 / 否则 product 锚点）→ query 该域找匹配 tab（忽略 query/hash）→
+//   命中 { tab }；不命中按 navigate 决定（true 主动导航开 / false 返回 null 降级）；
+//   无锚点 → 退回 step.domain 旧 query（向后兼容，返回 { tab, fallback }）。
+// 纯逻辑（resolveAnchorUrl/matchAnchorTab）已在 engine.js 单测；此处仅 chrome.tabs.query 脏活，靠 e2e。
+async function resolvePageTab(step, wf, { navigate } = {}) {
+  const product = (wf && wf.product) || {};
+  const anchorUrl = ORCH.engine.resolveAnchorUrl(step, product);
+  if (anchorUrl) {
+    let host;
+    try { host = new URL(anchorUrl).hostname; } catch (_) { host = null; }
+    if (host) {
+      let tabs = [];
+      try { tabs = await chrome.tabs.query({ url: `*://${host}/*` }); } catch (_) { tabs = []; }
+      const hit = (tabs || []).find(t => ORCH.engine.matchAnchorTab(t.url, anchorUrl));
+      if (hit) return { tab: hit };
+    }
+    if (navigate) {
+      const tabId = await orchNavigateAndWait(anchorUrl, (step.target && step.target.readySignal) || null);
+      try { return { tab: await chrome.tabs.get(tabId) }; } catch (e) { return { tab: { id: tabId, url: anchorUrl } }; }
+    }
+    return null;   // 有锚点但 tab 没开 + 不导航 → 降级（快照场景）；publish 由调用方据 null 报「数据校验」
+  }
+  // 无锚点：退回 step.domain 旧 query（向后兼容）
+  if (!step.domain) return navigate ? { error: { category: 'validate', code: 'NO_ANCHOR_NO_DOMAIN', message: '数据校验：缺取页锚点且无 domain', recoverable: false } } : null;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: `*://*.${step.domain}/*` }); } catch (_) { tabs = []; }
+  return { tab: (tabs || [])[0] || null, fallback: true };
+}
+
 // ── 店小秘编辑页 tab 查找（publish 两段闸 CAP_CHECK/CAP_PUBLISH_EXEC 共用）──────────────
 // publish 实操页是【店小秘 dianxiaomi.com 编辑页】（规则选择器/发布 UX 全按店小秘 DOM 建，samples 为证）。
 // ⚠ check_and_publish 经 build union 也注入到 Temu，但选择器是店小秘专属、在 Temu 抓不到 → 必须走店小秘。
-// 数据流死结:wf.product 无店小秘商品 URL 锚点（店小秘编辑页 URL 不可由 spuId 推导）→ 不导航,query 找
-// collect_dxm 留的店小秘编辑页 tab。自动打开待后续（随 collect_dxm 自动化捕获店小秘编辑页 URL 一起做）。
-// 返回 {tab} 或 {error}（统一错误形态供两段闸调用方落 step.error）。
-async function findDxmEditTab() {
+// 取页：优先 product.dxmEditUrl 锚点精确命中（collect_dxm 人工填）；无锚点/不命中退回旧 dianxiaomi query
+// 找含 edit 的 tab（向后兼容）。错误分层：有锚点但页没开 → 数据校验（提示回填/保持打开）；
+// 无锚点且 query 空 → 读取（沿用 PUBLISH_NO_EDIT_TAB）。返回 {tab} 或 {error}。
+async function findDxmEditTab(wf) {
+  const step = wf && wf.steps && wf.steps[wf.cursor];
+  const product = (wf && wf.product) || {};
+  // 1. 有锚点：精确命中（不命中即明确「页没开」，归数据校验类）
+  if (product.dxmEditUrl && step) {
+    const r = await resolvePageTab(step, wf, { navigate: false });
+    if (r && r.tab) return await activateEditTab(r.tab);
+    return { error: { category: 'validate', code: 'PUBLISH_EDIT_TAB_CLOSED', message: '数据校验：店小秘编辑页未打开（请保持采集步留的编辑页，或重新采集回填 URL）', recoverable: true } };
+  }
+  // 2. 无锚点：退回旧 query（向后兼容）
   let tabs;
-  try {
-    tabs = await chrome.tabs.query({ url: '*://*.dianxiaomi.com/*' });
-  } catch (e) {
-    return { error: { category: 'read', code: 'PUBLISH_TAB_QUERY_FAILED', message: 'tab 查询失败:' + String(e?.message || e), recoverable: true } };
-  }
+  try { tabs = await chrome.tabs.query({ url: '*://*.dianxiaomi.com/*' }); }
+  catch (e) { return { error: { category: 'read', code: 'PUBLISH_TAB_QUERY_FAILED', message: 'tab 查询失败:' + String(e?.message || e), recoverable: true } }; }
   const editTab = (tabs || []).find(t => /edit/i.test(t.url || ''));
-  if (!editTab) {
-    return { error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持店小秘编辑页打开)', recoverable: true } };
-  }
-  // 激活编辑页 tab(前台防 Ant dropdown 后台 tab 不展开)
-  try {
-    await chrome.tabs.update(editTab.id, { active: true });
-    await new Promise(res => setTimeout(res, 500));
-  } catch (e) {
-    console.warn('[orch][publish] 激活编辑页 tab 失败,继续尝试', e);
-  }
-  return { tab: editTab };
+  if (!editTab) return { error: { category: 'read', code: 'PUBLISH_NO_EDIT_TAB', message: '未找到店小秘编辑页 tab(collect_dxm 后请保持店小秘编辑页打开)', recoverable: true } };
+  return await activateEditTab(editTab);
+}
+
+// 激活编辑页 tab（前台防 Ant dropdown 后台 tab 不展开）+ 统一返回 { tab }。
+async function activateEditTab(tab) {
+  try { await chrome.tabs.update(tab.id, { active: true }); await new Promise(res => setTimeout(res, 500)); }
+  catch (e) { console.warn('[orch][publish] 激活编辑页 tab 失败,继续尝试', e); }
+  return { tab };
 }
 
 // adapter 注册表：按 step.id 分发（cpo 一 feature 两步，必须 id 粒度）。

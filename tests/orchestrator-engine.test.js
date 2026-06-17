@@ -1,7 +1,7 @@
 // tests/orchestrator-engine.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { makeEngine, buildHitl, buildReviewHitl, buildPublishHitl, pickProduct, computeMargin } = require('../automation/orchestrator/engine.js');
+const { makeEngine, buildHitl, buildReviewHitl, buildPublishHitl, pickProduct, computeMargin, resolveAnchorUrl, isUnauthUrl, matchAnchorTab } = require('../automation/orchestrator/engine.js');
 const { makeMutationQueue } = require('../automation/orchestrator/mutation-queue.js');
 
 // fake storage：深拷贝读（防引用串改），内存写
@@ -99,6 +99,38 @@ test('pickProduct：提取核价字段 returnPrice/cost1688/domesticShipping（�
   assert.strictEqual(out.returnPrice, '100');   // ④ 填的参考申报价必须进 product，否则 ⑥ 核价读不到
   assert.strictEqual(out.cost1688, '60');
   assert.strictEqual(out.domesticShipping, '5');
+});
+
+test('pickProduct：白名单含 dxmEditUrl（带则落库，不带不污染）', () => {
+  assert.strictEqual(pickProduct({ dxmEditUrl: 'https://www.dianxiaomi.com/x/edit?id=1' }).dxmEditUrl, 'https://www.dianxiaomi.com/x/edit?id=1');
+  assert.ok(!('dxmEditUrl' in pickProduct({ skc: 'X' })));   // 不带不出现
+});
+
+// ── 取页锚点纯函数（resolvePageTab 的 chrome.tabs.query 脏活留 bg-entry，靠 e2e）──
+test('resolveAnchorUrl: target.url 优先 > product 锚点 > null', () => {
+  assert.strictEqual(
+    resolveAnchorUrl({ id: 'gen_label', target: { url: 'https://agentseller.temu.com/goods/label' } }, {}),
+    'https://agentseller.temu.com/goods/label');                              // auto 步有 target.url → 用之
+  assert.strictEqual(
+    resolveAnchorUrl({ id: 'publish' }, { dxmEditUrl: 'https://www.dianxiaomi.com/x/edit?id=1' }),
+    'https://www.dianxiaomi.com/x/edit?id=1');                                // publish 无 target → 映射 product.dxmEditUrl
+  assert.strictEqual(resolveAnchorUrl({ id: 'publish' }, {}), null);          // 无锚点 → null（退回旧 query）
+  assert.strictEqual(resolveAnchorUrl({ id: 'select_product' }, { dxmEditUrl: 'x' }), null);  // 未映射步 + 无 target → null
+});
+
+test('isUnauthUrl: 命中未登录标志 → true', () => {
+  assert.strictEqual(isUnauthUrl('https://seller.temu.com/no-auth.html'), true);
+  assert.strictEqual(isUnauthUrl('https://www.dianxiaomi.com/login'), true);
+  assert.strictEqual(isUnauthUrl('https://passport.temu.com/x'), true);
+  assert.strictEqual(isUnauthUrl('https://agentseller.temu.com/goods/label'), false);
+  assert.strictEqual(isUnauthUrl(''), false);
+  assert.strictEqual(isUnauthUrl(null), false);
+});
+
+test('matchAnchorTab: 忽略 query/hash 比对 origin+pathname', () => {
+  assert.strictEqual(matchAnchorTab('https://www.dianxiaomi.com/x/edit?id=2', 'https://www.dianxiaomi.com/x/edit?id=1'), true);  // 同 path 不同 id → 命中
+  assert.strictEqual(matchAnchorTab('https://www.dianxiaomi.com/y/list', 'https://www.dianxiaomi.com/x/edit?id=1'), false);     // path 不同 → 不命中
+  assert.strictEqual(matchAnchorTab(null, 'https://x/edit'), false);
 });
 
 test('advance：多 auto 步连续推进到末尾 done', async () => {
