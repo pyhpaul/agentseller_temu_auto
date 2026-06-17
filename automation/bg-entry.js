@@ -479,8 +479,12 @@ async function orchAdapterGenLabel(step, wf) {
       NO_SKC: '缺 SKC(product.skc 为空,上游 HITL 未回填)',
       ROW_NOT_FOUND: '条码管理页未找到该 SKC 对应商品行',
       NO_SKC_SKU: '该商品无 SKC货号,无法生成标签',
+      MULTI_SKU: `该 SKC 含 ${ack.skuCount || '多'} 个 SKU 变体,自动链路暂只支持单 SKU,请用「标签生成」feature 手动模式处理`,
     };
-    return { status: 'error', error: { category: 'validate', code: 'AGL_NOT_STARTED', message: reasonMap[ack.reason] || ('未启动:' + ack.reason), recoverable: true } };
+    // MULTI_SKU 不可重试（SKU 数不会变,须转手动）；其余多为可纠正,保持可重试。
+    const recoverable = ack.reason !== 'MULTI_SKU';
+    const code = ack.reason === 'MULTI_SKU' ? 'AGL_MULTI_SKU' : 'AGL_NOT_STARTED';
+    return { status: 'error', error: { category: 'validate', code, message: reasonMap[ack.reason] || ('未启动:' + ack.reason), recoverable } };
   }
   // 4. 轮询 agl_state 终态;onTick 在 content 报 committing 阶段时一次性标记
   let committed = false;
