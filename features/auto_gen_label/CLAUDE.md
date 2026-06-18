@@ -221,6 +221,7 @@ engine.Stop()
 
 - **Step 1**（实拍图页面）：从 SKC 查 SPU（v1.1.1 数据正确性加固，见根 `CLAUDE.md`「数据正确性」§1/§2）
   - `ensureSkcSearchInput`：选搜索类型=SKC，**以 skcIdStr 输入框就绪为成功信号**（非 selection-item 文本），组件未就绪时重试
+  - ⚠️ **stale 节点陷阱**：`typeSelect` / `readType()` 必须每轮从 live `document` 重新查，**绝不缓存跨 re-render**。页面 `mallModel` 异步初始化会 re-render 整个搜索表单，旧 `.rocket-select` 被 detach 后，缓存的引用仍读到旧 selection-item（停留在 SKC），而 `document.getElementById('skcIdStr')` 查的是 live 文档（已 reset 回 SPU）→ 出现「readType=SKC 但 skcIdStr 永远不存在」假象，`if(readType()!=='SKC')` 门控又因此跳过重选，5 轮空转后误报「选 SKC 后 skcIdStr 始终未就绪」。**判断读 live 还是 stale**：`document.body.contains(cachedNode)` 返回 false 即 stale。任何 Rocket Select 在 SPA 页面跨异步 re-render 复用都适用此规律，不仅限本页。
   - `fillSkcAndVerify`：填 skcNumber 后写后读校验「类型仍 SKC 且值==目标」，**被页面异步初始化(`mallModel`)重置回 SPU 就退避重试**，总超时窗口(25s)内自愈
   - `extractSpuFromUniqueResult`：点查询后**轮询等"含 SPU 结果行恰好 1 行"再取 SPU**（精确 SKC 结果必唯一），不唯一/超时报错中止——**绝不抓全页第一个 SPU**（曾因此把默认第一行 SPU 当目标、全程操作错误商品）
   - 写入 CFlow.spuId → 跳页到 `/govern/information-supplementation`
@@ -255,7 +256,8 @@ engine.Stop()
 
 1. 跳到 `/govern/compliant-live-photos`，imgFlow.active=true
 2. `fillSkcAndVerify` 选 SKC + 填 skcNumber + 写后读（同 Phase 2 Step1，自愈页面 `mallModel` 重置）
-3. 强校验目标 SPU 行（同 Phase 2 Step 2）
+3. 强校验目标 SPU 行：**每轮重新 `fillSkcAndVerify` + 查询 + `waitForRowBySpu`，30s 窗口内自愈**（同 Step1 结构）
+   - ⚠️ **不可复用 `ensureQueryMatchesSpu`**：它重试时回填 `document.getElementById('spuId')`，那是 `/govern/information-supplementation` 页的输入框；本页(compliant-live-photos)搜索框是 `#skcIdStr`，`#spuId` 在本页**根本不存在** → 重试回填被静默跳过、对着空 `skcIdStr` 连点查询 → 永远匹配不到目标 SPU，误报「查询结果未匹配」。**跨页复用搜索逻辑前，先确认两页搜索框 input id 一致**；不一致必须各写各的填充。
 4. 点匹配行"修改/上传"前**断言该行 SPU==目标**；点击后 `waitForDrawerOpen` 拿可见 drawer，**未打开即中止**（不退回列表页全局查找）
 5. **drawer 内身份二次确认**：`drawer.querySelector('#spuId')` == 目标 SPU，不符中止（防点错行/rowspan 错位传错商品）
 6. 通过 native_host **逐个**分块读取该 SKC 下所有 SKU 标签 PNG（`imgFlow.labelPngPaths` 数组，`READ_FILE_SIZE` + `READ_FILE_CHUNK` 循环，避免 Chrome Native Messaging 1MB 单消息上限）
