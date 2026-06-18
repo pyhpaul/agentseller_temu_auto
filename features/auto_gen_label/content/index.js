@@ -152,6 +152,12 @@
   function clearSelection() {
     setProducts([]);
     refreshRowHighlight();
+    // 清除选择同时清掉上轮标签文件产物——否则 refreshProductUI 仍从 talLabelPaths 读数量，
+    // 清除后 UI 残留「N 个标签已生成」，再次选单 SKU 也会显示上轮多 SKU 的旧数量，
+    // 直到下一次生成才覆盖。清除语义 = 回到初始态，故一并清。
+    localStorage.removeItem('talLabelPaths');
+    localStorage.removeItem('talLabelSkc');
+    refreshProductUI();
   }
 
 
@@ -1204,21 +1210,27 @@
   // 成功信号 = skcIdStr 输入框就绪（不靠 selection-item 文本，避免"显示 SKC 但输入框未渲染"误判）。
   // 进入页面（尤其新 tab 首屏）时 Rocket Select 可能尚未交互就绪——节点已出现但事件/状态未绑好，
   // 点 trigger 下拉弹不出或选了不生效。每轮：skcIdStr 在就返回，否则非 SKC 就强制选，再短等渲染。
-  // 详细 console 日志用于定位执行轨迹（dev 阶段）。
+  // ⚠️ typeSelect / readType 必须每轮重新查 live 节点：页面 mallModel 异步初始化会 re-render 整个
+  // 搜索表单，旧 .rocket-select 节点被 detach 后，缓存的引用仍读到旧 selection-item（停留在 SKC），
+  // 而 document 已是新表单（reset 回 SPU）→ 出现"readType=SKC 但 skcIdStr 永远不存在"的假象，
+  // 且 if(readType()!=='SKC') 门控因此跳过重选，5 轮空转后误报。详细 console 日志用于定位执行轨迹。
   async function ensureSkcSearchInput() {
     console.log('[TAL][ensure] 进入 ensureSkcSearchInput');
     await U.waitForEl('input#goodsSearchType', document, 12000);
-    const typeSelect = rocketSelectById('goodsSearchType');
-    const readType = () => typeSelect?.querySelector('.rocket-select-selection-item')?.textContent.trim();
-    console.log('[TAL][ensure] typeSelect 找到=', !!typeSelect, '初始类型=', readType());
-    if (!typeSelect) throw new Error('读取失败：未找到搜索类型下拉 (#goodsSearchType)');
+    // 每次都从 live document 重新取，绝不缓存跨 re-render
+    const readType = () => document.getElementById('goodsSearchType')
+      ?.closest('.rocket-select')
+      ?.querySelector('.rocket-select-selection-item')?.textContent.trim();
 
     const MAX_TRY = 5;
     for (let i = 1; i <= MAX_TRY; i++) {
       let el = document.getElementById('skcIdStr');
       if (el) { console.log(`[TAL][ensure] 第${i}轮: skcIdStr 已就绪，返回`); return el; }
-      console.log(`[TAL][ensure] 第${i}轮: 类型=${readType()}, skcIdStr 未现`);
-      if (readType() !== 'SKC') {
+      const curType = readType();
+      console.log(`[TAL][ensure] 第${i}轮: 类型=${curType}, skcIdStr 未现`);
+      if (curType !== 'SKC') {
+        const typeSelect = rocketSelectById('goodsSearchType');  // 每轮 fresh，避免 detach 节点
+        if (!typeSelect) throw new Error('读取失败：未找到搜索类型下拉 (#goodsSearchType)');
         try {
           await rocketSelect(typeSelect, 'SKC');
           console.log(`[TAL][ensure] 第${i}轮: rocketSelect 返回, 类型现在=${readType()}`);
@@ -1654,18 +1666,24 @@
   async function runImgSearch(flow) {
     U.showToast('主图插入：搜索商品...', 'info');
 
-    // 同 runStep1：选 SKC + 填值 + 写后读校验（自愈页面异步重置）
-    await fillSkcAndVerify(flow.skcNumber);
-
-    const searchBtn = U.findByText('button', '查询');
-    if (!searchBtn) throw new Error('未找到查询按钮');
-    searchBtn.click();
-    await U.sleep(1500);
-
-    // 强校验：表格"商品信息"列必须显示目标 SPU 的行；未匹配自动重新查询
     if (!flow.spuId) throw new Error('imgFlow 缺少 spuId，无法校验商品身份');
-    const matchedRow = await ensureQueryMatchesSpu(flow.spuId);
-    if (!matchedRow) throw new Error(`查询结果未匹配目标 SPU=${flow.spuId}（重试 3 次仍失败）`);
+
+    // 每轮重新选 SKC + 填 skcNumber + 写后读（自愈 mallModel 异步重置），再点查询 + 等目标 SPU 行。
+    // ⚠️ 不能复用 ensureQueryMatchesSpu——它重试时回填 #spuId（information-supplementation 页的输入框），
+    // 本页(compliant-live-photos)搜索框是 #skcIdStr，#spuId 不存在 → 重试回填被跳过、对着空框连点
+    // 查询 → 永远匹配不到。故用与 runStep1 同构的"每轮 fillSkcAndVerify + 查询 + 等行"循环。
+    let matchedRow = null;
+    const deadline = Date.now() + 30000;
+    for (let attempt = 1; !matchedRow && Date.now() < deadline; attempt++) {
+      await fillSkcAndVerify(flow.skcNumber);
+      const searchBtn = U.findByText('button', '查询');
+      if (!searchBtn) throw new Error('未找到查询按钮');
+      searchBtn.click();
+      await U.sleep(1500);
+      matchedRow = await waitForRowBySpu(flow.spuId, 6000);
+      if (!matchedRow) console.warn(`[TAL][img] 第 ${attempt} 次查询未匹配 SPU=${flow.spuId}（剩余 ${Math.round((deadline - Date.now()) / 1000)}s）`);
+    }
+    if (!matchedRow) throw new Error(`数据校验：查询 SKC=${flow.skcNumber} 后 30s 内未匹配目标 SPU=${flow.spuId}（可能页面刷新过慢或该 SKC 查无结果），已中止`);
 
     // 在匹配行内查找「修改」或「上传」按钮，避免误点其他行
     const actionBtn = Array.from(matchedRow.querySelectorAll('button.rocket-btn-link, a.rocket-btn-link'))
