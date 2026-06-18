@@ -20,8 +20,11 @@ if errorlevel 1 (
 
 :: --specpath build 让 spec 落到 build\ 子目录，PyInstaller 在 spec 模式下
 :: --add-data 的相对路径以 spec 所在目录（build\）为基准，因此 resources 前面要加 ..\
-:: --hidden-import handlers.bartender：bartender 在 main._generate_label 内惰性 import，
-:: PyInstaller 静态分析扫不到，必须显式声明否则 EXE 缺这个模块
+:: --hidden-import：main.py 的 DISPATCH handler 内惰性 import 的模块，PyInstaller 静态分析
+:: 扫不到函数体内的 import，必须显式声明否则 EXE 缺模块（运行时报 ImportError / 静默退化）。
+:: bartender(generate_label)/text_refine(refine_title)/image_optimize(optimize_image) 都是惰性 import；
+:: config 被 text_refine._select_provider 和 main._llm_config_action 内部 import（LLM key 配置源，
+:: 缺它会致 text_refine 永远退化 mock、llm_config action 报错，且 mock 不报错难察觉——必须显式声明）。
 pyinstaller ^
   --onefile ^
   --name TemuLabelHost ^
@@ -31,6 +34,9 @@ pyinstaller ^
   --hidden-import win32com.client ^
   --hidden-import win32com.server.util ^
   --hidden-import handlers.bartender ^
+  --hidden-import handlers.text_refine ^
+  --hidden-import handlers.image_optimize ^
+  --hidden-import config ^
   --collect-all pymupdf ^
   --add-data "..\resources\background.png;resources" ^
   main.py
