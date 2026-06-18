@@ -153,12 +153,17 @@ def _extract_json(text):
 
 
 def _select_provider():
-    base = os.environ.get("LLM_BASE_URL", "").strip()
-    key = os.environ.get("LLM_API_KEY", "").strip()
-    if not base or not key:
+    """读配置源（config.get_llm_config）：优先本地 DPAPI 配置，退化环境变量。
+    配置源抽象：现在本地 DPAPI，将来放开时改 ProxyConfig 不动这里。"""
+    try:
+        import config
+        c = config.get_llm_config()
+    except Exception:
+        c = None
+    if not c or not c.get("base_url") or not c.get("api_key"):
         return MockTextProvider()
-    model = (os.environ.get("LLM_MODEL", "") or "glm-4-flash").strip()
-    return OpenAICompatProvider(base, key, model)
+    return OpenAICompatProvider(c["base_url"], c["api_key"],
+                               c.get("model") or "glm-4-plus")
 
 
 def handle(msg):
