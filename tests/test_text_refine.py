@@ -1,8 +1,18 @@
 # tests/test_text_refine.py — 标题润色 native provider 单测（员工可用，走 native host 调 LLM）。
 # 安全红线：无 key→mock 返原标题；LLM 调用失败/解析不出→退回原标题（不编造、不阻断）。
 import os, sys
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "native_host"))
 from handlers import text_refine as tr
+import config
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_path(tmp_path, monkeypatch):
+    """隔离 LLM 配置文件到 tmp_path，避免读到开发者机器上的真实 llm_config.json
+    导致 _select_provider 意外走 OpenAICompatProvider（test_mock 类测试会 flaky）。"""
+    monkeypatch.setattr(config, "_config_path",
+                        lambda: str(tmp_path / "llm_config.json"))
 
 
 def test_mock_default_no_env(monkeypatch):
