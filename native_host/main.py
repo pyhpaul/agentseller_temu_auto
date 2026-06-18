@@ -55,6 +55,23 @@ def _refine_title(msg: dict) -> dict:
     return text_refine.handle(msg)
 
 
+def _llm_config_action(msg: dict) -> dict:
+    """LLM key 配置存读清（员工在 Chrome 设置面板填 key）。
+    msg.subaction ∈ {set, get_status, clear}。set 存（DPAPI 加密）；
+    get_status 只回 {configured, model} 不回 key 明文（key 永不离开 native host）。
+    惰性 import config，非 Windows 无 DPAPI 退化明文（开发期）。"""
+    import config
+    sub = (msg.get('subaction') or '').strip()
+    if sub == 'set':
+        return config.set_llm_config(
+            msg.get('base_url'), msg.get('api_key'), msg.get('model'))
+    if sub == 'get_status':
+        return config.get_llm_config_status()
+    if sub == 'clear':
+        return config.clear_llm_config()
+    return {'success': False, 'error': '未知 subaction: %s' % sub}
+
+
 def _get_installed_version(_msg: dict) -> dict:
     """读 EXE 同目录的 installed_version.txt，返回 installer 写入的版本号。
 
@@ -81,6 +98,7 @@ DISPATCH = {
     'generate_label': _generate_label,
     'optimize_image': _optimize_image,
     'refine_title': _refine_title,
+    'llm_config': _llm_config_action,
     'get_installed_version': _get_installed_version,
     'pick_file': file_ops.pick_file,
     'pick_folder': file_ops.pick_folder,

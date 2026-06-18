@@ -186,6 +186,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // LLM key 配置存读清：员工在 listing_optimize 设置面板填 key → DPAPI 加密存 native host。
+  // get_status 只回 {configured, model}，key 明文永不离开 native host 进程。
+  if (msg.type === 'LLM_CONFIG') {
+    sendToNativeHost({
+      action: 'llm_config',
+      subaction: msg.data.subaction,
+      base_url: msg.data.base_url,
+      api_key: msg.data.api_key,
+      model: msg.data.model
+    })
+      .then(result => sendResponse({ success: true, result }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   if (msg.type === 'GET_STATUS') {
     sendResponse({ connected: nativePort !== null });
   }

@@ -215,11 +215,81 @@
     viewEl.appendChild(refineBtn);
     const optimizeBtn = makeBtn('🖼 优化主图', '#1677ff', () => onOptimizeImage(viewEl, optimizeBtn));
     viewEl.appendChild(optimizeBtn);
+    // 设置入口：配置 LLM key（DPAPI 加密存 native host，员工机器填一次）
+    const cfgBtn = makeBtn('⚙ 设置 API Key', '#888', () => renderConfig(viewEl));
+    cfgBtn.style.marginTop = '6px';
+    viewEl.appendChild(cfgBtn);
     const tip = document.createElement('div');
     tip.className = 'tal-status';
     tip.style.cssText = 'color:#888;font-size:11px;margin-top:8px;line-height:1.4;';
     tip.textContent = '润色/优化后建议走「检查与发布」确认合规。';
     viewEl.appendChild(tip);
+  }
+
+  // ─── LLM key 设置面板（走 native host DPAPI 加密存，key 明文不进 content）──
+  async function renderConfig(viewEl) {
+    viewEl.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'tal-card';
+    card.innerHTML = '<div class="tal-card-title">API Key 设置</div>';
+    const mkInput = (ph, type) => {
+      const inp = document.createElement('input');
+      inp.type = type || 'text';
+      inp.placeholder = ph;
+      inp.style.cssText = 'width:100%;box-sizing:border-box;font-size:12px;margin:4px 0 8px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;';
+      return inp;
+    };
+    const baseInput = mkInput('Base URL（如 https://open.bigmodel.cn/api/paas/v4）');
+    const keyInput = mkInput('API Key', 'password');
+    const modelInput = mkInput('模型（如 glm-4-plus）');
+    modelInput.value = 'glm-4-plus';
+    // 读当前状态（只回 configured + model，不回 key 明文）
+    let status;
+    try {
+      status = await window.AgentSeller.sendNative('LLM_CONFIG', { subaction: 'get_status' });
+    } catch (e) { status = { success: false, error: (e && e.message) || String(e) }; }
+    const stTip = document.createElement('div');
+    stTip.style.cssText = 'font-size:11px;margin-bottom:8px;line-height:1.4;';
+    if (status && status.success && status.configured) {
+      stTip.style.color = '#389e0d';
+      stTip.textContent = '✓ 已配置（模型：' + (status.model || '未知') + '）。重新填写会覆盖。';
+    } else {
+      stTip.style.color = '#888';
+      stTip.textContent = '未配置（润色将走 mock 保留原标题）。填写后 key 经 DPAPI 加密存本机。';
+    }
+    card.appendChild(stTip);
+    card.appendChild(baseInput);
+    card.appendChild(keyInput);
+    card.appendChild(modelInput);
+    viewEl.appendChild(card);
+
+    const saveBtn = makeBtn('保存', '#1677ff', async () => {
+      saveBtn.disabled = true; saveBtn.textContent = '保存中…';
+      let r;
+      try {
+        r = await window.AgentSeller.sendNative('LLM_CONFIG', {
+          subaction: 'set',
+          base_url: baseInput.value.trim(),
+          api_key: keyInput.value.trim(),
+          model: modelInput.value.trim() || 'glm-4-plus'
+        });
+      } catch (e) { r = { success: false, error: (e && e.message) || String(e) }; }
+      saveBtn.disabled = false; saveBtn.textContent = '保存';
+      if (!r || !r.success) { showToast((r && r.error) || '保存失败', 'err'); return; }
+      showToast('API Key 已保存（DPAPI 加密存本机）', 'ok');
+      renderHome(viewEl);
+    });
+    viewEl.appendChild(saveBtn);
+    const clearBtn = makeBtn('清除', '#cf1322', async () => {
+      let r;
+      try { r = await window.AgentSeller.sendNative('LLM_CONFIG', { subaction: 'clear' }); }
+      catch (e) { r = { success: false, error: (e && e.message) || String(e) }; }
+      if (!r || !r.success) { showToast((r && r.error) || '清除失败', 'err'); return; }
+      showToast('已清除 API Key', 'ok');
+      renderHome(viewEl);
+    });
+    viewEl.appendChild(clearBtn);
+    viewEl.appendChild(makeBtn('返回', '#888', () => renderHome(viewEl)));
   }
 
   window.AgentSeller.registerFeature({
